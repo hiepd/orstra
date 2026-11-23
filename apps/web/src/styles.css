@@ -1834,14 +1834,14 @@ a:hover {
 .ox-bcol{max-width:300px}
 
 /* ---------- Workflow canvas (React Flow) ---------- */
-.wf-node{width:210px;padding:9px 12px 10px;background:var(--surface);border:1px solid var(--line-2);border-left:3px solid var(--accent);border-radius:8px;box-shadow:0 1px 2px rgba(20,20,30,.05);display:flex;flex-direction:column;gap:3px;cursor:pointer}
+.wf-node{width:210px;height:78px;box-sizing:border-box;padding:9px 12px 10px;background:var(--surface);border:1px solid var(--line-2);border-left:3px solid var(--accent);border-radius:8px;box-shadow:0 1px 2px rgba(20,20,30,.05);display:flex;flex-direction:column;gap:3px;cursor:pointer}
 .wf-node:hover{border-color:var(--border-strong)}
 .wf-head{display:flex;align-items:center;gap:6px}
 .wf-kind{font-size:10.5px;font-weight:600;padding:1px 6px;border-radius:4px}
 .wf-start{font-size:10.5px;color:var(--faint)}
-.wf-title{font-weight:500;font-size:13px;color:var(--ink)}
+.wf-title{font-weight:500;font-size:13px;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .wf-sub{font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.wf-end{padding:8px 16px;border-radius:999px;background:var(--surface);border:1px solid var(--line-2);color:var(--muted);font-size:12px}
+.wf-end{width:64px;height:34px;box-sizing:border-box;display:flex;align-items:center;justify-content:center;border-radius:999px;background:var(--surface);border:1px solid var(--line-2);color:var(--muted);font-size:12px}
 .wf-node .react-flow__handle,.wf-end .react-flow__handle{width:6px;height:6px;background:var(--border-stronger);border:0}
 .wf-detail{margin:0;padding:10px;background:var(--hover);border:1px solid var(--line);border-radius:6px;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;word-break:break-word;max-height:240px;overflow:auto}
 
@@ -1876,7 +1876,9 @@ a:hover {
 .wf-node.wf-selected{box-shadow:0 0 0 2px var(--accent)}
 .wf-node{cursor:grab}
 .wf-node:active{cursor:grabbing}
-.wf-pick{margin-left:10px;border:1px solid var(--line-2);border-radius:6px;padding:4px 8px;background:var(--surface);color:var(--ink);font-size:12.5px;max-width:200px}
+/* Arrow labels sit on the arrow; the pill hides the line behind the text. */
+.wf-elabel{position:absolute;pointer-events:none;font-size:11px;line-height:1.2;padding:2px 6px;border-radius:4px;background:var(--surface-2);color:var(--muted);white-space:nowrap}
+.wf-elabel-sel{color:var(--accent-fg)}
 /* ---- Chief of staff (cs- classes, from the design mock) ---- */
 .cs-body{flex:1;display:flex;min-height:0}
 .cs-body .ox-chat{background:var(--surface)}

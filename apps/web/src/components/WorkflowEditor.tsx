@@ -1,8 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  BaseEdge,
   Background,
   BackgroundVariant,
   Controls,
+  EdgeLabelRenderer,
+  getSmoothStepPath,
   Handle,
   MarkerType,
   Position,
@@ -12,14 +15,15 @@ import {
   useReactFlow,
   type Connection,
   type Edge,
+  type EdgeProps,
   type Node,
   type NodeProps,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { api, errorMessage, type StepKind, type WorkflowDetail, type WorkflowGraphInput, type WorkflowStep } from '../api';
-import { AGENTS, humanize } from '../lib/format';
+import { AGENTS } from '../lib/format';
 import { KIND } from '../lib/stepKinds';
-import { arrowKey, END_ID, layoutWorkflow } from '../lib/workflowLayout';
+import { arrowKey, edgeLabel, END_ID, layoutWorkflow, routePath, type LaidOut, type Route } from '../lib/workflowLayout';
 
 /** A step while it is being edited. Lists keep blank lines until save, so typing Enter in a box works. */
 interface Draft {
@@ -48,6 +52,7 @@ const OUTCOMES: Record<StepKind, string[]> = {
 };
 const ADDABLE: StepKind[] = ['agent', 'gate', 'human', 'switch', 'action'];
 const DEFAULT_CAP = 3;
+const FIT = { padding: 32, minZoom: 0.3, maxZoom: 1 };
 
 const toDraft = (s: WorkflowStep): Draft => ({
   id: s.id,
@@ -103,8 +108,8 @@ function StepNode({ data, selected }: NodeProps<Node<StepNodeData>>) {
   const k = KIND[data.kind];
   return (
     <div className={`wf-node${selected ? ' wf-selected' : ''}`} style={{ borderLeftColor: k.fg }}>
-      <Handle type="target" position={Position.Left} id="in" />
-      <Handle type="target" position={Position.Bottom} id="back-in" style={{ left: '35%' }} />
+      <Handle type="target" position={Position.Top} id="in" />
+      <Handle type="target" position={Position.Right} id="back-in" style={{ top: '70%' }} />
       <div className="wf-head">
         <span className="wf-kind" style={{ color: k.fg, background: k.bg }}>
           {k.label}
@@ -113,8 +118,8 @@ function StepNode({ data, selected }: NodeProps<Node<StepNodeData>>) {
       </div>
       <b className="wf-title">{data.title}</b>
       <span className="wf-sub">{data.sub}</span>
-      <Handle type="source" position={Position.Right} id="out" />
-      <Handle type="source" position={Position.Bottom} id="back-out" style={{ left: '65%' }} />
+      <Handle type="source" position={Position.Bottom} id="out" />
+      <Handle type="source" position={Position.Right} id="back-out" style={{ top: '30%' }} />
     </div>
   );
 }
@@ -122,22 +127,54 @@ function StepNode({ data, selected }: NodeProps<Node<StepNodeData>>) {
 function EndNode() {
   return (
     <div className="wf-end">
-      <Handle type="target" position={Position.Left} id="in" />
-      <Handle type="target" position={Position.Bottom} id="back-in" />
+      <Handle type="target" position={Position.Top} id="in" />
+      <Handle type="target" position={Position.Right} id="back-in" />
       End
     </div>
   );
 }
 
+/**
+ * An arrow along the path dagre planned for it, which goes around any steps it skips. Once either end has been
+ * dragged somewhere else the plan no longer fits, so it falls back to a plain step line.
+ */
+function RoutedEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data, label, style, markerEnd, interactionWidth }: EdgeProps<Edge<{ route?: Route; selected?: boolean }>>) {
+  const route = data?.route;
+  const fits = route && Math.abs(route.points[0].x - sourceX) < 3 && Math.abs(route.points[0].y - sourceY) < 3 && Math.abs(route.points[route.points.length - 1].x - targetX) < 3 && Math.abs(route.points[route.points.length - 1].y - targetY) < 3;
+  let path: string;
+  let lx: number;
+  let ly: number;
+  if (fits) {
+    path = routePath(route.points);
+    lx = route.label.x;
+    ly = route.label.y;
+  } else {
+    [path, lx, ly] = getSmoothStepPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, borderRadius: 12, offset: 26 });
+  }
+  return (
+    <>
+      <BaseEdge id={id} path={path} style={style} markerEnd={markerEnd} interactionWidth={interactionWidth} />
+      {label && (
+        <EdgeLabelRenderer>
+          <div className={`wf-elabel nodrag nopan${data?.selected ? ' wf-elabel-sel' : ''}`} style={{ transform: `translate(-50%, -50%) translate(${lx}px, ${ly}px)` }}>
+            {label}
+          </div>
+        </EdgeLabelRenderer>
+      )}
+    </>
+  );
+}
+
 const nodeTypes = { step: StepNode, end: EndNode };
+const edgeTypes = { routed: RoutedEdge };
 
 const nodeData = (s: Draft, start: string): StepNodeData => ({ title: s.title || s.id, kind: s.kind, sub: subtitle(s), isStart: s.id === start });
 
-function initialNodes(detail: WorkflowDetail): Node[] {
-  const auto = layoutWorkflow(detail.steps, detail.start ?? detail.steps[0]?.id ?? '');
+/** Where the steps start out: where the file says, if it says for every step; otherwise wherever dagre puts them. */
+function initialNodes(detail: WorkflowDetail, auto: LaidOut): Node[] {
+  const saved = detail.steps.every((s) => detail.layout[s.id]);
   const nodes: Node[] = detail.steps.map((s) => {
-    const saved = detail.layout[s.id];
-    const at = saved ? { x: saved[0], y: saved[1] } : auto.positions.get(s.id)!;
+    const at = saved ? { x: detail.layout[s.id][0], y: detail.layout[s.id][1] } : auto.positions.get(s.id)!;
     return { id: s.id, type: 'step', position: at, data: nodeData(toDraft(s), detail.start ?? '') };
   });
   nodes.push({ id: END_ID, type: 'end', position: auto.positions.get(END_ID)!, data: {}, deletable: false, selectable: false });
@@ -159,9 +196,22 @@ function Editor({ detail, onSaved }: { detail: WorkflowDetail; onSaved: () => vo
   const flow = useReactFlow();
   const [steps, setSteps] = useState<Draft[]>(() => detail.steps.map(toDraft));
   const [start, setStart] = useState(detail.start ?? detail.steps[0]?.id ?? '');
-  const [nodes, setNodes, onNodesChange] = useNodesState<Node>(initialNodes(detail));
+  const [auto, setAuto] = useState(() => layoutWorkflow(detail.steps, detail.start ?? detail.steps[0]?.id ?? ''));
+  const [nodes, setNodes, onNodesChange] = useNodesState<Node>(initialNodes(detail, auto));
   const [selEdge, setSelEdge] = useState<string | null>(null);
-  const [baseline, setBaseline] = useState(() => ({ steps: detail.steps.map(toDraft), start: detail.start ?? '', nodes: initialNodes(detail) }));
+  const flowBox = useRef<HTMLDivElement>(null);
+  // Until the user pans, zooms or drags, keep the whole graph in view as the canvas settles into its final size.
+  const moved = useRef(false);
+  useEffect(() => {
+    const el = flowBox.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => {
+      if (!moved.current) void flow.fitView(FIT);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [flow]);
+  const [baseline, setBaseline] = useState(() => ({ steps: detail.steps.map(toDraft), start: detail.start ?? '', nodes: initialNodes(detail, auto) }));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -171,7 +221,7 @@ function Editor({ detail, onSaved }: { detail: WorkflowDetail; onSaved: () => vo
   const step = steps.find((s) => s.id === selected);
   const byId = useMemo(() => new Map(steps.map((s) => [s.id, s])), [steps]);
   const posOf = useMemo(() => new Map(nodes.map((n) => [n.id, n.position])), [nodes]);
-  const isBack = useCallback((from: string, to: string) => (posOf.get(to)?.x ?? 0) <= (posOf.get(from)?.x ?? 0), [posOf]);
+  const isBack = useCallback((from: string, to: string) => (posOf.get(to)?.y ?? 0) <= (posOf.get(from)?.y ?? 0), [posOf]);
 
   // Keep each node's label in step with its draft.
   useEffect(() => {
@@ -187,25 +237,24 @@ function Editor({ detail, onSaved }: { detail: WorkflowDetail; onSaved: () => vo
             const back = isBack(s.id, o.to);
             const id = arrowKey(s.id, o.outcome);
             const on = selEdge === id;
-            const stroke = on ? '#5e6ad2' : /fail|reject|error|cant|changes/.test(o.outcome) ? '#d9863d' : '#9a9ba6';
+            const route = auto.routes.get(id);
+            const stroke = on ? 'var(--accent)' : /fail|reject|error|cant|changes/.test(o.outcome) ? 'var(--orange)' : 'var(--faint)';
             return {
               id,
               source: s.id,
               target: o.to,
               sourceHandle: back ? 'back-out' : 'out',
               targetHandle: back ? 'back-in' : 'in',
-              type: back ? 'default' : 'smoothstep',
-              label: o.max ? `${humanize(o.outcome).toLowerCase()} · at most ${o.max}×` : humanize(o.outcome).toLowerCase(),
-              labelStyle: { fontSize: 11, fill: on ? 'var(--accent-fg)' : 'var(--muted)' },
-              labelBgStyle: { fill: 'var(--surface)' },
-              labelBgPadding: [4, 2] as [number, number],
+              type: 'routed',
+              data: { route: route?.to === o.to && !back ? route : undefined, selected: on },
+              label: edgeLabel(o),
               style: { stroke, strokeWidth: on ? 2.5 : 1.5, strokeDasharray: back ? '5 4' : undefined },
               markerEnd: { type: MarkerType.ArrowClosed, color: stroke, width: 16, height: 16 },
               interactionWidth: 18,
             };
           }),
       ),
-    [steps, byId, isBack, selEdge],
+    [steps, byId, isBack, selEdge, auto],
   );
 
   const patch = (id: string, change: Partial<Draft>) => setSteps((ss) => ss.map((s) => (s.id === id ? { ...s, ...change } : s)));
@@ -314,6 +363,14 @@ function Editor({ detail, onSaved }: { detail: WorkflowDetail; onSaved: () => vo
     }
   };
 
+  const tidy = () => {
+    const next = layoutWorkflow(steps, start);
+    setAuto(next);
+    setNodes((ns) => ns.map((n) => (next.positions.has(n.id) ? { ...n, position: next.positions.get(n.id)! } : n)));
+    moved.current = false;
+    setTimeout(() => void flow.fitView({ ...FIT, duration: 200 }), 0);
+  };
+
   const discard = () => {
     setSteps(baseline.steps);
     setStart(baseline.start);
@@ -331,6 +388,9 @@ function Editor({ detail, onSaved }: { detail: WorkflowDetail; onSaved: () => vo
             + {KIND[k].label}
           </button>
         ))}
+        <button className="lx-btn" onClick={tidy} title="Arrange every step and arrow automatically">
+          Auto layout
+        </button>
         <span className="wf-spacer" />
         {error && <span className="wf-err">{error}</span>}
         {!error && problems[0] && dirty && <span className="wf-err" title={problems.join('\n')}>{problems[0]}</span>}
@@ -343,11 +403,12 @@ function Editor({ detail, onSaved }: { detail: WorkflowDetail; onSaved: () => vo
         </button>
       </div>
       <div className="wf-body">
-        <div className="wf-flow">
+        <div className="wf-flow" ref={flowBox}>
           <ReactFlow
             nodes={nodes}
             edges={edges}
             nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
             onNodesChange={onNodesChange}
             onConnect={onConnect}
             onNodeClick={() => setSelEdge(null)}
@@ -362,7 +423,9 @@ function Editor({ detail, onSaved }: { detail: WorkflowDetail; onSaved: () => vo
             deleteKeyCode={null}
             nodesDraggable
             fitView
-            fitViewOptions={{ padding: 0.1, minZoom: 0.3, maxZoom: 1 }}
+            onMoveStart={(e) => e && (moved.current = true)}
+            onNodeDragStart={() => (moved.current = true)}
+            fitViewOptions={FIT}
             minZoom={0.3}
             proOptions={{ hideAttribution: true }}
           >
@@ -393,7 +456,7 @@ function Editor({ detail, onSaved }: { detail: WorkflowDetail; onSaved: () => vo
               <p className="lx-hint">{steps.length} steps. Click a step to edit it.</p>
               <ul className="lx-hint">
                 <li>Drag a step to move it.</li>
-                <li>Drag from a step’s right dot onto another step to add an arrow.</li>
+                <li>Drag from a step’s bottom dot onto another step to add an arrow.</li>
                 <li>Click an arrow, then press Delete to remove it.</li>
                 <li>Delete removes the selected step.</li>
               </ul>

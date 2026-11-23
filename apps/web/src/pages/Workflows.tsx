@@ -5,7 +5,7 @@ import { WorkflowsIcon } from '../components/Icons';
 import { WorkflowEditor } from '../components/WorkflowEditor';
 import { AGENTS, humanize } from '../lib/format';
 import { useLiveResource } from '../lib/live';
-import { href, navigate } from '../lib/router';
+import { href } from '../lib/router';
 import { KIND } from '../lib/stepKinds';
 
 function what(s: WorkflowStep): string {
@@ -38,15 +38,6 @@ export function WorkflowsPage({ file }: { file?: string }) {
         </div>
         {w && (
           <>
-          {tab === 'canvas' && (list.data?.length ?? 0) > 1 && sel && (
-            <select className="wf-pick" aria-label="Workflow" value={sel} onChange={(e) => navigate(href.workflow(e.target.value))}>
-              {(list.data ?? []).map((x) => (
-                <option key={x.path} value={x.file}>
-                  {x.name}
-                </option>
-              ))}
-            </select>
-          )}
           <div className="ox-seg" role="group" aria-label="Workflow view" style={{ marginLeft: 10 }}>
             <button aria-pressed={tab === 'canvas'} onClick={() => setTab('canvas')}>
               Canvas
@@ -62,7 +53,7 @@ export function WorkflowsPage({ file }: { file?: string }) {
         )}
       </div>
       <div className="ox-set">
-        <nav className="ox-snav" aria-label="Workflows" style={{ flexBasis: 240, display: tab === 'canvas' && w && !w.error ? 'none' : undefined }}>
+        <nav className="ox-snav" aria-label="Workflows" style={{ flexBasis: 240 }}>
           {(list.data ?? []).map((x) => (
             <a key={x.path} className="ox-snb ox-wfitem" href={href.workflow(x.file)} aria-current={x.file === sel ? 'page' : undefined}>
               <span className="ox-trunc">{x.name}</span>
