@@ -151,14 +151,16 @@ describe('mergeTaskBranch', () => {
 });
 
 describe('the Simple workflow Orstra ships', () => {
-  it('runs the merge on the close outcome of the Done step, then ends', () => {
+  it('runs the merge as soon as you approve, then asks you to close it', () => {
     const path = fileURLToPath(new URL('../../../workflows/simple.yaml', import.meta.url));
     const wf = parseWorkflow(readFileSync(path, 'utf8'));
-    expect(wf.steps.done.on.close.goto).toBe('merge');
-    expect(wf.steps.done.on.reopen.goto).toBe('work');
+    expect(wf.steps.review.on.approved.goto).toBe('merge');
+    expect(wf.steps.review.on.changes_requested.goto).toBe('work');
     expect(wf.steps.merge.use).toBe('action');
     expect(wf.steps.merge.action).toBe('git.merge');
-    expect(wf.steps.merge.on).toEqual({ ok: { goto: 'end' } });
+    expect(wf.steps.merge.on).toEqual({ ok: { goto: 'done' } });
+    expect(wf.steps.done.on.close.goto).toBe('end');
+    expect(wf.steps.done.on.reopen.goto).toBe('work');
   });
 });
 
