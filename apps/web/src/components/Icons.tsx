@@ -102,6 +102,13 @@ export const ChevronRight = ({ open, size = 12 }: { open?: boolean; size?: numbe
     <path d="m9 6 6 6-6 6" />
   </Stroke>
 );
+/** Shows and hides a side panel: a frame with its left column marked off. */
+export const PanelIcon = (p: P) => (
+  <Stroke {...p}>
+    <rect x="3" y="4" width="18" height="16" rx="2" />
+    <path d="M9 4v16" />
+  </Stroke>
+);
 export const MoreIcon = () => (
   <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
     <circle cx="5" cy="12" r="1.7" />

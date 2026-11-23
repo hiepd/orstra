@@ -3,6 +3,7 @@ import { api, type TaskSummary } from '../api';
 import { PlusIcon, TasksIcon } from '../components/Icons';
 import { taskLabel } from '../lib/format';
 import { useLiveResource, useNow } from '../lib/live';
+import { remember, store } from '../lib/remember';
 import { href } from '../lib/router';
 import { agentMeta, STATE, stepLabel, taskState, type StateGroup } from '../lib/taskState';
 import { age } from '../lib/time';
@@ -21,21 +22,6 @@ const LIST_GROUPS: { group: StateGroup; name: string; color: string }[] = [
   { group: 'queued', name: 'Queued', color: 'var(--faint)' },
   { group: 'done', name: 'Done or stopped', color: 'var(--green-fg)' },
 ];
-
-const remember = <T extends string>(key: string, fallback: T): T => {
-  try {
-    return (window.localStorage.getItem(key) as T | null) ?? fallback;
-  } catch {
-    return fallback;
-  }
-};
-const store = (key: string, value: string) => {
-  try {
-    window.localStorage.setItem(key, value);
-  } catch {
-    /* private mode: just don't remember */
-  }
-};
 
 function StatusText({ t }: { t: TaskSummary }) {
   const s = taskState(t);
