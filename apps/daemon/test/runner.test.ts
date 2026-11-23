@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { execFileSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -51,13 +52,13 @@ function fakeExecutors(reply: (text: string, n: number, opts: SessionOptions) =>
   return { exec, sent, sessions };
 }
 
-function setup(yaml: string, reply: (text: string, n: number, opts: SessionOptions) => string | null, gate: (n: number) => boolean = () => true) {
+function setup(yaml: string, reply: (text: string, n: number, opts: SessionOptions) => string | null, gate: (n: number) => boolean = () => true, worktree?: string) {
   const dir = mkdtempSync(join(tmpdir(), 'orstra-test-'));
   const wfPath = join(dir, 'wf.yaml');
   writeFileSync(wfPath, yaml);
   const fake = fakeExecutors(reply, gate);
   const store = new Store(':memory:');
-  const runner = new Runner(store, fake.exec, { slots: 2, createWorktree: () => dir, turnGraceMs: 0 });
+  const runner = new Runner(store, fake.exec, { slots: 2, createWorktree: () => worktree ?? dir, turnGraceMs: 0 });
   const prompts = () => fake.sent.filter((s, i) => fake.sent.findIndex((x) => x.sessionId === s.sessionId) === i && !s.resume).map((s) => s.text);
   return { store, runner, wfPath, prompts, fake, dir };
 }
@@ -77,7 +78,43 @@ steps:
       fail: { goto: impl, max: 2 }
 `;
 
+/** The Simple workflow's tail: you close the task, and the merge step runs. */
+const CLOSE = `
+name: Close
+steps:
+  work:
+    use: agent
+    prompt: Do {{ trigger.title }}
+    next: review
+  review:
+    use: human
+    question: Close it?
+    choices: [close, reopen]
+    on:
+      close: merge
+      reopen: work
+  merge:
+    use: action
+    action: git.merge
+    next: end
+`;
+
 const done = (did: string) => `## Progress\nDid: ${did}\nDecided: nothing\nLeft: nothing\nAvoid: nothing\n\nOUTCOME: done`;
+
+const sh = (cwd: string, ...args: string[]) =>
+  execFileSync('git', args, { cwd, stdio: 'pipe', env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' } });
+
+/** A repository with one commit on main, plus a task worktree on branch orstra/t1. */
+function repoWithTask() {
+  const repo = mkdtempSync(join(tmpdir(), 'orstra-test-repo-'));
+  sh(repo, 'init', '-q', '-b', 'main');
+  writeFileSync(join(repo, 'app.ts'), 'export const a = 1;\n');
+  sh(repo, 'add', '.');
+  sh(repo, 'commit', '-q', '-m', 'base');
+  const wt = join(mkdtempSync(join(tmpdir(), 'orstra-test-wt-')), 't1');
+  sh(repo, 'worktree', 'add', '-q', wt, '-b', 'orstra/t1');
+  return { repo, wt };
+}
 
 describe('Runner', () => {
   it('retries through a failing gate with a fresh session that sees earlier progress', async () => {
@@ -196,6 +233,42 @@ steps:
     await runner.message(task.id, 'Do it this way instead', 'chat');
     await runner.idle();
     expect(store.task(task.id)!.status).toBe('done');
+  });
+
+  it('merges the task branch on close, and sends a conflict to the inbox', async () => {
+    const repoWork = (wt: string) => {
+      writeFileSync(join(wt, 'app.ts'), 'export const a = 2;\n');
+      sh(wt, 'commit', '-q', '-am', 'change a');
+    };
+
+    // Close with a clean main checkout: the branch is merged and the task finishes.
+    const first = repoWithTask();
+    const a = setup(CLOSE, () => (repoWork(first.wt), done('changed a')), () => true, first.wt);
+    const taskA = a.runner.startTask({ workflowPath: a.wfPath, title: 'merge me' });
+    await a.runner.idle();
+    a.runner.decide(a.store.runsForTask(taskA.id).find((r) => r.status === 'waiting')!.id, 'close');
+    await a.runner.idle();
+    expect(a.store.task(taskA.id)!.status).toBe('done');
+    const mergeRun = a.store.runsForTask(taskA.id).find((r) => r.step_id === 'merge')!;
+    expect(mergeRun.outcome).toBe('ok');
+    expect(mergeRun.output).toContain('Merged orstra/t1 into main');
+    expect(sh(first.repo, 'show', 'HEAD:app.ts').toString()).toBe('export const a = 2;\n');
+
+    // Close when main moved the same line: nothing is merged and the task comes to you.
+    const second = repoWithTask();
+    const b = setup(CLOSE, () => (repoWork(second.wt), done('changed a')), () => true, second.wt);
+    const taskB = b.runner.startTask({ workflowPath: b.wfPath, title: 'conflict' });
+    await b.runner.idle();
+    writeFileSync(join(second.repo, 'app.ts'), 'export const a = 99;\n');
+    sh(second.repo, 'commit', '-q', '-am', 'main side');
+    const head = sh(second.repo, 'rev-parse', 'HEAD').toString();
+    b.runner.decide(b.store.runsForTask(taskB.id).find((r) => r.status === 'waiting')!.id, 'close');
+    await b.runner.idle();
+    const t = b.store.task(taskB.id)!;
+    expect(t.status).toBe('needs_you');
+    expect(t.inbox_reason).toBe('conflict');
+    expect(sh(second.repo, 'rev-parse', 'HEAD').toString()).toBe(head);
+    expect(sh(second.repo, 'status', '--porcelain').toString()).toBe('');
   });
 
   it('hands notes to the next run of that step', async () => {

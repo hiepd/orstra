@@ -35,7 +35,7 @@ One node in a workflow. Each step has a kind:
 | `gate` | Runs shell commands, such as tests | `pass`, `fail` |
 | `human` | Waits for your decision | one outcome per choice (`approved`, `changes_requested`, `rejected`, …) |
 | `switch` | Picks a branch from the task's data | the matching case |
-| `action` | Calls a service (Linear, GitHub, Slack) | `ok`, `error` |
+| `action` | Runs one named action, such as `git.merge` | `ok`, `error`, `conflict` |
 
 Arrows say where each outcome goes. Backward arrows (retries) must have a cap: `{ goto: impl, max: 3 }`.
 
@@ -79,6 +79,15 @@ Your answer at a `human` step. You see what you're deciding (e.g. the spec, the 
 
 ### Worktree
 The task's own working copy: `git worktree` on branch `orstra/<task>`. All of a task's runs work in it, one after another.
+
+### Merge
+The `git.merge` action, the last step of the Simple workflow. When you close a task, it merges the task's branch into the branch the repository has checked out.
+
+- Local only. It never pushes, and it never forces a merge.
+- It does nothing when the task branch has no new commit, or when the task has its own scratch repository (a task started without a repo).
+- It refuses to start when the main checkout has uncommitted changes. The task goes to the Inbox and tells you to commit or stash them.
+- On a conflict it runs `git merge --abort`, so the repository is as it was, and the task goes to the Inbox.
+- The worktree and the branch are kept either way, so the task's diffs and any uncommitted work stay readable. Remove them by hand when you are done: `git worktree remove <path>`.
 
 ### Agent
 A coding CLI Orstra can drive: Claude Code today, Codex next. Configured in Settings (command, model, limits, which of your skills and MCP servers it gets).
