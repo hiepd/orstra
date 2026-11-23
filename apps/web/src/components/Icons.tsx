@@ -21,6 +21,12 @@ export const SearchIcon = () => (
     <path d="m20 20-3.5-3.5" />
   </Stroke>
 );
+export const CosIcon = () => (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <rect x="3" y="7" width="18" height="13" rx="2" />
+    <path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2M3 13h18" />
+  </svg>
+);
 export const InboxIcon = (p: P) => (
   <Stroke {...p}>
     <path d="M3 13h5l1.5 3h5l1.5-3h5" />
@@ -146,13 +152,13 @@ export const CopyIcon = () => (
 
 export const DoneCircle = ({ label = 'Done' }: { label?: string }) => (
   <svg width="14" height="14" viewBox="0 0 14 14" aria-label={label} role="img">
-    <circle cx="7" cy="7" r="6.5" fill="#5E6AD2" />
+    <circle cx="7" cy="7" r="6.5" fill="var(--accent)" />
     <path d="m4.2 7.2 1.9 1.9 3.8-4" fill="none" stroke="#FFFFFF" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
   </svg>
 );
 export const FailCircle = ({ label = 'Failed' }: { label?: string }) => (
   <svg width="14" height="14" viewBox="0 0 14 14" aria-label={label} role="img">
-    <circle cx="7" cy="7" r="6.5" fill="#E5484D" />
+    <circle cx="7" cy="7" r="6.5" fill="var(--red)" />
     <path d="m4.8 4.8 4.4 4.4M9.2 4.8 4.8 9.2" fill="none" stroke="#FFFFFF" strokeWidth="1.6" strokeLinecap="round" />
   </svg>
 );
@@ -164,25 +170,25 @@ export const LiveCircle = ({ label = 'In progress', color = '#F2C94C' }: { label
 );
 export const WaitCircle = ({ label = 'Waiting for you' }: { label?: string }) => (
   <svg width="14" height="14" viewBox="0 0 14 14" aria-label={label} role="img">
-    <circle cx="7" cy="7" r="6" fill="none" stroke="#5E6AD2" strokeWidth="1.6" />
-    <path d="M7 7V3.2A3.8 3.8 0 1 1 3.2 7z" fill="#5E6AD2" />
+    <circle cx="7" cy="7" r="6" fill="none" stroke="var(--accent)" strokeWidth="1.6" />
+    <path d="M7 7V3.2A3.8 3.8 0 1 1 3.2 7z" fill="var(--accent)" />
   </svg>
 );
 export const StuckCircle = ({ label = 'Stuck' }: { label?: string }) => (
   <svg width="14" height="14" viewBox="0 0 14 14" aria-label={label} role="img">
-    <circle cx="7" cy="7" r="6.5" fill="#E5484D" />
+    <circle cx="7" cy="7" r="6.5" fill="var(--red)" />
     <path d="M7 3.8v3.7M7 9.9v.2" fill="none" stroke="#FFFFFF" strokeWidth="1.6" strokeLinecap="round" />
   </svg>
 );
 export const TodoCircle = ({ label = 'Not started', dashed }: { label?: string; dashed?: boolean }) => (
   <svg width="14" height="14" viewBox="0 0 14 14" aria-label={label} role="img">
-    <circle cx="7" cy="7" r="6" fill="none" stroke="#B4B5BD" strokeWidth="1.6" strokeDasharray={dashed ? '2.2 2' : undefined} />
+    <circle cx="7" cy="7" r="6" fill="none" stroke="var(--dim)" strokeWidth="1.6" strokeDasharray={dashed ? '2.2 2' : undefined} />
   </svg>
 );
 export const StoppedCircle = ({ label = 'Stopped' }: { label?: string }) => (
   <svg width="14" height="14" viewBox="0 0 14 14" aria-label={label} role="img">
-    <circle cx="7" cy="7" r="6" fill="none" stroke="#8A8A93" strokeWidth="1.6" />
-    <path d="M4.6 9.4 9.4 4.6" stroke="#8A8A93" strokeWidth="1.6" strokeLinecap="round" />
+    <circle cx="7" cy="7" r="6" fill="none" stroke="var(--faint)" strokeWidth="1.6" />
+    <path d="M4.6 9.4 9.4 4.6" stroke="var(--faint)" strokeWidth="1.6" strokeLinecap="round" />
   </svg>
 );
 export const CheckToast = () => (

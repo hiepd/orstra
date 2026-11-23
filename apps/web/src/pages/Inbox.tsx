@@ -51,7 +51,7 @@ export function InboxPage() {
           )}
           {res.data && all.length === 0 && (
             <div className="lx-empty" style={{ padding: '48px 0 8px' }}>
-              <span style={{ color: '#B4B5BD' }}>
+              <span style={{ color: 'var(--dim)' }}>
                 <InboxIcon />
               </span>
               <b>Nothing needs you</b>
@@ -98,7 +98,7 @@ export function InboxPage() {
           ))}
           {tasks.data && (running > 0 || queued > 0) && (
             <div className="ox-calm">
-              <span className="ox-sd ox-live" style={{ background: '#5E6AD2' }} />
+              <span className="ox-sd ox-live" style={{ background: 'var(--accent)' }} />
               <span>
                 {running} {running === 1 ? 'task is' : 'tasks are'} running and {queued} queued. {all.length ? 'Nothing else needs you.' : ''}
               </span>

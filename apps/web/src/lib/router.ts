@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 export type TaskViewName = 'overview' | 'chat';
 
 export type Route =
+  | { name: 'cos' }
   | { name: 'inbox' }
   | { name: 'tasks' }
   | { name: 'task'; id: string; view: TaskViewName; runId?: string }
@@ -11,9 +12,9 @@ export type Route =
   | { name: 'notFound'; path: string };
 
 export function parseHash(hash: string): Route {
-  const path = hash.replace(/^#/, '') || '/inbox';
+  const path = hash.replace(/^#/, '') || '/';
   const parts = path.split('/').filter(Boolean).map(decodeURIComponent);
-  if (parts.length === 0) return { name: 'inbox' };
+  if (parts.length === 0) return { name: 'cos' };
   // "sessions" was a page in an earlier version; a task's sessions now live on its Chat view.
   if ((parts[0] === 'inbox' || parts[0] === 'sessions') && parts.length === 1) return { name: 'inbox' };
   if (parts[0] === 'tasks') {
@@ -27,6 +28,7 @@ export function parseHash(hash: string): Route {
 }
 
 export const href = {
+  cos: '#/',
   inbox: '#/inbox',
   tasks: '#/tasks',
   task: (id: string) => `#/tasks/${encodeURIComponent(id)}`,
@@ -43,7 +45,7 @@ export function navigate(to: string) {
 export function useRoute(): Route {
   const [route, setRoute] = useState(() => parseHash(window.location.hash));
   useEffect(() => {
-    if (!window.location.hash) window.history.replaceState(null, '', href.inbox);
+    if (!window.location.hash) window.history.replaceState(null, '', href.cos);
     const onChange = () => setRoute(parseHash(window.location.hash));
     window.addEventListener('hashchange', onChange);
     onChange();

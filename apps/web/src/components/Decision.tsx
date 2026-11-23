@@ -156,7 +156,7 @@ export function AwaitingCard({ task, children }: { task: TaskDetail; children?: 
     <section className="lx-card lx-await" aria-label={title}>
       <div className="lx-card-h">
         {a.reason === 'paused' ? <StopIcon /> : <WaitCircle />}
-        <span style={{ color: '#1B1B1F', fontWeight: 500 }}>{title}</span>
+        <span style={{ color: 'var(--ink)', fontWeight: 500 }}>{title}</span>
         {run && (
           <span>
             · {run.stepTitle}
@@ -180,7 +180,7 @@ export function StuckBanner({ task, onDone }: { task: TaskDetail; onDone?: () =>
     <section className="lx-card lx-stuck" aria-label="Needs you">
       <div className="lx-card-h">
         <StuckCircle />
-        <span style={{ color: '#C4292F', fontWeight: 500 }}>{reasonText(task.inboxReason)}</span>
+        <span style={{ color: 'var(--red-fg)', fontWeight: 500 }}>{reasonText(task.inboxReason)}</span>
       </div>
       {lastSystem && lastSystem.kind === 'system' && <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.55 }}>{lastSystem.text}</p>}
       {lastRun?.progress && (

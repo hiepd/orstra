@@ -144,12 +144,12 @@ function TaskView({ task, view, runId }: { task: TaskDetail; view: TaskViewName;
 
 const KIND: Record<string, string> = { agent: 'agent', gate: 'checks', human: 'your decision', switch: 'picks a branch', action: 'action', workflow: 'starts a workflow' };
 const TONE = {
-  ok: { bg: '#EAF6EF', fg: '#1A7F4B' },
-  fail: { bg: '#FCEBEA', fg: '#C4302B' },
-  live: { bg: '#EEF0FB', fg: '#4B55B8' },
-  wait: { bg: '#F3EEFC', fg: '#7444C2' },
-  back: { bg: '#FDF0E8', fg: '#B4531B' },
-  plain: { bg: '#F0F1F4', fg: '#5A5A63' },
+  ok: { bg: 'var(--green-soft)', fg: 'var(--green-fg)' },
+  fail: { bg: 'var(--red-soft)', fg: 'var(--red-fg)' },
+  live: { bg: 'var(--accent-soft)', fg: 'var(--accent-fg)' },
+  wait: { bg: 'var(--purple-soft)', fg: 'var(--purple-fg)' },
+  back: { bg: 'var(--orange-soft)', fg: 'var(--orange-fg)' },
+  plain: { bg: 'var(--line-3)', fg: 'var(--grey-fg)' },
 };
 
 /** How a run ended, as a badge: "done", "fail → Implement", "waiting for you". */
@@ -188,7 +188,7 @@ function Overview({ task, git, onModal }: { task: TaskDetail; git: Resource<GitV
     if (r.status === 'waiting' && r.kind === 'agent') return 'The session is open and waiting for you.';
     if (r.kind === 'human') {
       const d = task.events.find((e) => e.runId === r.id && e.kind === 'you' && e.mode === 'decision');
-      if (d && d.kind === 'you') return `You chose “${humanize(d.choice ?? r.outcome ?? '').toLowerCase()}”.` + (d.text ? ` You said: “${d.text}”` : '');
+      if (d && d.kind === 'you') return `${d.via === 'cos' ? 'Your chief of staff chose (with your OK)' : 'You chose'} “${humanize(d.choice ?? r.outcome ?? '').toLowerCase()}”.` + (d.text ? ` Comment: “${d.text}”` : '');
       return r.status === 'waiting' ? 'Waiting for your decision.' : null;
     }
     if (r.kind === 'switch' || r.kind === 'action') {
@@ -272,7 +272,8 @@ function Overview({ task, git, onModal }: { task: TaskDetail; git: Resource<GitV
                   const badge = outcomeBadge(task, r);
                   const text = runText(r);
                   const o = isOpen(r, i);
-                  const who = r.kind === 'agent' || r.kind === 'gate' ? agentOf(r).name : r.kind === 'human' ? 'You' : 'Orstra';
+                  const byCos = task.events.some((e) => e.runId === r.id && e.kind === 'you' && e.mode === 'decision' && e.via === 'cos');
+                  const who = r.kind === 'agent' || r.kind === 'gate' ? agentOf(r).name : r.kind === 'human' ? (byCos ? 'Chief of staff' : 'You') : 'Orstra';
                   return (
                     <div key={r.id} className="ox-run">
                       <button className="ox-runh" aria-expanded={o} onClick={() => setOpen((m) => ({ ...m, [r.id]: !o }))}>

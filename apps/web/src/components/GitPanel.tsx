@@ -14,10 +14,10 @@ export function useGit(taskId: string): Resource<GitView> {
 type Tab = 'changes' | 'checks' | 'commits';
 
 const CHECK: Record<Check['state'], { color: string; label: string; path: string }> = {
-  pass: { color: '#1A7F4B', label: 'Passed', path: 'm4.2 7.2 1.9 1.9 3.8-4' },
-  fail: { color: '#E5484D', label: 'Failed', path: 'm4.8 4.8 4.4 4.4M9.2 4.8 4.8 9.2' },
+  pass: { color: 'var(--green-fg)', label: 'Passed', path: 'm4.2 7.2 1.9 1.9 3.8-4' },
+  fail: { color: 'var(--red)', label: 'Failed', path: 'm4.8 4.8 4.4 4.4M9.2 4.8 4.8 9.2' },
   running: { color: '#3B82F6', label: 'Running', path: 'M5.4 4.6v4.8l4-2.4z' },
-  stopped: { color: '#A0A1A9', label: 'Stopped', path: 'M4.5 7h5' },
+  stopped: { color: 'var(--dim)', label: 'Stopped', path: 'M4.5 7h5' },
 };
 
 /**
@@ -80,7 +80,7 @@ export function GitPanel({ task, git, openPath, onOpenPath }: { task: TaskDetail
               #{g.pr.number} · {g.pr.state}
             </a>
           ) : (
-            <span className="ox-gvp" style={{ color: '#8A8A93' }}>
+            <span className="ox-gvp" style={{ color: 'var(--faint)' }}>
               Not opened yet
             </span>
           )}
@@ -146,7 +146,7 @@ export function GitPanel({ task, git, openPath, onOpenPath }: { task: TaskDetail
           <>
             {g.commits.map((c) => (
               <div key={c.sha} className="ox-cmt">
-                <span className="ox-gv" style={{ color: '#6F6F78' }}>
+                <span className="ox-gv" style={{ color: 'var(--muted)' }}>
                   {c.sha}
                 </span>
                 <span className="ox-trunc" title={c.message}>

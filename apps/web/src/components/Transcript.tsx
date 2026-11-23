@@ -33,7 +33,7 @@ function WorkFold({ tools, from, to, live }: { tools: ToolEvent[]; from: number;
   return (
     <div>
       <button className="ox-fold" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
-        {live && <span className="ox-sd ox-live" style={{ background: '#5E6AD2', width: 6, height: 6 }} />}
+        {live && <span className="ox-sd ox-live" style={{ background: 'var(--accent)', width: 6, height: 6 }} />}
         <span>{live ? `Working for ${duration(from, Date.now())}` : `Worked for ${duration(from, to)}`}</span>
         <ChevronRight open={open} size={11} />
         <span className="ox-fsum">{summarize(tools)}</span>
@@ -117,6 +117,7 @@ export function Transcript({ run, events, working, agentName }: { run: RunView; 
             <div className="ox-user">
               <div className="ox-bubble">
                 {e.mode === 'ask' && <span className="ox-tag">Asked a copy</span>}
+                {e.via === 'cos' && <span className="ox-tag">Sent by your chief of staff</span>}
                 {e.text}
               </div>
             </div>

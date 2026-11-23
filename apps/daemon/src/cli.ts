@@ -1,5 +1,8 @@
 import { parseArgs } from 'node:util';
-import { DB_PATH, PORT, SLOTS, ensureDirs } from './paths.ts';
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { COS_DIR, DB_PATH, PORT, SLOTS, TSX, ensureDirs } from './paths.ts';
 
 const HELP = `orstra — a local software factory
 
@@ -44,7 +47,21 @@ async function main() {
       const store = new Store(DB_PATH);
       const runner = new Runner(store, realExecutors, { slots: SLOTS, createWorktree });
       runner.recover();
-      startServer(store, runner, PORT);
+
+      // The chief of staff: Claude Code with Orstra's tools (served by cos-mcp.ts) and no built-in tools.
+      const { ChiefOfStaff } = await import('./cos.ts');
+      const { COS_PROMPT } = await import('./cos-tools.ts');
+      const { makeViews } = await import('./server.ts');
+      const mcpConfig = join(COS_DIR, 'mcp.json');
+      const mcpScript = fileURLToPath(new URL('./cos-mcp.ts', import.meta.url));
+      writeFileSync(mcpConfig, JSON.stringify({ mcpServers: { orstra: { type: 'stdio', command: TSX, args: [mcpScript], env: { ORSTRA_PORT: String(PORT) } } } }, null, 2));
+      const cos = new ChiefOfStaff(store, runner, realExecutors, makeViews(store, runner), {
+        cwd: COS_DIR,
+        model: process.env.ORSTRA_COS_MODEL,
+        toolArgs: ['--tools', '', '--mcp-config', mcpConfig, '--strict-mcp-config', '--allowedTools', 'mcp__orstra', '--permission-mode', 'default', '--append-system-prompt', COS_PROMPT],
+      });
+      startServer(store, runner, PORT, cos);
+      cos.start();
       console.log(`Orstra is running at http://localhost:${PORT}  (data: ${DB_PATH})`);
       return;
     }

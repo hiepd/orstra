@@ -44,7 +44,7 @@ export function AgentAvatar({ run, large }: { run: Pick<RunView, 'kind' | 'agent
 }
 
 export const YouAvatar = () => (
-  <span className="lx-av" style={{ background: '#5E6AD2' }} title="You">
+  <span className="lx-av" style={{ background: 'var(--accent)' }} title="You">
     Y
   </span>
 );

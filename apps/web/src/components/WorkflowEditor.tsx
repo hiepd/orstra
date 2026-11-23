@@ -196,8 +196,8 @@ function Editor({ detail, onSaved }: { detail: WorkflowDetail; onSaved: () => vo
               targetHandle: back ? 'back-in' : 'in',
               type: back ? 'default' : 'smoothstep',
               label: o.max ? `${humanize(o.outcome).toLowerCase()} · at most ${o.max}×` : humanize(o.outcome).toLowerCase(),
-              labelStyle: { fontSize: 11, fill: on ? '#4b55b8' : '#6f6f78' },
-              labelBgStyle: { fill: '#fff' },
+              labelStyle: { fontSize: 11, fill: on ? 'var(--accent-fg)' : 'var(--muted)' },
+              labelBgStyle: { fill: 'var(--surface)' },
               labelBgPadding: [4, 2] as [number, number],
               style: { stroke, strokeWidth: on ? 2.5 : 1.5, strokeDasharray: back ? '5 4' : undefined },
               markerEnd: { type: MarkerType.ArrowClosed, color: stroke, width: 16, height: 16 },
@@ -366,7 +366,7 @@ function Editor({ detail, onSaved }: { detail: WorkflowDetail; onSaved: () => vo
             minZoom={0.3}
             proOptions={{ hideAttribution: true }}
           >
-            <Background variant={BackgroundVariant.Dots} gap={18} size={1} color="#dcdde3" />
+            <Background variant={BackgroundVariant.Dots} gap={18} size={1} color="var(--line-2)" />
             <Controls showInteractive={false} />
           </ReactFlow>
         </div>
