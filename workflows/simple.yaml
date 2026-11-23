@@ -1,0 +1,31 @@
+name: Simple
+description: The agent does the work, you review it, and you can reopen it after it is done.
+
+steps:
+  work:
+    title: In progress
+    use: agent
+    prompt: |
+      Do the task "{{ trigger.title }}".
+      {{ trigger.description }}
+      If a human left feedback or asked for more changes, address it first.
+    next: review
+
+  review:
+    title: In review
+    use: human
+    question: Is the work good?
+    on:
+      approved: done
+      changes_requested: work
+
+  done:
+    title: Done
+    use: human
+    question: The work is finished. Close it, or reopen it to ask for more changes.
+    choices:
+      - close
+      - reopen
+    on:
+      close: end
+      reopen: work

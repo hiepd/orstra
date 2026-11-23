@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { FINISH_INSTRUCTIONS, parseAgentResult, parseWorkflow, renderTemplate, route, stripProgressBlock, type Progress, type Step, type Workflow } from '@orstra/core';
 import type { Executors, LiveSession, StreamEvent, TurnEnd } from './executors.ts';
 import type { RunRow, Store, TaskRow } from './db.ts';
+import { locateWorkflow } from './workflows.ts';
 
 export interface StartTaskInput {
   workflowPath: string;
@@ -52,6 +53,7 @@ export class Runner extends EventEmitter {
   }
 
   workflow(path: string): Workflow {
+    path = locateWorkflow(path);
     let wf = this.workflows.get(path);
     if (!wf) {
       wf = parseWorkflow(readFileSync(path, 'utf8'));

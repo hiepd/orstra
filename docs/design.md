@@ -36,7 +36,7 @@ Task, workflow, step, trigger, run, session, outcome, progress entry, note and d
 apps/web      React + Vite UI (Linear-style), talks to the daemon over HTTP + SSE
 apps/daemon   Node daemon: HTTP API, SSE events, runner, SQLite store, CLI
 packages/core Workflow schema + parser, outcome routing, templating (pure, tested)
-workflows/    Example workflow YAML files
+workflows/    Default workflows, copied into ~/.orstra/workflows/ on first run (the daemon loads only that folder)
 ```
 
 - **Store:** SQLite via Node's built-in `node:sqlite` at `~/.orstra/orstra.db` (no native deps).

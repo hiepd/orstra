@@ -23,7 +23,7 @@ Or use **New task** in the UI.
 
 ## Workflows
 
-YAML files in `workflows/` or `~/.orstra/workflows/`. Steps are `agent`, `gate`, `human`, `switch`, `action`. Every step ends with an outcome; arrows (`next:` / `on:`) say where each outcome goes; loops need a cap (`{ goto: impl, max: 3 }`). Anything unmatched goes to your Inbox.
+YAML files in `~/.orstra/workflows/` (user config; override the folder with `ORSTRA_WORKFLOWS`). Steps are `agent`, `gate`, `human`, `switch`, `action`. Every step ends with an outcome; arrows (`next:` / `on:`) say where each outcome goes; loops need a cap (`{ goto: impl, max: 3 }`). Anything unmatched goes to your Inbox.
 
 ```yaml
 name: Hello Orstra
@@ -51,7 +51,7 @@ steps:
 
 Each run is a fresh `claude -p` session (stream-json) in the task's worktree, with a known session id. The prompt includes the task's progress entries from earlier runs and any notes you left. The agent ends with a `## Progress` block and an `OUTCOME:` line. Open any session in Claude Code with the command shown in the UI (`claude --resume <id>`).
 
-Settings via environment variables: `ORSTRA_HOME` (default `~/.orstra`), `ORSTRA_PORT` (4317), `ORSTRA_SLOTS` (4), `ORSTRA_CLAUDE_PERMISSION` (`acceptEdits`), `ORSTRA_CLAUDE_TOOLS` (`Bash Read Edit Write Glob Grep`).
+Settings via environment variables: `ORSTRA_HOME` (default `~/.orstra`), `ORSTRA_WORKFLOWS` (default `$ORSTRA_HOME/workflows`), `ORSTRA_PORT` (4317), `ORSTRA_SLOTS` (4), `ORSTRA_CLAUDE_PERMISSION` (`acceptEdits`), `ORSTRA_CLAUDE_TOOLS` (`Bash Read Edit Write Glob Grep`).
 
 ## Develop
 

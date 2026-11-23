@@ -23,7 +23,7 @@ Trigger ──starts──▶ Task ──follows──▶ Workflow
 ### Workflow
 A reusable recipe, written as a YAML file: a list of steps and the arrows between them. "Linear ticket → PR" is a workflow. It does nothing on its own until a trigger (or you) starts a task with it.
 
-- Lives in `workflows/*.yaml` or `~/.orstra/workflows/`.
+- Lives in `~/.orstra/workflows/*.yaml`.
 - Edited on the **Workflows** screen (the canvas) or as YAML. Both edit the same file.
 
 ### Step

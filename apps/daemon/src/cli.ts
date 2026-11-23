@@ -45,6 +45,9 @@ async function main() {
       const { createWorktree } = await import('./worktree.ts');
       const { startServer } = await import('./server.ts');
       const store = new Store(DB_PATH);
+      const { migrateWorkflowPaths } = await import('./workflows.ts');
+      const moved = migrateWorkflowPaths(store);
+      if (moved) console.log(`Re-pointed ${moved} task(s) at their workflow in the workflow folder.`);
       const runner = new Runner(store, realExecutors, { slots: SLOTS, createWorktree });
       runner.recover();
 
