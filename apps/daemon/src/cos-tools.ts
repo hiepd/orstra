@@ -111,10 +111,11 @@ export const COS_BUILTIN_TOOLS = ['Bash', 'Read', 'Edit', 'Write', 'Glob', 'Grep
  * The Claude Code flags for the chief of staff's session: Orstra's tools over MCP plus a task agent's
  * built-in tools, and its working folders (see cosDirs in paths.ts).
  *
- * Nothing here can ask the user a question. The session runs with `-p`, where nobody answers a permission
- * prompt, so one prompt would hang the conversation. Three flags prevent that: --tools leaves only the 6
- * built-in tools, --allowedTools approves those 6 and every Orstra tool up front, and
- * --permission-prompts none denies anything else at once instead of waiting for an answer.
+ * Nothing here can ask the user a question. The session runs with `-p`, and the daemon answers no
+ * permission request, so Claude Code refuses the call at once: the tool fails and only the model learns
+ * why. Three flags keep that from happening. --tools leaves only the 6 built-in tools, --allowedTools
+ * approves those 6 and every Orstra tool up front, and --permission-prompts none makes the refusal of
+ * anything else explicit instead of a question that waits.
  *
  * An approved tool is approved for every path, so Read, Write and Edit are not held to --add-dir, the
  * same as a task agent. The folders are the session's workspace: relative paths, Glob and Grep work in
