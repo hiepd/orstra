@@ -74,6 +74,11 @@ What a run did, written when it ends: **Did · Decided · Left · Avoid**. It is
 ### Note
 Something you write **on a step that hasn't run yet**, for its next run to read ("also run the e2e suite"). A note is never sent to a running agent. To talk to a running agent, chat with its session.
 
+### Attachment
+A file **you** add to a chat message: a screenshot you paste, a log you drop, a PDF you pick. Orstra writes it into the task's worktree under `.orstra/attachments/<id>/` and puts its path at the end of your message, so the agent can open it. `.orstra/` stays out of git through the repository's own exclude file, never your `.gitignore`, so no attachment reaches your branch. The caps are 10 MB per file and 25 MB per message; over them, Orstra tells you and attaches nothing.
+
+An attachment is a file **you** add. A file a **step** produces is an **artifact** (not built yet). One root, 2 folders: `.orstra/attachments/` and `.orstra/artifacts/`.
+
 ### Decision
 Your answer at a `human` step. You see what you're deciding (e.g. the spec, the agent's assumptions and open questions) and what each choice leads to. Each choice is an arrow.
 
@@ -117,3 +122,4 @@ How many runs can work at the same time on this machine (default 4). Agent and g
 | "Steer" | Chat / message | It's just talking to the live session |
 | "Job", "pipeline", "execution" | Run / workflow | One word per concept |
 | "Board" as a separate place | Tasks (board view) | It's a view of tasks, not its own thing |
+| "Attachment" for a file a step makes | Artifact | You add an attachment; a step produces an artifact |

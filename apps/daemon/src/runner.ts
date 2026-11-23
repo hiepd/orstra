@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { FINISH_INSTRUCTIONS, parseAgentResult, parseWorkflow, renderTemplate, route, stripProgressBlock, type Progress, type Step, type Workflow } from '@orstra/core';
+import { withFiles, type Attachment } from './attachments.ts';
 import type { Executors, LiveSession, StreamEvent, TurnEnd } from './executors.ts';
 import type { RunRow, Store, TaskRow } from './db.ts';
 import { locateWorkflow } from './workflows.ts';
@@ -396,33 +397,40 @@ export class Runner extends EventEmitter {
   /**
    * chat: goes straight into the agent's session (read after its current action). If the session isn't
    * running any more, the same session resumes. note: handed to a step's next run. ask: a fork answers.
+   *
+   * `files` are attachments already written into the worktree. The agent gets their paths at the end
+   * of the message; the event keeps your text alone, so the chat row stays readable.
    */
-  async message(taskId: string, text: string, mode: MessageMode, opts: { runId?: string; stepId?: string; via?: Via } = {}) {
+  async message(taskId: string, text: string, mode: MessageMode, opts: { runId?: string; stepId?: string; via?: Via; files?: Attachment[] } = {}) {
     const task = this.store.task(taskId);
     if (!task) throw new Error('No such task.');
+    const files = opts.files ?? [];
+    // What the agent reads. With no attachment it is your text, byte for byte.
+    const body = withFiles(text, files);
+    const said = files.length ? { text, files } : { text };
 
     if (mode === 'note') {
       const step = opts.stepId ?? task.current_step ?? undefined;
-      this.event(taskId, null, 'you', { mode: 'note', text, step: step ?? null, via: opts.via });
-      this.store.addEvent(taskId, null, 'note', { text, step });
+      this.event(taskId, null, 'you', { mode: 'note', ...said, step: step ?? null, via: opts.via });
+      this.store.addEvent(taskId, null, 'note', { text: body, step });
       return;
     }
 
     const target = this.chatTarget(taskId, opts.runId);
     if (mode === 'ask') {
-      this.event(taskId, target?.id ?? null, 'you', { mode: 'ask', text });
+      this.event(taskId, target?.id ?? null, 'you', { mode: 'ask', ...said });
       if (!target?.session_id) return this.event(taskId, null, 'aside', { text: 'There is no agent session to ask yet.' });
-      const answer = await this.exec.ask(target.session_id, task.worktree ?? process.cwd(), text);
+      const answer = await this.exec.ask(target.session_id, task.worktree ?? process.cwd(), body);
       return this.event(taskId, target.id, 'aside', { text: answer });
     }
 
     // chat
     if (!target?.session_id) {
-      this.event(taskId, null, 'you', { mode: 'note', text, step: task.current_step });
-      this.store.addEvent(taskId, null, 'note', { text });
+      this.event(taskId, null, 'you', { mode: 'note', ...said, step: task.current_step });
+      this.store.addEvent(taskId, null, 'note', { text: body });
       return this.event(taskId, null, 'system', { text: 'No agent has started yet. Your message goes to the next agent step.' });
     }
-    this.event(taskId, target.id, 'you', { mode: 'chat', text, via: opts.via });
+    this.event(taskId, target.id, 'you', { mode: 'chat', ...said, via: opts.via });
 
     const owns = target.status === 'running' || target.status === 'waiting';
     if (owns && task.status !== 'stopped') {
@@ -436,7 +444,7 @@ export class Runner extends EventEmitter {
     }
     live.humanSpoke = true;
     live.sendSeq++;
-    live.session.send(text);
+    live.session.send(body);
     this.changed(taskId);
   }
 

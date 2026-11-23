@@ -3,6 +3,7 @@ import { existsSync, readdirSync, readFileSync, renameSync, statSync, writeFileS
 import { execFileSync } from 'node:child_process';
 import { basename, extname, join, resolve } from 'node:path';
 import { applyEdits, parseWorkflow, taskPath, type EditGraph, type Progress, type Workflow } from '@orstra/core';
+import { MAX_FILE_BYTES, checkAttachments, mb, readAttachment, saveAttachment } from './attachments.ts';
 import type { EventRow, RunRow, Store, TaskRow } from './db.ts';
 import type { Runner } from './runner.ts';
 import type { ChiefOfStaff } from './cos.ts';
@@ -13,6 +14,8 @@ import { AGENT_IDS, EFFORTS, PERMISSION_MODES, loadAgentConfig, saveAgentSetting
 import { DB_PATH, HOME, PORT, SLOTS, WEB_DIST, WORKFLOW_DIRS, WORKTREES } from './paths.ts';
 
 const MIME: Record<string, string> = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.json': 'application/json', '.png': 'image/png' };
+/** An upload body: base64 of a file at the cap, plus the JSON around it. */
+const MAX_UPLOAD_BODY = Math.ceil(MAX_FILE_BYTES * 4 / 3) + 4096;
 
 function send(res: ServerResponse, code: number, body: unknown) {
   res.writeHead(code, { 'content-type': 'application/json' });
@@ -192,8 +195,39 @@ export function buildApi(store: Store, runner: Runner, cos?: ChiefOfStaff) {
       }
       if ((mm = m(/^\/api\/tasks\/([\w-]+)\/messages$/)) && req.method === 'POST') {
         const b = await readJson(req);
-        await runner.message(mm[1], b.text, b.mode ?? 'chat', { runId: b.runId, stepId: b.stepId });
+        const t = store.task(mm[1]);
+        if (b.files?.length && !t?.worktree) return send(res, 400, { error: 'This task has no worktree, so it can carry no file.' }), true;
+        // Attachments are checked against the worktree, so a browser cannot name a path Orstra never wrote.
+        const files = b.files?.length ? checkAttachments(t!.worktree!, b.files) : [];
+        await runner.message(mm[1], b.text ?? '', b.mode ?? 'chat', { runId: b.runId, stepId: b.stepId, files });
         return send(res, 200, { ok: true }), true;
+      }
+      // One pasted, dropped or picked file. It lands in the task's worktree, where the agent can read it.
+      if ((mm = m(/^\/api\/tasks\/([\w-]+)\/attachments$/)) && req.method === 'POST') {
+        const t = store.task(mm[1]);
+        if (!t) return send(res, 404, { error: 'No such task' }), true;
+        if (!t.worktree) return send(res, 400, { error: 'This task has no worktree yet, so a file has nowhere to go.' }), true;
+        if (Number(req.headers['content-length'] ?? 0) > MAX_UPLOAD_BODY) {
+          // Read the body and drop it. Without this the socket dies and the browser shows no sentence.
+          req.resume();
+          return send(res, 413, { error: `That file is over the cap of ${mb(MAX_FILE_BYTES)} per file.` }), true;
+        }
+        const b = await readJson(req);
+        return send(res, 201, saveAttachment(t.worktree, { name: b.name, data: b.data })), true;
+      }
+      if ((mm = m(/^\/api\/tasks\/([\w-]+)\/attachment$/)) && req.method === 'GET') {
+        const t = store.task(mm[1]);
+        const hit = t?.worktree ? readAttachment(t.worktree, url.searchParams.get('path') ?? '') : null;
+        if (!hit) return send(res, 404, { error: 'No such file' }), true;
+        res.writeHead(200, {
+          'content-type': hit.mime, 'content-length': hit.body.length,
+          'content-disposition': `inline; filename="${hit.name}"`,
+          'cache-control': 'private, max-age=86400',
+          // The bytes came from outside Orstra: never sniff them, never let an SVG run anything.
+          'x-content-type-options': 'nosniff', 'content-security-policy': "default-src 'none'; sandbox",
+        });
+        res.end(hit.body);
+        return true;
       }
       if ((mm = m(/^\/api\/tasks\/([\w-]+)\/retry$/)) && req.method === 'POST') {
         const b = await readJson(req);

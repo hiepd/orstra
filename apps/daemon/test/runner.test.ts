@@ -198,6 +198,55 @@ steps:
     expect(store.task(task.id)!.status).toBe('done');
   });
 
+  it('gives the agent the path of a file you attached, and keeps your text on the message', async () => {
+    const seen: string[] = [];
+    const { store, runner, wfPath } = setup(LOOP, (text, n) => {
+      seen.push(text);
+      return n === 1 ? 'What should I look at?\n\nOUTCOME: needs_you' : done('read the screenshot');
+    });
+    const task = runner.startTask({ workflowPath: wfPath, title: 'shot' });
+    await runner.idle();
+
+    const file = { name: 'image.png', path: '.orstra/attachments/ab12/image.png', bytes: 188_416, mime: 'image/png' };
+    await runner.message(task.id, 'fix this', 'chat', { files: [file] });
+    await runner.idle();
+
+    expect(seen[1]).toContain('fix this');
+    expect(seen[1]).toContain('.orstra/attachments/ab12/image.png');
+    const said = store.events(task.id).map((e) => JSON.parse(e.payload)).find((p) => p.mode === 'chat');
+    expect(said.text).toBe('fix this');
+    expect(said.files).toEqual([file]);
+  });
+
+  it('sends your message unchanged when you attached nothing', async () => {
+    const seen: string[] = [];
+    const { runner, wfPath, store } = setup(LOOP, (text, n) => {
+      seen.push(text);
+      return n === 1 ? 'Which one?\n\nOUTCOME: needs_you' : done('ok');
+    });
+    const task = runner.startTask({ workflowPath: wfPath, title: 'plain' });
+    await runner.idle();
+    await runner.message(task.id, 'the second one', 'chat');
+    await runner.idle();
+    expect(seen[1]).toBe('the second one');
+    const said = store.events(task.id).map((e) => JSON.parse(e.payload)).find((p) => p.mode === 'chat');
+    expect(said.files).toBeUndefined();
+  });
+
+  it('hands the paths to the next run when the file goes on a step as a note', async () => {
+    const { runner, wfPath, prompts } = setup(LOOP, () => 'stuck\n\nOUTCOME: cant_do');
+    const task = runner.startTask({ workflowPath: wfPath, title: 'early' });
+    await runner.idle();
+    await runner.message(task.id, 'see the log', 'note', {
+      stepId: 'impl',
+      files: [{ name: 'run.log', path: '.orstra/attachments/cd34/run.log', bytes: 2048, mime: 'text/plain' }],
+    });
+    runner.retry(task.id);
+    await runner.idle();
+    expect(prompts()[1]).toContain('see the log');
+    expect(prompts()[1]).toContain('.orstra/attachments/cd34/run.log');
+  });
+
   it('hands notes to the next run of that step', async () => {
     const { runner, wfPath, prompts, store } = setup(LOOP, () => 'stuck\n\nOUTCOME: cant_do');
     const task = runner.startTask({ workflowPath: wfPath, title: 'x' });

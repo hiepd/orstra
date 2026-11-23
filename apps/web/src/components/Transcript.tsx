@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from 'react';
-import type { RunView, TaskEvent } from '../api';
+import { fileUrl, type ChatFile, type RunView, type TaskEvent } from '../api';
+import { humanBytes, isImage } from '../lib/attach';
 import { useNow } from '../lib/live';
 import { duration } from '../lib/time';
 import { ChevronRight } from './Icons';
@@ -63,6 +64,21 @@ function WorkFold({ tools, from, to, live }: { tools: ToolEvent[]; from: number;
   );
 }
 
+/** The files you sent with a message: name, size, and a thumbnail for a picture. A click opens one. */
+function SentFiles({ taskId, files }: { taskId: string; files: ChatFile[] }) {
+  return (
+    <div className="ox-chips ox-bchips">
+      {files.map((f) => (
+        <a key={f.path} className="ox-chip" href={fileUrl(taskId, f.path)} target="_blank" rel="noreferrer" title={`${f.name} · ${f.path}`}>
+          {isImage(f.mime) ? <img className="ox-chipt" src={fileUrl(taskId, f.path)} alt={f.name} /> : <span className="ox-chipt ox-chipe">{(f.name.split('.').pop() ?? 'file').slice(0, 4).toUpperCase()}</span>}
+          <span className="ox-chipn">{f.name}</span>
+          <span className="ox-chipb">{humanBytes(f.bytes)}</span>
+        </a>
+      ))}
+    </div>
+  );
+}
+
 /**
  * One session as a chat: the agent's messages as plain text, yours as bubbles on the right, and its
  * tool calls folded into "Worked for 1m 12s" rows. `working` shows the last stretch as live.
@@ -110,7 +126,7 @@ export function Transcript({ run, events, working, agentName }: { run: RunView; 
       });
     else if (e.kind === 'you') {
       if (e.mode === 'interrupt') items.push({ key, node: <div className="ox-sys">You stopped {agentName}</div> });
-      else if (e.text)
+      else if (e.text || e.files?.length)
         items.push({
           key,
           node: (
@@ -119,6 +135,7 @@ export function Transcript({ run, events, working, agentName }: { run: RunView; 
                 {e.mode === 'ask' && <span className="ox-tag">Asked a copy</span>}
                 {e.via === 'cos' && <span className="ox-tag">Sent by your chief of staff</span>}
                 {e.text}
+                {!!e.files?.length && <SentFiles taskId={run.taskId} files={e.files} />}
               </div>
             </div>
           ),
