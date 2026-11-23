@@ -52,8 +52,7 @@ async function main() {
       runner.recover();
 
       // The chief of staff: Claude Code with Orstra's tools (served by cos-mcp.ts) and no built-in tools.
-      const { ChiefOfStaff } = await import('./cos.ts');
-      const { COS_PROMPT } = await import('./cos-tools.ts');
+      const { ChiefOfStaff, cosToolArgs } = await import('./cos.ts');
       const { makeViews } = await import('./server.ts');
       const mcpConfig = join(COS_DIR, 'mcp.json');
       const mcpScript = fileURLToPath(new URL('./cos-mcp.ts', import.meta.url));
@@ -61,7 +60,7 @@ async function main() {
       const cos = new ChiefOfStaff(store, runner, realExecutors, makeViews(store, runner), {
         cwd: COS_DIR,
         model: process.env.ORSTRA_COS_MODEL,
-        toolArgs: ['--tools', '', '--mcp-config', mcpConfig, '--strict-mcp-config', '--allowedTools', 'mcp__orstra', '--permission-mode', 'default', '--append-system-prompt', COS_PROMPT],
+        toolArgs: cosToolArgs(mcpConfig, COS_DIR),
       });
       startServer(store, runner, PORT, cos);
       cos.start();

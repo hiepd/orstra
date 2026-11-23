@@ -2,7 +2,8 @@ import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { WATCH_UNTIL, type WatchUntil } from './cos-tools.ts';
+import { cosFiles, readRule, withFiles, type Attachment } from './attachments.ts';
+import { COS_PROMPT, WATCH_UNTIL, type WatchUntil } from './cos-tools.ts';
 import type { Store, TaskRow, WatchRow } from './db.ts';
 import type { Executors, LiveSession } from './executors.ts';
 import { gitDiff } from './git.ts';
@@ -30,6 +31,26 @@ export interface CosOptions {
   /** Claude Code flags that give it Orstra's tools and nothing else. */
   toolArgs: string[];
   model?: string;
+}
+
+/**
+ * The Claude Code flags for the chief of staff session.
+ *
+ * It gets Orstra's tools and `Read`, and nothing else: no shell, no edits, no web. `--restricted`
+ * holds the file tools inside the working folder, which is `cosDir`, so `Read` can open the files
+ * you attach and nothing else on the machine. The rule in `--allowedTools` is what keeps the
+ * attachments folder from a permission question that nobody is there to answer.
+ */
+export function cosToolArgs(mcpConfig: string, cosDir: string): string[] {
+  return [
+    '--restricted',
+    '--tools', 'Read',
+    '--mcp-config', mcpConfig,
+    '--strict-mcp-config',
+    '--allowedTools', 'mcp__orstra', readRule(cosFiles(cosDir)),
+    '--permission-mode', 'default',
+    '--append-system-prompt', COS_PROMPT,
+  ];
 }
 
 export interface PlanAction {
@@ -112,12 +133,14 @@ export class ChiefOfStaff extends EventEmitter {
 
   // ---------- the conversation ----------
 
-  say(text: string) {
+  /** `files` are attachments already written into the chief of staff folder; it reads them by path. */
+  say(text: string, files: Attachment[] = []) {
     const t = text.trim();
-    if (!t) throw new Error('Say something.');
-    this.event('you', { text: t });
+    if (!t && !files.length) throw new Error('Say something.');
+    this.event('you', files.length ? { text: t, files } : { text: t });
     const notes = this.pendingNotes.splice(0);
-    this.send(notes.length ? `${notes.join('\n')}\n\n${t}` : t);
+    const body = withFiles(t, files);
+    this.send(notes.length ? `${notes.join('\n')}\n\n${body}` : body);
   }
 
   interrupt() {

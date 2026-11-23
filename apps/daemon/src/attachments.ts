@@ -21,6 +21,23 @@ export interface Attachment {
 export const ORSTRA_DIR = '.orstra';
 /** Files you add in chat. `.orstra/artifacts/` is kept for the files a step produces. */
 export const ATTACH_DIR = `${ORSTRA_DIR}/attachments`;
+
+/**
+ * Where one chat keeps its files. `base` is the folder the agent works in, so a path relative to it
+ * is a path the agent can open. `dir` is the attachments folder under it.
+ *
+ * A task worktree is the user's repository, so the files hide under `.orstra/` and the folder goes
+ * into the repository's exclude file. The chief of staff folder is Orstra's own and holds no git.
+ */
+export interface AttachStore {
+  base: string;
+  dir: string;
+  /** true when `base` is inside a git repository that must not pick the files up. */
+  git: boolean;
+}
+
+export const taskFiles = (worktree: string): AttachStore => ({ base: worktree, dir: ATTACH_DIR, git: true });
+export const cosFiles = (cosDir: string): AttachStore => ({ base: cosDir, dir: 'attachments', git: false });
 /** One file at most this big. Base64 in a JSON body makes 10 MB about 13.4 MB on the wire. */
 export const MAX_FILE_BYTES = 10 * 1024 * 1024;
 /** All the files of one message at most this big. */
@@ -66,15 +83,15 @@ export function safeName(raw: unknown): string {
   return cleaned.slice(0, 80 - ext.length) + ext;
 }
 
-export const attachRoot = (worktree: string) => resolve(join(worktree, ATTACH_DIR));
+export const attachRoot = (store: AttachStore) => resolve(join(store.base, store.dir));
 
 /**
  * The absolute path of a file inside the attachments folder, or null when the path leaves it.
  * An absolute path, a `..` segment and a symlink out of the folder all give null.
  */
-export function attachPath(worktree: string, relPath: unknown): string | null {
-  const root = attachRoot(worktree);
-  const abs = resolve(worktree, String(relPath ?? ''));
+export function attachPath(store: AttachStore, relPath: unknown): string | null {
+  const root = attachRoot(store);
+  const abs = resolve(store.base, String(relPath ?? ''));
   if (!abs.startsWith(root + sep)) return null;
   try {
     const real = realpathSync(abs);
@@ -114,23 +131,23 @@ export function excludeFromGit(worktree: string) {
   }
 }
 
-/** Write one pasted, dropped or picked file into the worktree. Throws a sentence you can show. */
-export function saveAttachment(worktree: string, input: { name?: unknown; data?: unknown }): Attachment {
+/** Write one pasted, dropped or picked file into the chat's folder. Throws a sentence you can show. */
+export function saveAttachment(store: AttachStore, input: { name?: unknown; data?: unknown }): Attachment {
   const buf = Buffer.from(String(input.data ?? ''), 'base64');
   if (!buf.length) throw new Error('That file is empty.');
   if (buf.length > MAX_FILE_BYTES) throw new Error(`That file is ${humanBytes(buf.length)}. The cap is ${mb(MAX_FILE_BYTES)} per file.`);
   const name = safeName(input.name);
   const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-  const dir = join(attachRoot(worktree), id);
+  const dir = join(attachRoot(store), id);
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, name), buf);
-  excludeFromGit(worktree);
-  return { name, path: `${ATTACH_DIR}/${id}/${name}`, bytes: buf.length, mime: mimeOf(name) };
+  if (store.git) excludeFromGit(store.base);
+  return { name, path: `${store.dir}/${id}/${name}`, bytes: buf.length, mime: mimeOf(name) };
 }
 
 /** The bytes behind a path, for the thumbnail and the download. Null when the path is not ours. */
-export function readAttachment(worktree: string, relPath: unknown): { body: Buffer; mime: string; name: string } | null {
-  const abs = attachPath(worktree, relPath);
+export function readAttachment(store: AttachStore, relPath: unknown): { body: Buffer; mime: string; name: string } | null {
+  const abs = attachPath(store, relPath);
   if (!abs || !existsSync(abs) || !statSync(abs).isFile()) return null;
   return { body: readFileSync(abs), mime: mimeOf(abs), name: basename(abs) };
 }
@@ -139,14 +156,14 @@ export function readAttachment(worktree: string, relPath: unknown): { body: Buff
  * The files a message claims, checked against the disk. The size and the type come from the file
  * itself, so the browser cannot name a path or a size that Orstra did not write.
  */
-export function checkAttachments(worktree: string, raw: unknown): Attachment[] {
+export function checkAttachments(store: AttachStore, raw: unknown): Attachment[] {
   if (!Array.isArray(raw) || !raw.length) return [];
   if (raw.length > MAX_FILES) throw new Error(`${raw.length} files in 1 message. The cap is ${MAX_FILES}.`);
   const files: Attachment[] = [];
   let total = 0;
   for (const f of raw) {
     const rel = typeof f === 'string' ? f : f?.path;
-    const abs = attachPath(worktree, rel);
+    const abs = attachPath(store, rel);
     if (!abs || !existsSync(abs) || !statSync(abs).isFile()) throw new Error('That file is no longer there. Add it again.');
     const bytes = statSync(abs).size;
     total += bytes;
@@ -156,6 +173,12 @@ export function checkAttachments(worktree: string, raw: unknown): Attachment[] {
   }
   return files;
 }
+
+/**
+ * The Claude Code permission rule that lets a session open the files you attached, and nothing else.
+ * A rule is 1 argv entry, so a folder with a space in it stays whole. `//` starts an absolute path.
+ */
+export const readRule = (store: AttachStore) => `Read(/${attachRoot(store)}/**)`;
 
 /** The lines Orstra adds to your message, so the agent knows where to look. */
 export function filesBlock(files: Attachment[]): string {

@@ -1,4 +1,7 @@
-import { api, type ChatFile } from '../api';
+import { api, cosFileUrl, fileUrl, type ChatFile } from '../api';
+
+/** Which chat a file belongs to. Each one keeps its files in the folder its agent works in. */
+export type AttachTo = { kind: 'task'; taskId: string } | { kind: 'cos' };
 
 // The same caps as apps/daemon/src/attachments.ts. The daemon checks them again.
 export const MAX_FILE_BYTES = 10 * 1024 * 1024;
@@ -6,6 +9,9 @@ export const MAX_MESSAGE_BYTES = 25 * 1024 * 1024;
 export const MAX_FILES = 5;
 
 export const isImage = (mime: string) => mime.startsWith('image/');
+
+/** Where the browser reads the bytes of one attached file. */
+export const urlOf = (to: AttachTo, path: string) => (to.kind === 'cos' ? cosFileUrl(path) : fileUrl(to.taskId, path));
 
 /** "184 KB", "2.4 MB". */
 export function humanBytes(n: number): string {
@@ -28,10 +34,10 @@ async function base64(file: File): Promise<string> {
 export const filesOf = (list: FileList | null | undefined): File[] => (list ? Array.from(list) : []);
 
 /**
- * Put picked files in the task's worktree, one call each. Returns what went in and 1 sentence per
+ * Put picked files in the chat's folder, one call each. Returns what went in and 1 sentence per
  * file that did not, so nothing fails without a word to you.
  */
-export async function upload(taskId: string, picked: File[], already: ChatFile[]): Promise<{ added: ChatFile[]; errors: string[] }> {
+export async function upload(to: AttachTo, picked: File[], already: ChatFile[]): Promise<{ added: ChatFile[]; errors: string[] }> {
   const added: ChatFile[] = [];
   const errors: string[] = [];
   let count = already.length;
@@ -56,7 +62,8 @@ export async function upload(taskId: string, picked: File[], already: ChatFile[]
       continue;
     }
     try {
-      const saved = await api.attach(taskId, { name, data: await base64(file) });
+      const body = { name, data: await base64(file) };
+      const saved = to.kind === 'cos' ? await api.cosAttach(body) : await api.attach(to.taskId, body);
       added.push(saved);
       count++;
       total += saved.bytes;

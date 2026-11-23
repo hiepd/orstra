@@ -1,8 +1,11 @@
-import { useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { api, errorMessage, type CosEvent, type CosPermission, type CosPlan, type CosView, type TaskSummary } from '../api';
+import { Composer } from '../components/Composer';
+import { SentFiles } from '../components/FileChips';
 import { ChevronRight } from '../components/Icons';
 import { useToast } from '../components/Overlay';
 import { useAutoScroll } from '../lib/autoScroll';
+import type { AttachTo } from '../lib/attach';
 import { taskLabel } from '../lib/format';
 import { useLiveResource, useNow } from '../lib/live';
 import { href } from '../lib/router';
@@ -10,6 +13,9 @@ import { STATE, stepLabel, taskState } from '../lib/taskState';
 import { duration } from '../lib/time';
 
 const SUGGESTIONS = ['What needs me?', 'What’s running right now?', 'What finished today?', 'Brief me on everything'];
+
+/** The chief of staff keeps the files you add in its own folder, the one its session works in. */
+const COS: AttachTo = { kind: 'cos' };
 
 const TOOL_VERB: Record<string, string> = {
   list_tasks: 'Listed tasks',
@@ -205,7 +211,18 @@ function Conversation({ view, tasks }: { view: CosView; tasks: TaskSummary[] }) 
     flush(e.ts, false);
     since = e.ts;
     const key = String(e.id);
-    if (e.kind === 'you') items.push({ key, node: <div className="ox-user"><div className="ox-bubble">{e.text}</div></div> });
+    if (e.kind === 'you')
+      items.push({
+        key,
+        node: (
+          <div className="ox-user">
+            <div className="ox-bubble">
+              {e.text}
+              {!!e.files?.length && <SentFiles to={COS} files={e.files} />}
+            </div>
+          </div>
+        ),
+      });
     else if (e.kind === 'message') items.push({ key, node: <div className="ox-ai cs-ai">{e.text}</div> });
     else if (e.kind === 'show') items.push({ key, node: <TaskRows title={e.title} ids={e.taskIds} tasks={tasks} /> });
     else if (e.kind === 'plan') {
@@ -233,38 +250,15 @@ function Conversation({ view, tasks }: { view: CosView; tasks: TaskSummary[] }) 
   );
 }
 
-function Composer({ working, empty }: { working: boolean; empty: boolean }) {
+function CosComposer({ working, empty }: { working: boolean; empty: boolean }) {
   const toast = useToast();
-  const [draft, setDraft] = useState('');
-  const [busy, setBusy] = useState(false);
   const say = async (text: string) => {
-    const t = text.trim();
-    if (!t || busy) return;
-    setBusy(true);
-    setDraft('');
     try {
-      await api.cosSay(t);
-    } catch (err) {
-      setDraft(t);
-      toast(errorMessage(err), { error: true });
-    } finally {
-      setBusy(false);
-    }
-  };
-  const stop = async () => {
-    try {
-      await api.cosInterrupt();
+      await api.cosSay(text);
     } catch (err) {
       toast(errorMessage(err), { error: true });
     }
   };
-  const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-      e.preventDefault();
-      void say(draft);
-    }
-  };
-  const hasText = !!draft.trim();
   return (
     <div className="ox-compwrap cs-compwrap">
       {!working && (
@@ -276,39 +270,18 @@ function Composer({ working, empty }: { working: boolean; empty: boolean }) {
           ))}
         </div>
       )}
-      <div className="ox-composer">
-        <textarea
-          aria-label="Message your chief of staff"
-          placeholder={working ? 'It reads this when it finishes what it’s doing…' : 'Ask about your tasks, or tell me what to do…'}
-          value={draft}
-          rows={Math.min(8, Math.max(2, draft.split('\n').length))}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={onKey}
-          autoFocus
-        />
-        <div className="ox-cfoot">
-          <span className="ox-cctx">
-            <span className="lx-av ox-av" style={{ background: 'var(--solid)', width: 14, height: 14, fontSize: 8.5 }}>
-              O
-            </span>
-            Chief of staff
-          </span>
-          <span>{working ? 'working' : ''}</span>
-          {working && !hasText ? (
-            <button className="ox-send ox-stopbtn" aria-label="Stop" title="Stop what it’s doing" onClick={() => void stop()}>
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                <path d="M6 6h12v12H6z" />
-              </svg>
-            </button>
-          ) : (
-            <button className="ox-send" aria-label="Send" onClick={() => void say(draft)} disabled={!hasText || busy}>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M12 19V5M5 12l7-7 7 7" />
-              </svg>
-            </button>
-          )}
-        </div>
-      </div>
+      <Composer
+        to={COS}
+        who="Chief of staff"
+        av="O"
+        color="var(--solid)"
+        placeholder={working ? 'It reads this when it finishes what it’s doing…' : 'Ask about your tasks, or tell me what to do…'}
+        status={working ? 'working' : ''}
+        working={working}
+        autoFocus
+        onSend={(text, files) => api.cosSay(text, files.length ? files : undefined).then(() => undefined)}
+        onStop={() => api.cosInterrupt().then(() => undefined)}
+      />
     </div>
   );
 }
@@ -437,7 +410,7 @@ export function CosPage() {
                 <Conversation view={view} tasks={tasks.data ?? []} />
               </div>
             </div>
-            <Composer working={view.working} empty={view.events.length === 0} />
+            <CosComposer working={view.working} empty={view.events.length === 0} />
           </section>
           <Side view={view} tasks={tasks.data ?? []} />
         </div>

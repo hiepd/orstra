@@ -236,7 +236,7 @@ export interface AgentSettings {
 
 /** One entry in the chief of staff conversation. */
 export type CosEvent = { id: number; ts: number } & (
-  | { kind: 'you'; text: string }
+  | { kind: 'you'; text: string; files?: ChatFile[] }
   | { kind: 'message'; text: string }
   | { kind: 'tool'; name: string; summary: string }
   | { kind: 'show'; title: string; taskIds: string[] }
@@ -328,7 +328,9 @@ export const api = {
   settings: () => request<Settings>('GET', '/api/settings'),
   saveAgentSettings: (agent: AgentName, body: AgentSettings) => request<Record<AgentName, AgentSettings>>('PUT', `/api/settings/agents/${encodeURIComponent(agent)}`, body),
   cos: () => request<CosView>('GET', '/api/cos'),
-  cosSay: (text: string) => request<{ ok: true }>('POST', '/api/cos/messages', { text }),
+  cosSay: (text: string, files?: ChatFile[]) => request<{ ok: true }>('POST', '/api/cos/messages', { text, files }),
+  /** Put one file in the chief of staff's own folder, the one its session works in. */
+  cosAttach: (body: { name: string; data: string }) => request<ChatFile>('POST', '/api/cos/attachments', body),
   cosInterrupt: () => request<{ ok: true }>('POST', '/api/cos/interrupt'),
   cosPlan: (id: string, answer: 'approve' | 'decline') => request<{ ok: true }>('POST', `/api/cos/plans/${encodeURIComponent(id)}/${answer}`),
   cosUnwatch: (id: string) => request<{ ok: true }>('POST', `/api/cos/watches/${encodeURIComponent(id)}/remove`),
@@ -354,3 +356,4 @@ export const errorMessage = (err: unknown): string => (err instanceof Error ? er
 
 /** Where the browser reads an attachment's bytes (a thumbnail, or a click to open it). */
 export const fileUrl = (taskId: string, path: string) => `/api/tasks/${encodeURIComponent(taskId)}/attachment?path=${encodeURIComponent(path)}`;
+export const cosFileUrl = (path: string) => `/api/cos/attachment?path=${encodeURIComponent(path)}`;

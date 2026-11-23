@@ -2,7 +2,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { ChiefOfStaff, COS_ID } from '../src/cos.ts';
+import { ChiefOfStaff, COS_ID, cosToolArgs } from '../src/cos.ts';
 import { handle, setWriter } from '../src/cos-mcp.ts';
 import { COS_TOOLS } from '../src/cos-tools.ts';
 import { Store } from '../src/db.ts';
@@ -173,6 +173,44 @@ describe('ChiefOfStaff', () => {
     const first = cosSessions[0];
     expect(first.resume).toBe(false);
     expect(store.get('cos.session')).toBe(first.sessionId);
+  });
+
+  it('gives it the paths of the files you attached, and keeps your text on the row', async () => {
+    const { cos, store, toCos } = setup();
+    const file = { name: 'screen.png', path: 'attachments/ab12/screen.png', bytes: 2048, mime: 'image/png' };
+    cos.say('what is wrong here?', [file]);
+    expect(toCos[0]).toContain('what is wrong here?');
+    expect(toCos[0]).toContain('attachments/ab12/screen.png');
+    const you = store.events(COS_ID).map((e) => JSON.parse(e.payload)).at(-1);
+    expect(you).toMatchObject({ text: 'what is wrong here?', files: [file] });
+  });
+
+  it('takes a message that is only a file, and leaves a plain message alone', async () => {
+    const { cos, toCos } = setup();
+    cos.say('', [{ name: 'run.log', path: 'attachments/cd34/run.log', bytes: 10, mime: 'text/plain' }]);
+    expect(toCos[0]).toContain('attachments/cd34/run.log');
+    cos.say('and this?');
+    expect(toCos[1]).toBe('and this?');
+    expect(() => cos.say('')).toThrow('Say something.');
+  });
+});
+
+describe('what the chief of staff session may do', () => {
+  const args = cosToolArgs('/home/.orstra/cos/mcp.json', '/home/.orstra/cos');
+  const after = (flag: string) => args[args.indexOf(flag) + 1];
+
+  it('has Orstra’s tools and Read, and no shell', () => {
+    expect(after('--tools')).toBe('Read');
+    expect(args).toContain('mcp__orstra');
+    expect(args.filter((a) => /^(Bash|Edit|Write|WebFetch|Glob|Grep)$/.test(a))).toEqual([]);
+  });
+
+  it('holds Read inside its own folder, and asks for any other path', () => {
+    // --restricted confines the file tools to the working folder; the rule is what stops a question
+    // about the attachments folder, which nobody is there to answer.
+    expect(args).toContain('--restricted');
+    expect(args).toContain('Read(//home/.orstra/cos/attachments/**)');
+    expect(after('--permission-mode')).toBe('default');
   });
 });
 
