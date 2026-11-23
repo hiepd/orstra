@@ -1756,7 +1756,7 @@ a:hover {
 .ox-dhunk{color:var(--faint);background:var(--bg)}
 .ox-gempty{padding:22px 16px;font-size:12.5px;color:var(--faint);line-height:1.55}
 .ox-set{flex:1;display:flex;min-height:0}
-.ox-snav{flex:0 0 190px;border-right:1px solid var(--line);padding:12px 8px;display:flex;flex-direction:column;gap:2px}
+.ox-snav{flex:0 0 190px;border-right:1px solid var(--line);padding:12px 8px;display:flex;flex-direction:column;gap:2px;overflow-y:auto}
 .ox-snb{height:28px;padding:0 10px;border:0;border-radius:6px;background:transparent;text-align:left;font-size:13px;color:var(--ink-2);cursor:pointer}
 .ox-snb:hover{background:var(--line-3)}
 .lx .ox-snb[aria-current="page"]{background:var(--line-2);color:var(--ink);font-weight:500}
@@ -1768,6 +1768,20 @@ a:hover {
 .ox-lb{font-size:13px;font-weight:500}
 .ox-hp{font-size:12.5px;color:var(--faint);margin-top:2px}
 .ox-val{font-size:12.5px;color:var(--ink-2);white-space:nowrap}
+/* Settings nav: a search box, then one label per category. The list scrolls once the
+   groups outgrow the pane, so the search box stays put and carries the nav's top padding. */
+.ox-snav-set{padding-top:0}
+.ox-snq{position:sticky;top:0;z-index:1;background:var(--surface);padding:12px 2px 6px}
+.ox-snq .lx-input{height:28px;font-size:12.5px}
+.ox-sncat{padding:12px 10px 4px;font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--faint)}
+.ox-snav>.ox-sncat:first-of-type{padding-top:2px}
+.ox-snitem{display:flex;align-items:center}
+/* Settings group: the heading, then cards. The gaps live here so no group sets its own. */
+.ox-sghead{margin-bottom:20px}
+.ox-sghead .ox-h1{font-size:20px}
+.ox-sgroup{display:flex;flex-direction:column;gap:26px}
+.ox-sblock{display:flex;flex-direction:column;gap:10px}
+.ox-sblock .ox-h2{margin:0}
 /* ---- added for the app ---- */
 .lx a.ox-irow,.lx a.ox-tcard,.lx a.ox-lrow,.lx a.ox-srow,.lx a.ox-snb{color:inherit;text-decoration:none}
 .lx-menu a{display:flex;align-items:center;gap:8px;height:30px;padding:0 8px;border-radius:5px;font-size:13px;color:inherit;text-decoration:none}

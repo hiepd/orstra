@@ -8,7 +8,7 @@ export type Route =
   | { name: 'tasks' }
   | { name: 'task'; id: string; view: TaskViewName; runId?: string }
   | { name: 'workflows'; file?: string }
-  | { name: 'settings' }
+  | { name: 'settings'; group?: string }
   | { name: 'notFound'; path: string };
 
 export function parseHash(hash: string): Route {
@@ -23,7 +23,8 @@ export function parseHash(hash: string): Route {
     if (parts[2] === 'chat' && parts.length <= 4) return { name: 'task', id: parts[1], view: 'chat', runId: parts[3] };
   }
   if (parts[0] === 'workflows' && parts.length <= 2) return { name: 'workflows', file: parts[1] };
-  if (parts[0] === 'settings' && parts.length === 1) return { name: 'settings' };
+  // "#/settings" is the whole page; "#/settings/<group>" deep-links one group.
+  if (parts[0] === 'settings' && parts.length <= 2) return { name: 'settings', group: parts[1] };
   return { name: 'notFound', path };
 }
 
@@ -36,6 +37,7 @@ export const href = {
   workflows: '#/workflows',
   workflow: (file: string) => `#/workflows/${encodeURIComponent(file)}`,
   settings: '#/settings',
+  settingsGroup: (id: string) => `#/settings/${encodeURIComponent(id)}`,
 };
 
 export function navigate(to: string) {
