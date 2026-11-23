@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useMemo, useState } from 'react';
 import { api, errorMessage, taskLoader, type GitView, type RunView, type TaskDetail } from '../api';
 import { ClaudeCodeModal } from '../components/ClaudeCodeModal';
+import { ArtifactStrip } from '../components/Artifacts';
 import { AwaitingCard, DecisionCard, PermissionCard, RetryModal, StopModal, StuckBanner, reopenStep } from '../components/Decision';
 import { prName, shortPath, useGit } from '../components/GitPanel';
 import { ChatIcon, ChevronRight, OverviewIcon, TerminalIcon } from '../components/Icons';
@@ -394,8 +395,9 @@ function Overview({ task, git, onModal, embedded }: { task: TaskDetail; git: Res
                         <div className="ox-runb">
                           {text && <div className="ox-rtext">{text}</div>}
                           {r.progress && <ProgressList progress={r.progress} />}
+                          {r.artifacts.length > 0 && <ArtifactStrip artifacts={r.artifacts} />}
                           {r.output && <pre className="ox-pre">{r.output.trim().split('\n').slice(-30).join('\n')}</pre>}
-                          {!text && !r.progress && !r.output && !isOpenRun(r) && <div className="lx-hint">Nothing recorded for this run.</div>}
+                          {!text && !r.progress && !r.output && !r.artifacts.length && !isOpenRun(r) && <div className="lx-hint">Nothing recorded for this run.</div>}
                           <div className="ox-brow">
                             {r.sessionId && !isOpenRun(r) && (
                               <a className="ox-link" href={href.chat(task.id, r.id)}>

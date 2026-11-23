@@ -29,6 +29,19 @@ export interface Target {
   max?: number;
 }
 
+/**
+ * A file a step produces, kept for the review and for later steps. The step writes it in the
+ * worktree; Orstra copies every match out when the run ends.
+ */
+export interface ArtifactSpec {
+  /** What this group is, for the review ("screen", "coverage"). Defaults to the glob. */
+  name: string;
+  /** Glob, relative to the worktree: `.orstra/out/*.png`, `coverage/**\/*.html`. */
+  path: string;
+  /** No match means the step runs once more, then the task goes to your Inbox. */
+  required: boolean;
+}
+
 export interface Step {
   id: string;
   use: StepKind;
@@ -50,6 +63,8 @@ export interface Step {
   /** workflow */
   workflow?: string;
   timeoutMinutes?: number;
+  /** Files this step produces, collected when the run ends. */
+  artifacts?: ArtifactSpec[];
   /** outcome -> where to go */
   on: Record<string, Target>;
 }
@@ -94,6 +109,12 @@ const targetSchema = z.union([
   z.object({ goto: z.string(), max: z.number().int().positive().optional() }),
 ]);
 
+/** `artifacts: [".orstra/out/*.png"]` or the long form with a name and `required`. */
+const artifactSchema = z.union([
+  z.string(),
+  z.object({ name: z.string().optional(), path: z.string(), required: z.boolean().optional() }),
+]);
+
 const stepSchema = z
   .object({
     use: z.enum(STEP_KINDS),
@@ -110,6 +131,7 @@ const stepSchema = z
     with: z.record(z.unknown()).optional(),
     workflow: z.string().optional(),
     timeout: z.number().positive().optional(),
+    artifacts: z.array(artifactSchema).optional(),
     next: targetSchema.optional(),
     on: z.record(targetSchema).optional(),
   })
@@ -148,6 +170,23 @@ function toTarget(t: z.infer<typeof targetSchema>): Target {
   return typeof t === 'string' ? { goto: t } : { goto: t.goto, ...(t.max ? { max: t.max } : {}) };
 }
 
+function toArtifact(a: z.infer<typeof artifactSchema>): ArtifactSpec {
+  const path = typeof a === 'string' ? a : a.path;
+  const name = typeof a === 'string' ? path : a.name ?? path;
+  return { name, path, required: typeof a === 'string' ? false : a.required ?? false };
+}
+
+/** An artifact path stays inside the worktree: no leading slash, no "..", no "~". */
+function checkArtifactPath(stepId: string, path: string) {
+  const bad =
+    !path.trim() ? 'is empty' :
+    path.startsWith('/') ? 'must be relative to the worktree' :
+    path.startsWith('~') ? 'must be relative to the worktree' :
+    path.split('/').includes('..') ? 'must not leave the worktree with ".."' :
+    null;
+  if (bad) throw new Error(`Step "${stepId}", artifact "${path}" ${bad}.`);
+}
+
 /** Parse and validate workflow YAML. Throws with a readable message when it's wrong. */
 export function parseWorkflow(source: string): Workflow {
   const raw = workflowSchema.parse(parseYaml(source));
@@ -179,6 +218,7 @@ export function parseWorkflow(source: string): Workflow {
       with: s.with,
       workflow: s.workflow,
       timeoutMinutes: s.timeout,
+      artifacts: s.artifacts?.map(toArtifact),
       on,
     };
   }
@@ -199,6 +239,7 @@ export function parseWorkflow(source: string): Workflow {
         throw new Error(`Action step "${step.id}" names "${step.action}", which Orstra does not have. Use one of: ${ACTION_NAMES.join(', ')}.`);
       }
     }
+    for (const a of step.artifacts ?? []) checkArtifactPath(step.id, a.path);
   }
 
   return {

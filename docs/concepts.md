@@ -76,6 +76,25 @@ How a run ended (`done`, `pass`, `fail`, `approved`, `needs_you`, …). The outc
 ### Progress entry
 What a run did, written when it ends: **Did · Decided · Left · Avoid**. It is how work passes between fresh sessions, and it's mirrored to the ticket (e.g. as a Linear comment).
 
+### Artifact
+**A file a step produces, kept for the review and for later steps.** A screenshot, a plan document, a test report, a log. The step declares them in the workflow file; when the run ends, Orstra copies every match out of the worktree.
+
+```yaml
+impl:
+  use: agent
+  prompt: …
+  artifacts:
+    - name: screen
+      path: .orstra/out/*.png
+      required: true
+```
+
+- The bytes live in `~/.orstra/artifacts/<task>/<run>/`, outside the worktree, so they outlive it.
+- Images and text show inline on the task page; anything else is a download. 10 MB per file, 50 MB per run.
+- `required: true` means the step must produce it. No file: the step runs once more, then the task goes to your Inbox.
+- A declared file that never arrived is recorded too, so the review states the gap instead of staying quiet.
+- **Orstra never makes an artifact.** The step does, with its own tools; Orstra only collects what it finds.
+
 ### Note
 Something you write **on a step that hasn't run yet**, for its next run to read ("also run the e2e suite"). A note is never sent to a running agent. To talk to a running agent, chat with its session.
 
@@ -174,5 +193,6 @@ How many runs can work at the same time on this machine (default 4). Agent and g
 | "Session page" for a task | Task page | A task has many sessions |
 | "Steer" | Chat / message | It's just talking to the live session |
 | "Job", "pipeline", "execution" | Run / workflow | One word per concept |
+| "Evidence", "attachment", "output file" | Artifact | One word for a file a step produced |
 | "Board" as a separate place | Tasks (board view) | It's a view of tasks, not its own thing |
 | "Attachment" for a file a step makes | Artifact | You add an attachment; a step produces an artifact |

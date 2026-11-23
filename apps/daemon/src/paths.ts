@@ -8,6 +8,8 @@ export const DB_PATH = join(HOME, 'orstra.db');
 /** Which daemon owns this home folder. See lock.ts. */
 export const LOCK_PATH = join(HOME, 'daemon.lock');
 export const WORKTREES = join(HOME, 'wt');
+/** Files a run produced, copied out of the worktree so they outlive it. */
+export const ARTIFACTS = join(HOME, 'artifacts');
 export const REPO_ROOT = resolve(fileURLToPath(new URL('../../..', import.meta.url)));
 /** Workflows are user config, not repo files. Override the folder with ORSTRA_WORKFLOWS. */
 export const WORKFLOWS_DIR = process.env.ORSTRA_WORKFLOWS ?? join(HOME, 'workflows');
@@ -24,6 +26,7 @@ export const TSX = join(REPO_ROOT, 'node_modules/.bin/tsx');
 export function ensureDirs() {
   mkdirSync(HOME, { recursive: true });
   mkdirSync(WORKTREES, { recursive: true });
+  mkdirSync(ARTIFACTS, { recursive: true });
   // First run: seed the workflow folder from the repo's defaults. After that it is the user's, never touched.
   const firstRun = !existsSync(WORKFLOWS_DIR);
   mkdirSync(WORKFLOWS_DIR, { recursive: true });

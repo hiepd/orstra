@@ -54,6 +54,25 @@ export interface PermissionView {
   ts: number;
 }
 
+/** A file a run produced, kept outside the worktree so it outlives it. */
+export interface ArtifactView {
+  id: string;
+  runId: string;
+  stepId: string;
+  /** File name, or the glob when the state is missing. */
+  name: string;
+  /** The step's name for this group, or why the file is not here. */
+  label: string | null;
+  state: 'saved' | 'skipped' | 'missing';
+  mime: string;
+  /** How to show it: inline picture, inline text, or a download. */
+  kind: 'image' | 'text' | 'file';
+  bytes: number;
+  createdAt: number;
+  /** Where the bytes are, null unless the state is saved. */
+  url: string | null;
+}
+
 export interface RunView {
   id: string;
   taskId: string;
@@ -61,6 +80,7 @@ export interface RunView {
   stepTitle: string;
   kind: StepKind;
   attempt: number;
+  artifacts: ArtifactView[];
   status: RunStatus;
   outcome: string | null;
   agent: AgentName | null;
@@ -91,7 +111,10 @@ export interface HumanDecision {
   runId: string;
   question: string;
   choices: string[];
-  artifact: null | { step: string; progress: Progress };
+  /** What you decide about: the last agent run and what it said. */
+  subject: null | { step: string; attempt: number; progress: Progress };
+  /** What every step produced since your last decision. */
+  artifacts: (ArtifactView & { stepTitle: string; attempt: number })[];
 }
 
 /**
@@ -195,6 +218,8 @@ export interface GitView {
   files: ChangedFile[];
   commits: { sha: string; message: string; ts: number }[];
   checks: Check[];
+  /** Every artifact of the task, newest run first, with the step that made it. */
+  artifacts: (ArtifactView & { stepTitle: string; attempt: number })[];
   pr: null | { url: string };
 }
 

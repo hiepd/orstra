@@ -62,6 +62,36 @@ describe('parseWorkflow', () => {
   });
 });
 
+describe('parseWorkflow artifacts', () => {
+  const wf = (body: string) => parseWorkflow(`name: x\nsteps:\n  a:\n    use: agent\n    prompt: hi\n${body}`);
+
+  it('reads the long form', () => {
+    const w = wf('    artifacts:\n      - name: screen\n        path: .orstra/out/*.png\n        required: true\n');
+    expect(w.steps.a.artifacts).toEqual([{ name: 'screen', path: '.orstra/out/*.png', required: true }]);
+  });
+
+  it('reads a bare glob and defaults name and required', () => {
+    const w = wf('    artifacts: [".orstra/out/*.png"]\n');
+    expect(w.steps.a.artifacts).toEqual([{ name: '.orstra/out/*.png', path: '.orstra/out/*.png', required: false }]);
+  });
+
+  it('leaves artifacts unset when the step declares none', () => {
+    expect(wf('').steps.a.artifacts).toBeUndefined();
+  });
+
+  it('rejects a path that leaves the worktree', () => {
+    expect(() => wf('    artifacts: ["/etc/passwd"]\n')).toThrow(/relative to the worktree/);
+    expect(() => wf('    artifacts: ["../other/*.png"]\n')).toThrow(/\.\./);
+    expect(() => wf('    artifacts: ["~/secrets.txt"]\n')).toThrow(/relative to the worktree/);
+  });
+
+  it('keeps artifacts when the canvas editor rewrites the file', () => {
+    const src = 'name: x\nsteps:\n  a:\n    use: agent\n    prompt: hi\n    artifacts: ["out/*.png"]\n';
+    const out = applyEdits(src, { start: 'a', steps: [{ id: 'a', kind: 'agent', title: 'a', prompt: 'hi', on: [] }] });
+    expect(parseWorkflow(out).steps.a.artifacts).toEqual([{ name: 'out/*.png', path: 'out/*.png', required: false }]);
+  });
+});
+
 describe('route', () => {
   const wf = parseWorkflow(YAML);
 

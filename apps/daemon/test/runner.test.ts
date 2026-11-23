@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -62,9 +62,10 @@ function setup(yaml: string, reply: (text: string, n: number, opts: SessionOptio
   writeFileSync(wfPath, yaml);
   const fake = fakeExecutors(reply, gate);
   const store = new Store(':memory:');
-  const runner = new Runner(store, fake.exec, { slots, createWorktree: () => worktree ?? dir, turnGraceMs: 0 });
+  const artifactsRoot = mkdtempSync(join(tmpdir(), 'orstra-test-art-'));
+  const runner = new Runner(store, fake.exec, { slots, createWorktree: () => worktree ?? dir, turnGraceMs: 0, artifactsRoot });
   const prompts = () => fake.sent.filter((s, i) => fake.sent.findIndex((x) => x.sessionId === s.sessionId) === i && !s.resume).map((s) => s.text);
-  return { store, runner, wfPath, prompts, fake, dir };
+  return { store, runner, wfPath, prompts, fake, dir, artifactsRoot };
 }
 
 const LOOP = `
@@ -853,5 +854,84 @@ steps:
     expect(prompts()).toHaveLength(2);
     expect(prompts()[1]).toContain('Also rename the footer');
     expect(store.task(task.id)).toMatchObject({ status: 'needs_you', current_step: 'review' });
+  });
+});
+
+const SHOT = `
+name: Shot
+steps:
+  impl:
+    use: agent
+    prompt: Fix {{ trigger.title }}
+    artifacts:
+      - name: screen
+        path: out/*.png
+        required: true
+    next: end
+`;
+
+describe('Runner artifacts', () => {
+  it('collects what the run produced and keeps it outside the worktree', async () => {
+    let dir = '';
+    const s = setup(SHOT, () => {
+      mkdirSync(join(dir, 'out'), { recursive: true });
+      writeFileSync(join(dir, 'out/shot.png'), 'png bytes');
+      return done('added the empty state');
+    });
+    dir = s.dir;
+    const task = s.runner.startTask({ workflowPath: s.wfPath, title: 'empty state' });
+    await s.runner.idle();
+
+    expect(s.store.task(task.id)!.status).toBe('done');
+    const rows = s.store.artifactsForTask(task.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].name).toBe('shot.png');
+    expect(rows[0].mime).toBe('image/png');
+    expect(rows[0].label).toBe('screen');
+    expect(rows[0].step_id).toBe('impl');
+    expect(rows[0].path!.startsWith(s.artifactsRoot)).toBe(true);
+    expect(readFileSync(rows[0].path!, 'utf8')).toBe('png bytes');
+    expect(s.prompts()[0]).toContain('out/*.png (required)');
+  });
+
+  it('runs the step once more when a required file is absent, then asks you', async () => {
+    const s = setup(SHOT, () => done('forgot the screenshot'));
+    const task = s.runner.startTask({ workflowPath: s.wfPath, title: 'empty state' });
+    await s.runner.idle();
+
+    const t = s.store.task(task.id)!;
+    expect(t.status).toBe('needs_you');
+    expect(t.inbox_reason).toBe('missing_artifact');
+    expect(t.current_step).toBe('impl');
+    expect(s.store.runsForTask(task.id).map((r) => `${r.step_id}#${r.attempt}`)).toEqual(['impl#1', 'impl#2']);
+    expect(s.prompts()[1]).toContain('no file that matches out/*.png');
+  });
+
+  it('takes the file on the second attempt and moves on', async () => {
+    let dir = '';
+    const s = setup(SHOT, (_t, n) => {
+      if (n > 1) {
+        mkdirSync(join(dir, 'out'), { recursive: true });
+        writeFileSync(join(dir, 'out/shot.png'), 'late');
+      }
+      return done(`attempt ${n}`);
+    });
+    dir = s.dir;
+    const task = s.runner.startTask({ workflowPath: s.wfPath, title: 'empty state' });
+    await s.runner.idle();
+
+    expect(s.store.task(task.id)!.status).toBe('done');
+    // Attempt 1 left the gap on the record; attempt 2 produced the file.
+    expect(s.store.artifactsForTask(task.id).map((a) => `${a.state}:${a.name}`)).toEqual(['missing:out/*.png', 'saved:shot.png']);
+  });
+
+  it('does not demand a file from a run that failed', async () => {
+    const s = setup(SHOT, () => 'could not do it\n\nOUTCOME: cant_do');
+    const task = s.runner.startTask({ workflowPath: s.wfPath, title: 'empty state' });
+    await s.runner.idle();
+
+    const t = s.store.task(task.id)!;
+    expect(t.inbox_reason).toBe('cant_do');
+    expect(s.store.runsForTask(task.id)).toHaveLength(1);
   });
 });

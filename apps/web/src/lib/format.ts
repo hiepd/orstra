@@ -24,6 +24,7 @@ const REASONS: Record<string, string> = {
   loop_exhausted: 'Retries used up',
   conflict: 'The merge conflicts; nothing was merged',
   error: 'The step couldn’t finish',
+  missing_artifact: 'The step produced no artifact it must produce',
   interrupted: 'Orstra restarted mid-run',
   timeout: 'The step timed out',
   fail: 'The step failed with nowhere to go',

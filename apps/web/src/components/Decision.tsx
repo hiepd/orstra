@@ -1,10 +1,11 @@
 import { useState, type ReactNode } from 'react';
-import { api, errorMessage, type TaskDetail } from '../api';
+import { api, errorMessage, type ArtifactView, type TaskDetail } from '../api';
 import { awaitingTitle } from '../lib/describe';
 import { agentOf, humanize, reasonText, taskLabel } from '../lib/format';
 import { taskState } from '../lib/taskState';
 import { StopIcon, StuckCircle, WaitCircle } from './Icons';
 import { Modal, useToast } from './Overlay';
+import { ArtifactStrip } from './Artifacts';
 import { href } from '../lib/router';
 import { ProgressList } from './ProgressList';
 import { Markdown } from './Markdown';
@@ -29,7 +30,7 @@ const isReject = (c: string) => /^reject/.test(c);
 const isApprove = (c: string) => /^(approve|start|close)/.test(c);
 const choiceLabel = (c: string) => CHOICE_LABEL[c] ?? humanize(c);
 
-/** The human step's decision: the question, the artifact's progress, one button per choice. */
+/** The human step's decision: the question, what the last run did and produced, one button per choice. */
 export function DecisionCard({ task, onDone }: { task: TaskDetail; onDone?: () => void }) {
   const human = task.human;
   const toast = useToast();
@@ -69,14 +70,15 @@ export function DecisionCard({ task, onDone }: { task: TaskDetail; onDone?: () =
   return (
     <section className="lx-card" aria-label="Decision">
       <p className="lx-q">{human.question}</p>
-      {human.artifact && (
+      {human.subject && (
         <div>
           <div className="lx-hint" style={{ marginBottom: 6 }}>
-            From {human.artifact.step}
+            From {human.subject.step}
           </div>
-          <ProgressList progress={human.artifact.progress} />
+          <ProgressList progress={human.subject.progress} />
         </div>
       )}
+      {human.artifacts.length > 0 && <ArtifactStrip artifacts={human.artifacts} caption={artifactCaption(human.artifacts)} />}
       <textarea
         className="lx-field"
         aria-label="Comment for the next step (optional)"
@@ -203,6 +205,16 @@ export function PermissionCard({ task }: { task: TaskDetail }) {
       </div>
     </section>
   );
+}
+
+/** "Artifacts · 3 files from In progress, attempt 2", or the step count when several steps made them. */
+function artifactCaption(artifacts: (ArtifactView & { stepTitle: string; attempt: number })[]): string {
+  const n = artifacts.filter((a) => a.state === 'saved').length;
+  const head = `Artifacts · ${n} ${n === 1 ? 'file' : 'files'}`;
+  const runs = new Set(artifacts.map((a) => a.runId));
+  if (runs.size !== 1) return `${head} from ${runs.size} runs`;
+  const [a] = artifacts;
+  return `${head} from ${a.stepTitle}${a.attempt > 1 ? `, attempt ${a.attempt}` : ''}`;
 }
 
 /** An agent run waiting on you. Answer it with the chat composer. */

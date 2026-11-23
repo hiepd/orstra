@@ -4,7 +4,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import { FINISH_INSTRUCTIONS, parseAgentResult, parseWorkflow, renderTemplate, route, stripProgressBlock, switchCase, type Progress, type Step, type Workflow } from '@orstra/core';
 import { withFiles, type Attachment } from './attachments.ts';
 import { summarizeTool, type Executors, type LiveSession, type StreamEvent, type TurnEnd, type TurnUsage } from './executors.ts';
-import type { RunRow, Store, TaskRow } from './db.ts';
+import type { ArtifactState, RunRow, Store, TaskRow } from './db.ts';
+import { collectArtifacts } from './artifacts.ts';
 import { locateWorkflow } from './workflows.ts';
 import { projectTask, rebuildAll } from './project.ts';
 import { runAction } from './actions.ts';
@@ -44,6 +45,8 @@ export interface RunnerOptions {
   processEnv?: ProcessEnv;
   /** How to end a stray process. A test hands in its own, so it signals nothing real. */
   stopProcess?: (pid: number, opts?: { graceMs?: number }) => Promise<StopResult>;
+  /** Where collected artifacts are kept. Defaults to `~/.orstra/artifacts`. */
+  artifactsRoot?: string;
 }
 
 /** The limits when a step sets no `timeout:`: ORSTRA_AGENT_TIMEOUT_MIN (120) and ORSTRA_GATE_TIMEOUT_MIN (30). */
@@ -390,6 +393,13 @@ export class Runner extends EventEmitter {
       .map((n) => n.text);
   }
 
+  /** What the step must leave behind, written into the prompt so a fresh session knows the paths. */
+  private artifactText(step: Step): string {
+    if (!step.artifacts?.length) return '';
+    const lines = step.artifacts.map((a) => `- ${a.path}${a.required ? ' (required)' : ''}`).join('\n');
+    return `Leave these files in the worktree before you finish:\n${lines}\nOrstra copies them out when the step ends and shows them at the review.`;
+  }
+
   private buildPrompt(task: TaskRow, wf: Workflow, step: Step, run: RunRow): string {
     const notes = this.notesFor(task, step, run);
     return [
@@ -397,6 +407,7 @@ export class Runner extends EventEmitter {
       '---',
       `Task: ${task.ref ? task.ref + ' ' : ''}${task.title}`,
       task.description && `Description:\n${task.description}`,
+      this.artifactText(step),
       `Progress so far (each earlier step ran in its own session):\n${this.progressText(task, wf)}`,
       notes.length ? `Notes from the human for this step:\n${notes.map((n) => `- ${n}`).join('\n')}` : '',
       run.attempt > 1 ? `This is attempt ${run.attempt} of this step. Read the progress above and do not repeat what failed.` : '',
@@ -766,6 +777,45 @@ export class Runner extends EventEmitter {
     }
   }
 
+  /**
+   * Copy what the run produced out of the worktree and record it. Returns 'retry' or 'block' when a
+   * required file is absent, null when the task may move on.
+   */
+  private collect(task: TaskRow, run: RunRow, step: Step | undefined, success: boolean): 'retry' | 'block' | null {
+    if (!step?.artifacts?.length || !task.worktree) return null;
+    let res;
+    try {
+      res = collectArtifacts({ worktree: task.worktree, specs: step.artifacts, taskId: task.id, runId: run.id, since: run.started_at ?? 0, root: this.opts.artifactsRoot });
+    } catch (err: any) {
+      this.event(task.id, run.id, 'system', { text: `Could not collect this step’s artifacts: ${err?.message ?? err}` });
+      return null;
+    }
+    const now = Date.now();
+    const row = (name: string, label: string, mime: string, bytes: number, state: ArtifactState, sha256: string | null, path: string | null) =>
+      this.store.insertArtifact({ id: id('a'), task_id: task.id, run_id: run.id, step_id: run.step_id, name, label, mime, bytes, state, sha256, path, created_at: now });
+
+    for (const s of res.saved) {
+      if (s.skipped) row(s.name, s.skipped, s.mime, s.bytes, 'skipped', null, null);
+      else row(s.name, s.label, s.mime, s.bytes, 'saved', s.sha256, s.path);
+    }
+    // A declared file that never arrived is a row too, so the review states the gap instead of staying silent.
+    if (success) for (const m of res.missing) row(m.path, m.required ? 'Required, and the step wrote none' : 'The step declared it and wrote none', 'application/octet-stream', 0, 'missing', null, null);
+    if (res.saved.length || (success && res.missing.length)) {
+      this.event(task.id, run.id, 'artifact', { files: res.saved.map((s) => ({ name: s.name, bytes: s.bytes, skipped: s.skipped ?? null })), missing: success ? res.missing.map((m) => m.path) : [] });
+    }
+
+    const required = success ? res.missing.filter((s) => s.required) : [];
+    if (!required.length) return null;
+    const globs = required.map((s) => s.path).join(', ');
+    if (run.attempt < 2) {
+      this.event(task.id, run.id, 'system', { text: `No file matched ${globs}. The step runs again.` });
+      this.store.addEvent(task.id, null, 'note', { text: `The last run left no file that matches ${globs}. This step must produce it.`, step: run.step_id });
+      return 'retry';
+    }
+    this.event(task.id, run.id, 'system', { text: `Still no file for ${globs} after ${run.attempt} attempts. Over to you.` });
+    return 'block';
+  }
+
   /** Record a run's outcome and follow the matching arrow. */
   private finish(taskId: string, runId: string, outcome: string) {
     this.disarm(runId);
@@ -778,6 +828,16 @@ export class Runner extends EventEmitter {
     if (!OPEN_STATUSES.has(run.status)) return;
     const okOutcomes = new Set(['done', 'pass', 'ok', 'approved', 'started']);
     const wf = this.workflowFor(task);
+    // An absent required artifact stops the task here: the step runs once more, then it is blocked.
+    const gap = this.collect(task, run, wf.steps[run.step_id], okOutcomes.has(outcome));
+    if (gap) {
+      const routed = gap === 'retry' ? `goto:${run.step_id}` : 'block:missing_artifact';
+      this.store.updateRun(runId, { status: 'done', outcome, ended_at: Date.now(), routed });
+      if (gap === 'retry') this.queueStep(this.store.task(taskId)!, run.step_id);
+      this.project(taskId);
+      this.pump();
+      return;
+    }
     const counts = JSON.parse(task.edge_counts) as Record<string, number>;
     const next = route(wf, run.step_id, outcome, counts);
     // What the router decided is stored on the run, so a later read never has to ask the workflow
