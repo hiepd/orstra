@@ -16,10 +16,10 @@ const FILTERS: { id: Filter; label: string }[] = [
   { id: 'done', label: 'Done' },
 ];
 const LIST_GROUPS: { group: StateGroup; name: string; color: string }[] = [
-  { group: 'needs', name: 'Needs you', color: '#7444C2' },
-  { group: 'running', name: 'Running', color: '#4B55B8' },
-  { group: 'queued', name: 'Queued', color: '#8A8A93' },
-  { group: 'done', name: 'Done or stopped', color: '#1A7F4B' },
+  { group: 'needs', name: 'Needs you', color: 'var(--purple-fg)' },
+  { group: 'running', name: 'Running', color: 'var(--accent-fg)' },
+  { group: 'queued', name: 'Queued', color: 'var(--faint)' },
+  { group: 'done', name: 'Done or stopped', color: 'var(--green-fg)' },
 ];
 
 const remember = <T extends string>(key: string, fallback: T): T => {
@@ -104,7 +104,7 @@ export function TasksPage({ onNewTask }: { onNewTask: () => void }) {
       )}
       {res.data && tasks.length === 0 && (
         <div className="lx-empty">
-          <span style={{ color: '#B4B5BD' }}>
+          <span style={{ color: 'var(--dim)' }}>
             <TasksIcon />
           </span>
           <b>No tasks yet</b>

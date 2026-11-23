@@ -65,7 +65,7 @@ export function WorkflowsPage({ file }: { file?: string }) {
             {list.error && <div className="lx-error">{list.error}</div>}
             {!sel && list.data && (
               <div className="lx-empty">
-                <span style={{ color: '#B4B5BD' }}>
+                <span style={{ color: 'var(--dim)' }}>
                   <WorkflowsIcon />
                 </span>
                 <b>No workflows yet</b>

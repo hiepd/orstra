@@ -144,12 +144,12 @@ function TaskView({ task, view, runId }: { task: TaskDetail; view: TaskViewName;
 
 const KIND: Record<string, string> = { agent: 'agent', gate: 'checks', human: 'your decision', switch: 'picks a branch', action: 'action', workflow: 'starts a workflow' };
 const TONE = {
-  ok: { bg: '#EAF6EF', fg: '#1A7F4B' },
-  fail: { bg: '#FCEBEA', fg: '#C4302B' },
-  live: { bg: '#EEF0FB', fg: '#4B55B8' },
-  wait: { bg: '#F3EEFC', fg: '#7444C2' },
-  back: { bg: '#FDF0E8', fg: '#B4531B' },
-  plain: { bg: '#F0F1F4', fg: '#5A5A63' },
+  ok: { bg: 'var(--green-soft)', fg: 'var(--green-fg)' },
+  fail: { bg: 'var(--red-soft)', fg: 'var(--red-fg)' },
+  live: { bg: 'var(--accent-soft)', fg: 'var(--accent-fg)' },
+  wait: { bg: 'var(--purple-soft)', fg: 'var(--purple-fg)' },
+  back: { bg: 'var(--orange-soft)', fg: 'var(--orange-fg)' },
+  plain: { bg: 'var(--line-3)', fg: 'var(--grey-fg)' },
 };
 
 /** How a run ended, as a badge: "done", "fail → Implement", "waiting for you". */

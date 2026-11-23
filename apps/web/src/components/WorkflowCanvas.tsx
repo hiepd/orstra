@@ -71,8 +71,8 @@ function buildFlow(steps: WorkflowStep[], start: string): { nodes: Node[]; edges
         targetHandle: isBack ? 'back-in' : 'in',
         type: isBack ? 'default' : 'smoothstep',
         label: o.max ? `${humanize(o.outcome).toLowerCase()} · at most ${o.max}×` : humanize(o.outcome).toLowerCase(),
-        labelStyle: { fontSize: 11, fill: '#6f6f78' },
-        labelBgStyle: { fill: '#fff' },
+        labelStyle: { fontSize: 11, fill: 'var(--muted)' },
+        labelBgStyle: { fill: 'var(--surface)' },
         labelBgPadding: [4, 2],
         style: { stroke, strokeWidth: 1.5, strokeDasharray: isBack ? '5 4' : undefined },
         markerEnd: { type: MarkerType.ArrowClosed, color: stroke, width: 16, height: 16 },
@@ -105,7 +105,7 @@ export function WorkflowCanvas({ steps, start }: { steps: WorkflowStep[]; start:
         minZoom={0.3}
         proOptions={{ hideAttribution: true }}
       >
-        <Background variant={BackgroundVariant.Dots} gap={18} size={1} color="#dcdde3" />
+        <Background variant={BackgroundVariant.Dots} gap={18} size={1} color="var(--line-2)" />
         <Controls showInteractive={false} />
       </ReactFlow>
       {step && (

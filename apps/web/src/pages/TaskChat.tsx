@@ -48,7 +48,7 @@ export function TaskChat({ task, runId, git, openPath, onOpenPath }: { task: Tas
           const meta = s.working ? 'working' : s.waiting ? 'waiting for you' : r.status === 'queued' ? 'queued' : `ended · ${humanize(r.outcome ?? r.status).toLowerCase()} · ${duration(r.startedAt, r.endedAt ?? r.startedAt)}`;
           return (
             <a key={r.id} className="ox-srow" href={href.chat(task.id, r.id)} aria-current={r.id === run?.id ? 'true' : undefined}>
-              <span className={`ox-sd${s.working ? ' ox-live' : ''}`} style={{ background: s.working ? '#3B82F6' : s.waiting ? '#7444C2' : '#C9CAD3' }} />
+              <span className={`ox-sd${s.working ? ' ox-live' : ''}`} style={{ background: s.working ? '#3B82F6' : s.waiting ? 'var(--purple-fg)' : 'var(--border-strong)' }} />
               <span className="ox-sname">{runName(task, r)}</span>
               <span className="ox-smeta">
                 {meta} · {a.name}

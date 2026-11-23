@@ -64,7 +64,7 @@ function WorkFold({ tools, from, to, live }: { tools: ToolEv[]; from: number; to
   return (
     <div>
       <button className="ox-fold" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
-        {live && <span className="ox-sd ox-live" style={{ background: '#5E6AD2', width: 6, height: 6 }} />}
+        {live && <span className="ox-sd ox-live" style={{ background: 'var(--accent)', width: 6, height: 6 }} />}
         <span>{live ? `Working for ${duration(from, Date.now())}` : `Worked for ${duration(from, to)}`}</span>
         <ChevronRight open={open} size={11} />
         <span className="ox-fsum">{summarize(tools)}</span>
@@ -128,7 +128,7 @@ function PlanCard({ plan }: { plan: CosPlan }) {
     }
   };
   const done = plan.status === 'approved';
-  const state = plan.status === 'pending' ? ['Waiting for your OK', '#7444C2'] : done ? ['Done', '#1A7F4B'] : ['Not done', '#8A8A93'];
+  const state = plan.status === 'pending' ? ['Waiting for your OK', 'var(--purple-fg)'] : done ? ['Done', 'var(--green-fg)'] : ['Not done', 'var(--faint)'];
   return (
     <div className="cs-card cs-plan">
       <div className="cs-cardh">
@@ -139,7 +139,7 @@ function PlanCard({ plan }: { plan: CosPlan }) {
       </div>
       {plan.actions.map((a, i) => (
         <div key={i} className="cs-pstep">
-          <span className="cs-pn" style={done ? { background: '#EAF6EF', color: '#1A7F4B' } : undefined}>
+          <span className="cs-pn" style={done ? { background: 'var(--green-soft)', color: 'var(--green-fg)' } : undefined}>
             {done ? '✓' : i + 1}
           </span>
           <span>{a}</span>
@@ -164,7 +164,7 @@ function PlanCard({ plan }: { plan: CosPlan }) {
 function Did({ e }: { e: Extract<CosEvent, { kind: 'did' }> }) {
   return (
     <div className="cs-did">
-      <span className="cs-didic" style={e.watch ? { background: '#EEF0FB', color: '#4B55B8' } : undefined}>
+      <span className="cs-didic" style={e.watch ? { background: 'var(--accent-soft)', color: 'var(--accent-fg)' } : undefined}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
           <path d={e.watch ? ICON.eye : ICON.check} />
         </svg>
@@ -288,7 +288,7 @@ function Composer({ working, empty }: { working: boolean; empty: boolean }) {
         />
         <div className="ox-cfoot">
           <span className="ox-cctx">
-            <span className="lx-av ox-av" style={{ background: '#1B1B1F', width: 14, height: 14, fontSize: 8.5 }}>
+            <span className="lx-av ox-av" style={{ background: 'var(--solid)', width: 14, height: 14, fontSize: 8.5 }}>
               O
             </span>
             Chief of staff
@@ -344,9 +344,9 @@ function Side({ view, tasks }: { view: CosView; tasks: TaskSummary[] }) {
       <div className="cs-sh">Right now</div>
       {(
         [
-          ['Need you', count('needs'), '#7444C2', href.inbox],
-          ['Running', count('running'), '#4B55B8', href.tasks],
-          ['Queued', count('queued'), '#8A8A93', href.tasks],
+          ['Need you', count('needs'), 'var(--purple-fg)', href.inbox],
+          ['Running', count('running'), 'var(--accent-fg)', href.tasks],
+          ['Queued', count('queued'), 'var(--faint)', href.tasks],
         ] as const
       ).map(([label, n, color, to]) => (
         <a key={label} className="cs-nrow" href={to}>
@@ -361,7 +361,7 @@ function Side({ view, tasks }: { view: CosView; tasks: TaskSummary[] }) {
       </div>
       {view.watches.map((w) => (
         <div key={w.id} className="cs-wrow">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#5E6AD2" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flex: 'none', marginTop: 2 }} aria-hidden="true">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flex: 'none', marginTop: 2 }} aria-hidden="true">
             <path d={ICON.eye} />
           </svg>
           <div style={{ flex: 1, minWidth: 0 }}>

@@ -19,13 +19,13 @@ export function taskState(t: Pick<TaskSummary, 'status' | 'inboxReason' | 'run'>
 export type StateGroup = 'needs' | 'running' | 'queued' | 'done';
 
 export const STATE: Record<TaskState, { label: string; short: string; bg: string; fg: string; group: StateGroup }> = {
-  running: { label: 'Running', short: 'Running', bg: '#EEF0FB', fg: '#4B55B8', group: 'running' },
-  queued: { label: 'Queued', short: 'Queued', bg: '#F0F1F4', fg: '#5A5A63', group: 'queued' },
-  decision: { label: 'Needs your decision', short: 'Decide', bg: '#F3EEFC', fg: '#7444C2', group: 'needs' },
-  question: { label: 'Agent is waiting for you', short: 'Waiting for you', bg: '#EEF0FB', fg: '#4B55B8', group: 'needs' },
-  stuck: { label: 'Stuck', short: 'Stuck', bg: '#FCEBEA', fg: '#C4302B', group: 'needs' },
-  done: { label: 'Done', short: 'Done', bg: '#EAF6EF', fg: '#1A7F4B', group: 'done' },
-  stopped: { label: 'Stopped', short: 'Stopped', bg: '#F0F1F4', fg: '#5A5A63', group: 'done' },
+  running: { label: 'Running', short: 'Running', bg: 'var(--accent-soft)', fg: 'var(--accent-fg)', group: 'running' },
+  queued: { label: 'Queued', short: 'Queued', bg: 'var(--line-3)', fg: 'var(--grey-fg)', group: 'queued' },
+  decision: { label: 'Needs your decision', short: 'Decide', bg: 'var(--purple-soft)', fg: 'var(--purple-fg)', group: 'needs' },
+  question: { label: 'Agent is waiting for you', short: 'Waiting for you', bg: 'var(--accent-soft)', fg: 'var(--accent-fg)', group: 'needs' },
+  stuck: { label: 'Stuck', short: 'Stuck', bg: 'var(--red-soft)', fg: 'var(--red-fg)', group: 'needs' },
+  done: { label: 'Done', short: 'Done', bg: 'var(--green-soft)', fg: 'var(--green-fg)', group: 'done' },
+  stopped: { label: 'Stopped', short: 'Stopped', bg: 'var(--line-3)', fg: 'var(--grey-fg)', group: 'done' },
 };
 
 export const agentMeta = (t: Pick<TaskSummary, 'agent'>) => AGENTS[t.agent ?? 'claude-code'];

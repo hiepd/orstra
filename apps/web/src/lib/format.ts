@@ -4,7 +4,7 @@ export const taskLabel = (t: Pick<TaskSummary, 'id' | 'ref'>) => t.ref || t.id.s
 
 export const AGENTS: Record<AgentName | 'gate', { av: string; color: string; name: string }> = {
   'claude-code': { av: 'C', color: '#C15F3C', name: 'Claude Code' },
-  codex: { av: 'X', color: '#1B1B1F', name: 'Codex' },
+  codex: { av: 'X', color: 'var(--ink)', name: 'Codex' },
   gate: { av: 'G', color: '#4CB782', name: 'Gate' },
 };
 

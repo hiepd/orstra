@@ -1,6 +1,7 @@
 import { api } from '../api';
 import { shortPath } from '../components/GitPanel';
 import { useLiveResource } from '../lib/live';
+import { setThemeChoice, useTheme, type ThemeChoice } from '../lib/theme';
 
 function Row({ label, help, value, mono, ok }: { label: string; help: string; value: string; mono?: boolean; ok?: boolean }) {
   return (
@@ -9,10 +10,41 @@ function Row({ label, help, value, mono, ok }: { label: string; help: string; va
         <div className="ox-lb">{label}</div>
         <div className="ox-hp">{help}</div>
       </div>
-      <span className={mono ? 'ox-val lx-mono' : 'ox-val'} style={ok === undefined ? undefined : { color: ok ? '#1A7F4B' : '#C4302B' }} title={value}>
+      <span className={mono ? 'ox-val lx-mono' : 'ox-val'} style={ok === undefined ? undefined : { color: ok ? 'var(--green-fg)' : 'var(--red-fg)' }} title={value}>
         {value}
       </span>
     </div>
+  );
+}
+
+const THEMES: { id: ThemeChoice; label: string }[] = [
+  { id: 'system', label: 'System' },
+  { id: 'light', label: 'Light' },
+  { id: 'dark', label: 'Dark' },
+];
+
+function AppearanceCard() {
+  const { choice } = useTheme();
+  return (
+    <>
+      <h2 className="ox-h2">Appearance</h2>
+      <div className="ox-card">
+        <div className="ox-srow2">
+          <div className="ox-sl">
+            <div className="ox-lb">Theme</div>
+            <div className="ox-hp">System follows your OS. Saved in this browser.</div>
+          </div>
+          <div className="ox-seg" role="radiogroup" aria-label="Theme">
+            {THEMES.map((t) => (
+              <button key={t.id} type="button" role="radio" aria-checked={choice === t.id} className={choice === t.id ? 'ox-on' : undefined} onClick={() => setThemeChoice(t.id)}>
+                {t.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+      <div style={{ height: 26 }} />
+    </>
   );
 }
 
@@ -37,6 +69,7 @@ export function SettingsPage() {
           )}
           {s && (
             <>
+              <AppearanceCard />
               <h2 className="ox-h2">Agents</h2>
               <div className="ox-card">
                 {s.agents.map((a) => (

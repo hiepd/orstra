@@ -29,7 +29,7 @@ export function Sidebar({ route, inboxCount, runningCount, queuedCount, connecte
       <NavLink to={href.settings} on={route.name === 'settings'} icon={<SettingsIcon />} label="Settings" />
       <div className="lx-runner">
         <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <i className="lx-dot" style={{ background: connected ? '#4CB782' : '#B4B5BD' }} />
+          <i className="lx-dot" style={{ background: connected ? '#4CB782' : 'var(--border-stronger)' }} />
           {connected ? 'Daemon connected' : 'Connecting to the daemon…'}
         </span>
         <span>
