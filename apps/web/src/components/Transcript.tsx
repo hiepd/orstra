@@ -3,6 +3,7 @@ import type { RunView, TaskEvent } from '../api';
 import { useNow } from '../lib/live';
 import { duration } from '../lib/time';
 import { ChevronRight } from './Icons';
+import { Markdown } from './Markdown';
 import { ProgressList } from './ProgressList';
 
 type ToolEvent = Extract<TaskEvent, { kind: 'tool' }>;
@@ -86,14 +87,14 @@ export function Transcript({ run, events, working, agentName }: { run: RunView; 
     if (e.kind === 'output') continue;
     flush(e.ts, false);
     const key = String(e.id);
-    if (e.kind === 'message') items.push({ key, node: <div className="ox-ai">{e.text}</div> });
+    if (e.kind === 'message') items.push({ key, node: <div className="ox-ai"><Markdown text={e.text} /></div> });
     else if (e.kind === 'aside')
       items.push({
         key,
         node: (
           <div className="ox-ai ox-aside">
             <span className="ox-tag">A copy of {agentName} answered; the run wasn’t touched</span>
-            {e.text}
+            <Markdown text={e.text} />
           </div>
         ),
       });

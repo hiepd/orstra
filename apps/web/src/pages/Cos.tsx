@@ -1,6 +1,7 @@
 import { useState, type KeyboardEvent, type ReactNode } from 'react';
 import { api, errorMessage, type CosEvent, type CosPermission, type CosPlan, type CosView, type TaskSummary } from '../api';
 import { ChevronRight } from '../components/Icons';
+import { Markdown } from '../components/Markdown';
 import { useToast } from '../components/Overlay';
 import { useAutoScroll } from '../lib/autoScroll';
 import { taskLabel } from '../lib/format';
@@ -206,7 +207,7 @@ function Conversation({ view, tasks }: { view: CosView; tasks: TaskSummary[] }) 
     since = e.ts;
     const key = String(e.id);
     if (e.kind === 'you') items.push({ key, node: <div className="ox-user"><div className="ox-bubble">{e.text}</div></div> });
-    else if (e.kind === 'message') items.push({ key, node: <div className="ox-ai cs-ai">{e.text}</div> });
+    else if (e.kind === 'message') items.push({ key, node: <div className="ox-ai cs-ai"><Markdown text={e.text} /></div> });
     else if (e.kind === 'show') items.push({ key, node: <TaskRows title={e.title} ids={e.taskIds} tasks={tasks} /> });
     else if (e.kind === 'plan') {
       const plan = view.plans.find((p) => p.id === e.planId);
