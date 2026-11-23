@@ -660,6 +660,15 @@ a:hover {
   background: #fff;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
   position: relative;
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+/* Focus the whole box (field + toolbar), not just the text field inside it. */
+.lx-box:focus-within {
+  border-color: #5e6ad2;
+  box-shadow: 0 0 0 3px rgba(94, 106, 210, 0.14), 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+.lx .lx-box textarea:focus-visible {
+  outline: none;
 }
 .lx-box textarea {
   width: 100%;
