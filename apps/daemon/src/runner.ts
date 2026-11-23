@@ -54,6 +54,11 @@ export class Runner extends EventEmitter {
     return wf;
   }
 
+  /** Drop the cached parse of a workflow file after it was edited, so the next step reads the new version. */
+  forgetWorkflow(path: string) {
+    this.workflows.delete(path);
+  }
+
   isLive(runId: string): boolean {
     return this.live.has(runId);
   }

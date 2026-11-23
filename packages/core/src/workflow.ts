@@ -55,6 +55,8 @@ export interface Workflow {
   start: string;
   triggers: unknown[];
   steps: Record<string, Step>;
+  /** Where each step sits on the canvas: id -> [x, y]. Only the editor reads this. */
+  layout: Record<string, [number, number]>;
 }
 
 const targetSchema = z.union([
@@ -91,6 +93,7 @@ const workflowSchema = z.object({
   start: z.string().optional(),
   triggers: z.array(z.unknown()).default([]),
   steps: z.record(stepSchema),
+  layout: z.record(z.tuple([z.number(), z.number()])).default({}),
 });
 
 function toTarget(t: z.infer<typeof targetSchema>): Target {
@@ -152,5 +155,6 @@ export function parseWorkflow(source: string): Workflow {
     start,
     triggers: raw.triggers,
     steps,
+    layout: raw.layout,
   };
 }

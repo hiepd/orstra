@@ -2,10 +2,10 @@ import { useCallback, useState } from 'react';
 import { api, type WorkflowStep } from '../api';
 import { shortPath } from '../components/GitPanel';
 import { WorkflowsIcon } from '../components/Icons';
-import { WorkflowCanvas } from '../components/WorkflowCanvas';
+import { WorkflowEditor } from '../components/WorkflowEditor';
 import { AGENTS, humanize } from '../lib/format';
 import { useLiveResource } from '../lib/live';
-import { href } from '../lib/router';
+import { href, navigate } from '../lib/router';
 import { KIND } from '../lib/stepKinds';
 
 function what(s: WorkflowStep): string {
@@ -21,7 +21,7 @@ export function WorkflowsPage({ file }: { file?: string }) {
   const list = useLiveResource('workflows', api.workflows, () => false);
   const sel = file ?? list.data?.[0]?.file;
   const wf = useLiveResource(`workflow:${sel ?? ''}`, useCallback(() => (sel ? api.workflow(sel) : Promise.resolve(null)), [sel]), () => false);
-  const [tab, setTab] = useState<'steps' | 'canvas' | 'yaml'>('steps');
+  const [tab, setTab] = useState<'steps' | 'canvas' | 'yaml'>('canvas');
   const w = wf.data;
 
   return (
@@ -37,21 +37,32 @@ export function WorkflowsPage({ file }: { file?: string }) {
           )}
         </div>
         {w && (
+          <>
+          {tab === 'canvas' && (list.data?.length ?? 0) > 1 && sel && (
+            <select className="wf-pick" aria-label="Workflow" value={sel} onChange={(e) => navigate(href.workflow(e.target.value))}>
+              {(list.data ?? []).map((x) => (
+                <option key={x.path} value={x.file}>
+                  {x.name}
+                </option>
+              ))}
+            </select>
+          )}
           <div className="ox-seg" role="group" aria-label="Workflow view" style={{ marginLeft: 10 }}>
-            <button aria-pressed={tab === 'steps'} onClick={() => setTab('steps')}>
-              Steps
-            </button>
             <button aria-pressed={tab === 'canvas'} onClick={() => setTab('canvas')}>
               Canvas
+            </button>
+            <button aria-pressed={tab === 'steps'} onClick={() => setTab('steps')}>
+              Steps
             </button>
             <button aria-pressed={tab === 'yaml'} onClick={() => setTab('yaml')}>
               YAML
             </button>
           </div>
+          </>
         )}
       </div>
       <div className="ox-set">
-        <nav className="ox-snav" aria-label="Workflows" style={{ flexBasis: 240 }}>
+        <nav className="ox-snav" aria-label="Workflows" style={{ flexBasis: 240, display: tab === 'canvas' && w && !w.error ? 'none' : undefined }}>
           {(list.data ?? []).map((x) => (
             <a key={x.path} className="ox-snb ox-wfitem" href={href.workflow(x.file)} aria-current={x.file === sel ? 'page' : undefined}>
               <span className="ox-trunc">{x.name}</span>
@@ -60,8 +71,13 @@ export function WorkflowsPage({ file }: { file?: string }) {
           ))}
           {list.data && list.data.length === 0 && <div className="lx-hint" style={{ padding: 8 }}>No workflow files found.</div>}
         </nav>
-        <div className="ox-smain">
-          <div className="ox-sdoc" style={{ maxWidth: tab === 'canvas' ? 'none' : 760 }}>
+        {w && tab === 'canvas' && !w.error && (
+          <div className="ox-smain wf-main">
+            <WorkflowEditor key={w.path} detail={w} onSaved={wf.reload} />
+          </div>
+        )}
+        <div className="ox-smain" style={w && tab === 'canvas' && !w.error ? { display: 'none' } : undefined}>
+          <div className="ox-sdoc" style={{ maxWidth: 760 }}>
             {list.error && <div className="lx-error">{list.error}</div>}
             {!sel && list.data && (
               <div className="lx-empty">
@@ -85,6 +101,7 @@ export function WorkflowsPage({ file }: { file?: string }) {
                 {w.error && (
                   <div className="lx-error" style={{ marginTop: 16 }}>
                     This file doesn’t parse: {w.error}
+                    {tab === 'canvas' && ' The canvas can’t open it. Fix the file in the YAML tab or your editor.'}
                   </div>
                 )}
 
@@ -118,10 +135,9 @@ export function WorkflowsPage({ file }: { file?: string }) {
                     ))}
                   </div>
                 )}
-                {tab === 'canvas' && !w.error && <WorkflowCanvas steps={w.steps} start={w.start ?? w.steps[0]?.id ?? ''} />}
                 {tab === 'yaml' && <pre className="ox-pre ox-yaml">{w.yaml}</pre>}
                 <div className="lx-hint" style={{ marginTop: 14 }}>
-                  Read-only for now. Edit the YAML file in your editor; Orstra picks up the change when it restarts. The visual editor isn’t built yet.
+                  This view is read-only. Edit on the Canvas tab (Save writes to the YAML file), or edit the file in your editor.
                 </div>
               </>
             )}

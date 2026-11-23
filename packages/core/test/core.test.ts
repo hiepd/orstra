@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseWorkflow, route, renderTemplate, parseAgentResult, stripProgressBlock, taskPath } from '../src/index.ts';
+import { applyEdits, parseWorkflow, route, renderTemplate, parseAgentResult, stripProgressBlock, taskPath } from '../src/index.ts';
 
 const YAML = `
 name: Linear ticket to PR
@@ -142,5 +142,52 @@ describe('taskPath', () => {
   });
   it('adds nothing after the last run of a finished task', () => {
     expect(taskPath(wf, ['route', 'repro'], null)).toEqual(['route', 'repro']);
+  });
+});
+
+describe('applyEdits', () => {
+  const SRC = `# my flow\nname: Demo\nsteps:\n  a:\n    # first step\n    use: agent\n    prompt: Do it\n    next: b\n  b:\n    use: gate\n    run: npm test\n    on:\n      pass: end\n      fail: { goto: a, max: 3 }\n`;
+  const graph = (wf = parseWorkflow(SRC)) => ({
+    start: wf.start,
+    steps: Object.values(wf.steps).map((s) => ({
+      id: s.id, kind: s.use, title: s.title, agent: s.agent, model: s.model, prompt: s.prompt, run: s.run,
+      on: Object.entries(s.on).map(([outcome, t]) => ({ outcome, to: t.goto, max: t.max ?? null })),
+    })),
+  });
+
+  it('round-trips with no edits and keeps comments', () => {
+    const out = applyEdits(SRC, graph());
+    expect(out).toContain('# my flow');
+    expect(out).toContain('# first step');
+    expect(parseWorkflow(out).steps.b.on.fail).toEqual({ goto: 'a', max: 3 });
+  });
+
+  it('edits a prompt, adds a step, rewires an arrow and stores positions', () => {
+    const g = graph();
+    g.steps[0].prompt = 'Line one\nLine two';
+    g.steps.push({ id: 'c', kind: 'human', title: 'Ask', question: 'OK?', on: [{ outcome: 'approved', to: 'end', max: null }] } as never);
+    g.steps[1].on = [{ outcome: 'pass', to: 'c', max: null }, { outcome: 'fail', to: 'a', max: 2 }];
+    const out = applyEdits(SRC, { ...g, layout: { a: [0, 0], b: [270.4, 0], c: [540, 0] } });
+    const wf = parseWorkflow(out);
+    expect(wf.steps.a.prompt).toBe('Line one\nLine two');
+    expect(wf.steps.b.on.pass.goto).toBe('c');
+    expect(wf.steps.c.use).toBe('human');
+    expect(wf.layout.b).toEqual([270, 0]);
+  });
+
+  it('does not re-wrap long lines it did not touch', () => {
+    const long = 'x'.repeat(150);
+    const src = `name: Demo\ndescription: ${long}\nsteps:\n  a:\n    use: agent\n    prompt: hi\n`;
+    const wf = parseWorkflow(src);
+    const g = { start: wf.start, steps: [{ id: 'a', kind: 'agent' as const, prompt: 'hi', on: [] }] };
+    expect(applyEdits(src, g)).toContain(`description: ${long}\n`);
+  });
+
+  it('removes a step and rejects a graph that points at a missing one', () => {
+    const g = graph();
+    expect(() => applyEdits(SRC, { ...g, steps: g.steps.slice(0, 1) })).toThrow(/points to "b"/);
+    g.steps[0].on = [];
+    const out = applyEdits(SRC, { ...g, steps: g.steps.slice(0, 1) });
+    expect(Object.keys(parseWorkflow(out).steps)).toEqual(['a']);
   });
 });

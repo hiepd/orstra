@@ -1769,11 +1769,8 @@ a:hover {
 .ox-bcol{max-width:300px}
 
 /* ---------- Workflow canvas (React Flow) ---------- */
-.wf-canvas{position:relative;height:calc(100vh - 230px);min-height:420px;border:1px solid var(--line-2);border-radius:8px;background:#fafafb;overflow:hidden;margin-top:16px}
-.wf-panel{position:absolute;top:10px;right:10px;width:280px;max-height:calc(100% - 20px);overflow:auto;padding:12px;background:#fff;border:1px solid var(--line-2);border-radius:8px;box-shadow:0 4px 16px rgba(20,20,30,.08);display:flex;flex-direction:column;gap:6px;z-index:5}
 .wf-node{width:210px;padding:9px 12px 10px;background:#fff;border:1px solid var(--line-2);border-left:3px solid var(--accent);border-radius:8px;box-shadow:0 1px 2px rgba(20,20,30,.05);display:flex;flex-direction:column;gap:3px;cursor:pointer}
 .wf-node:hover{border-color:#cfd1da}
-.wf-node.wf-selected{outline:2px solid var(--accent);outline-offset:1px}
 .wf-head{display:flex;align-items:center;gap:6px}
 .wf-kind{font-size:10.5px;font-weight:600;padding:1px 6px;border-radius:4px}
 .wf-start{font-size:10.5px;color:var(--faint)}
@@ -1782,3 +1779,36 @@ a:hover {
 .wf-end{padding:8px 16px;border-radius:999px;background:#fff;border:1px solid var(--line-2);color:var(--muted);font-size:12px}
 .wf-node .react-flow__handle,.wf-end .react-flow__handle{width:6px;height:6px;background:#c4c5cd;border:0}
 .wf-detail{margin:0;padding:10px;background:var(--hover);border:1px solid var(--line);border-radius:6px;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;word-break:break-word;max-height:240px;overflow:auto}
+
+/* ---------- Workflow editor ---------- */
+.wf-main{padding:0!important;display:flex;flex-direction:column;overflow:hidden!important}
+.wf-editor{flex:1;display:flex;flex-direction:column;min-height:0}
+.wf-toolbar{display:flex;align-items:center;gap:6px;padding:8px 12px;border-bottom:1px solid var(--line);flex:none;flex-wrap:wrap}
+.wf-tlabel{font-size:12px;color:var(--muted);margin-right:2px}
+.wf-spacer{flex:1}
+.wf-err{color:var(--danger);font-size:12px;max-width:380px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wf-save:not(:disabled){background:var(--accent);color:#fff;border-color:var(--accent)}
+.wf-save:disabled{opacity:.5}
+.wf-body{flex:1;display:flex;min-height:0}
+.wf-flow{flex:1;min-width:0;background:#fafafb}
+.wf-panel{flex:0 0 320px;border-left:1px solid var(--line);overflow-y:auto;padding:14px;background:#fff}
+.wf-help{display:flex;flex-direction:column;gap:6px}
+.wf-help ul{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px}
+.wf-form{display:flex;flex-direction:column;gap:10px}
+.wf-fhead{display:flex;align-items:center;justify-content:space-between}
+.wf-link{border:0;background:none;color:var(--accent);cursor:pointer;padding:0;font-size:12px}
+.wf-field{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted)}
+.wf-field input,.wf-field textarea,.wf-field select,.wf-arow input,.wf-arow select{width:100%;border:1px solid var(--line-2);border-radius:6px;padding:6px 8px;background:#fff;color:var(--ink);font-size:13px}
+.wf-field textarea{resize:vertical;line-height:1.45}
+.wf-sec{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--faint);margin-top:6px}
+.wf-arrow{display:flex;flex-direction:column;gap:5px;padding:8px;border:1px solid var(--line);border-radius:8px}
+.wf-arrow-sel{border-color:var(--accent);background:var(--accent-soft)}
+.wf-arow{display:flex;align-items:center;gap:6px}
+.wf-arow .wf-max{width:76px;flex:none}
+.wf-warn{font-size:11.5px;color:#b4531b}
+.wf-hr{border:0;border-top:1px solid var(--line);width:100%;margin:4px 0}
+.wf-del{color:var(--danger)}
+.wf-node.wf-selected{box-shadow:0 0 0 2px var(--accent)}
+.wf-node{cursor:grab}
+.wf-node:active{cursor:grabbing}
+.wf-pick{margin-left:10px;border:1px solid var(--line-2);border-radius:6px;padding:4px 8px;background:#fff;color:var(--ink);font-size:12.5px;max-width:200px}

@@ -157,7 +157,10 @@ export interface WorkflowStep {
   prompt: string | null;
   run: string[] | null;
   question: string | null;
+  choices: string[] | null;
+  value: string | null;
   action: string | null;
+  workflow: string | null;
   on: { outcome: string; to: string; toTitle: string; max: number | null }[];
 }
 
@@ -171,7 +174,30 @@ export interface WorkflowDetail {
   repo: string | null;
   start: string | null;
   concurrency: number | null;
+  /** Saved canvas positions: step id -> [x, y]. */
+  layout: Record<string, [number, number]>;
   steps: WorkflowStep[];
+}
+
+/** What the editor saves: the whole graph. The daemon applies it to the YAML file. */
+export interface WorkflowGraphInput {
+  start: string;
+  steps: {
+    id: string;
+    kind: StepKind;
+    title?: string;
+    agent?: AgentName;
+    model?: string;
+    prompt?: string;
+    run?: string[];
+    question?: string;
+    choices?: string[];
+    value?: string;
+    action?: string;
+    workflow?: string;
+    on: { outcome: string; to: string; max: number | null }[];
+  }[];
+  layout: Record<string, [number, number]>;
 }
 
 export interface Settings {
@@ -205,7 +231,7 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<T> {
+async function request<T>(method: 'GET' | 'POST' | 'PUT', path: string, body?: unknown): Promise<T> {
   let res: Response;
   try {
     res = await fetch(path, {
@@ -240,6 +266,7 @@ export const api = {
   settings: () => request<Settings>('GET', '/api/settings'),
   git: (taskId: string) => request<GitView>('GET', `/api/tasks/${encodeURIComponent(taskId)}/git`),
   diff: (taskId: string, path: string) => request<FileDiff>('GET', `/api/tasks/${encodeURIComponent(taskId)}/diff?path=${encodeURIComponent(path)}`),
+  saveWorkflow: (file: string, graph: WorkflowGraphInput) => request<WorkflowDetail>('PUT', `/api/workflows/${encodeURIComponent(file)}`, graph),
   createTask: (input: NewTaskInput) => request<TaskSummary>('POST', '/api/tasks', input),
   message: (taskId: string, body: { text: string; mode: MessageMode; runId?: string; stepId?: string }) =>
     request<{ ok: true }>('POST', `/api/tasks/${encodeURIComponent(taskId)}/messages`, body),

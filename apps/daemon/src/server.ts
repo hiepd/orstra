@@ -1,8 +1,8 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { basename, extname, join, resolve } from 'node:path';
-import { parseWorkflow, taskPath, type Progress, type Workflow } from '@orstra/core';
+import { applyEdits, parseWorkflow, taskPath, type EditGraph, type Progress, type Workflow } from '@orstra/core';
 import type { EventRow, RunRow, Store, TaskRow } from './db.ts';
 import type { Runner } from './runner.ts';
 import { gitDiff, gitInfo } from './git.ts';
@@ -44,10 +44,10 @@ export function resolveWorkflow(nameOrPath: string): string {
 
 function workflowView(wf: Workflow) {
   return {
-    name: wf.name, description: wf.description ?? null, repo: wf.repo ?? null, start: wf.start, concurrency: wf.concurrency,
+    name: wf.name, description: wf.description ?? null, repo: wf.repo ?? null, start: wf.start, concurrency: wf.concurrency, layout: wf.layout,
     steps: Object.values(wf.steps).map((s) => ({
       id: s.id, title: s.title ?? s.id, kind: s.use, agent: s.agent ?? null, model: s.model ?? null, prompt: s.prompt ?? null, run: s.run ?? null,
-      question: s.question ?? null, action: s.action ?? null,
+      question: s.question ?? null, choices: s.choices ?? null, value: s.value ?? null, action: s.action ?? null, workflow: s.workflow ?? null,
       on: Object.entries(s.on).map(([outcome, t]) => ({ outcome, to: t.goto, toTitle: t.goto === 'end' ? 'End' : wf.steps[t.goto]?.title ?? t.goto, max: t.max ?? null })),
     })),
   };
@@ -61,7 +61,7 @@ export function workflowDetail(file: string) {
   try {
     return { file: hit.file, path: hit.path, yaml, error: null, ...workflowView(parseWorkflow(yaml)) };
   } catch (err: any) {
-    return { file: hit.file, path: hit.path, yaml, error: err?.message ?? String(err), name: hit.name, description: null, repo: null, start: null, concurrency: null, steps: [] };
+    return { file: hit.file, path: hit.path, yaml, error: err?.message ?? String(err), name: hit.name, description: null, repo: null, start: null, concurrency: null, layout: {}, steps: [] };
   }
 }
 
@@ -230,6 +230,19 @@ const path = taskPath(wf, runs.map((r) => r.stepId), t.current_step);
         const t = store.task(mm[1]);
         const d = t?.worktree ? gitDiff(t.worktree, url.searchParams.get('path') ?? '') : null;
         return send(res, d ? 200 : 404, d ?? { error: 'No diff for that file' }), true;
+      }
+      if ((mm = m(/^\/api\/workflows\/([^/]+)$/)) && req.method === 'PUT') {
+        const file = decodeURIComponent(mm[1]);
+        const hit = listWorkflows().find((w) => w.file === file);
+        if (!hit) return send(res, 404, { error: 'No such workflow' }), true;
+        const graph = (await readJson(req)) as EditGraph;
+        // Validates first (throws a readable message), then swaps the file in atomically.
+        const next = applyEdits(readFileSync(hit.path, 'utf8'), graph);
+        const tmp = `${hit.path}.orstra-tmp`;
+        writeFileSync(tmp, next);
+        renameSync(tmp, hit.path);
+        runner.forgetWorkflow(hit.path);
+        return send(res, 200, workflowDetail(file)), true;
       }
       if ((mm = m(/^\/api\/workflows\/([^/]+)$/)) && req.method === 'GET') {
         const w = workflowDetail(decodeURIComponent(mm[1]));
