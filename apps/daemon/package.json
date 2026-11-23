@@ -1,0 +1,14 @@
+{
+  "name": "@orstra/daemon",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/cli.ts serve",
+    "start": "tsx src/cli.ts serve",
+    "cli": "tsx src/cli.ts"
+  },
+  "dependencies": {
+    "@orstra/core": "*"
+  }
+}

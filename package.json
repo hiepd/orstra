@@ -1,0 +1,28 @@
+{
+  "name": "orstra",
+  "private": true,
+  "version": "0.1.0",
+  "description": "A local software factory: coding agents run your workflows, you steer.",
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace @orstra/daemon & npm run dev --workspace @orstra/web",
+    "serve": "npm run start --workspace @orstra/daemon",
+    "orstra": "npm run cli --workspace @orstra/daemon --",
+    "build": "npm run build --workspace @orstra/web",
+    "test": "vitest run",
+    "typecheck": "tsc -p packages/core && tsc -p apps/daemon && tsc -p apps/web"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0"
+  },
+  "engines": {
+    "node": ">=22.13"
+  }
+}

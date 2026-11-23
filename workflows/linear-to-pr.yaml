@@ -1,0 +1,63 @@
+name: Linear ticket → PR
+description: Bug or feature ticket to a draft PR, with a spec you approve and a second-opinion review.
+concurrency: 3
+# repo: ~/workspace/your-repo     # each task gets a git worktree on branch orstra/<task>
+
+steps:
+  route:
+    title: Route by label
+    use: switch
+    value: "{{ trigger.description }}"
+    cases:
+      bug: repro
+      default: spec
+
+  repro:
+    title: Reproduce bug
+    use: agent
+    prompt: |
+      Reproduce "{{ trigger.title }}" with a failing test. Do not fix it yet. Commit the test only.
+    next: impl
+
+  spec:
+    title: Write spec
+    use: agent
+    model: opus
+    prompt: |
+      Write a short design spec for "{{ trigger.title }}" in docs/specs/.
+      List your assumptions and any open questions at the end.
+    next: approve
+
+  approve:
+    title: Approve spec
+    use: human
+    question: Is this the right thing to build?
+    on:
+      approved: impl
+      changes_requested: { goto: spec, max: 3 }
+      rejected: end
+
+  impl:
+    title: Implement
+    use: agent
+    prompt: |
+      Implement "{{ trigger.title }}". Follow the approved spec or the failing test from earlier steps.
+      Write tests first. Stop when the tests pass locally.
+    next: verify
+
+  verify:
+    title: Tests + typecheck
+    use: gate
+    run:
+      - npm test --if-present
+    on:
+      pass: review
+      fail: { goto: impl, max: 3 }
+
+  review:
+    title: Second-opinion review
+    use: agent
+    prompt: |
+      Review the diff on this branch against the spec and the ticket. Only report real bugs; fix nothing.
+      Use OUTCOME: done if it is clean, OUTCOME: needs_you if you found blocking issues.
+    next: end

@@ -1,0 +1,30 @@
+name: Hello Orstra
+description: A tiny workflow to see the factory work end to end, in a scratch folder.
+
+steps:
+  write:
+    title: Write a greeting
+    use: agent
+    prompt: |
+      Create a file named hello.txt containing a one-line greeting for "{{ trigger.title }}".
+      Keep it under 15 words. Do not create any other files.
+    next: check
+
+  check:
+    title: Check the file
+    use: gate
+    run:
+      - test -s hello.txt
+      - cat hello.txt
+    on:
+      pass: approve
+      fail: { goto: write, max: 2 }
+
+  approve:
+    title: Approve the greeting
+    use: human
+    question: Is this greeting good?
+    on:
+      approved: end
+      changes_requested: { goto: write, max: 3 }
+      rejected: end

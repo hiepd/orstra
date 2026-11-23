@@ -1,0 +1,4 @@
+#!/bin/sh
+# Run the Orstra CLI without npm (some npm wrappers kill long-running processes).
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+exec "$ROOT/node_modules/.bin/tsx" "$ROOT/apps/daemon/src/cli.ts" "$@"
