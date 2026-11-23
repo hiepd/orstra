@@ -208,6 +208,18 @@ export interface Settings {
   port: number;
   slots: number;
   agents: { id: AgentName; name: string; command: string; path: string | null }[];
+  agentConfig: Record<AgentName, AgentSettings>;
+  efforts: string[];
+  permissionModes: string[];
+  /** Set when ORSTRA_CLAUDE_PERMISSION is in the daemon's environment (used when no mode is chosen here). */
+  envPermissionMode: string | null;
+}
+
+/** Per-agent defaults saved in ~/.orstra/agents.json. A missing field means the agent's own default. */
+export interface AgentSettings {
+  model?: string;
+  effort?: string;
+  permissionMode?: string;
 }
 
 /** One entry in the chief of staff conversation. */
@@ -302,6 +314,7 @@ export const api = {
   workflows: () => request<WorkflowInfo[]>('GET', '/api/workflows'),
   workflow: (file: string) => request<WorkflowDetail>('GET', `/api/workflows/${encodeURIComponent(file)}`),
   settings: () => request<Settings>('GET', '/api/settings'),
+  saveAgentSettings: (agent: AgentName, body: AgentSettings) => request<Record<AgentName, AgentSettings>>('PUT', `/api/settings/agents/${encodeURIComponent(agent)}`, body),
   cos: () => request<CosView>('GET', '/api/cos'),
   cosSay: (text: string) => request<{ ok: true }>('POST', '/api/cos/messages', { text }),
   cosInterrupt: () => request<{ ok: true }>('POST', '/api/cos/interrupt'),

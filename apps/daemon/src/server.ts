@@ -9,6 +9,7 @@ import type { ChiefOfStaff } from './cos.ts';
 import { gitDiff, gitInfo } from './git.ts';
 import { listWorkflows, resolveWorkflow } from './workflows.ts';
 export { listWorkflows, resolveWorkflow };
+import { AGENT_IDS, EFFORTS, PERMISSION_MODES, loadAgentConfig, saveAgentSettings, type AgentId } from './agentConfig.ts';
 import { DB_PATH, HOME, PORT, SLOTS, WEB_DIST, WORKFLOW_DIRS, WORKTREES } from './paths.ts';
 
 const MIME: Record<string, string> = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.json': 'application/json', '.png': 'image/png' };
@@ -268,7 +269,11 @@ export function buildApi(store: Store, runner: Runner, cos?: ChiefOfStaff) {
         if ((mm = m(/^\/api\/cos\/watches\/([\w-]+)\/remove$/)) && req.method === 'POST') return cos.removeWatch(mm[1]), send(res, 200, { ok: true }), true;
       }
       if (req.method === 'GET' && p === '/api/settings') {
-        return send(res, 200, { home: HOME, database: DB_PATH, worktrees: WORKTREES, workflowDirs: WORKFLOW_DIRS, port: PORT, slots: SLOTS, agents: agents() }), true;
+        return send(res, 200, { home: HOME, database: DB_PATH, worktrees: WORKTREES, workflowDirs: WORKFLOW_DIRS, port: PORT, slots: SLOTS, agents: agents(), agentConfig: loadAgentConfig(), efforts: EFFORTS, permissionModes: PERMISSION_MODES, envPermissionMode: process.env.ORSTRA_CLAUDE_PERMISSION ?? null }), true;
+      }
+      if ((mm = m(/^\/api\/settings\/agents\/([\w-]+)$/)) && req.method === 'PUT') {
+        if (!AGENT_IDS.includes(mm[1] as AgentId)) return send(res, 404, { error: 'No such agent' }), true;
+        return send(res, 200, saveAgentSettings(mm[1] as AgentId, await readJson(req))), true;
       }
       if (req.method === 'GET' && p === '/api/sessions') return send(res, 200, sessions()), true;
       if (req.method === 'GET' && p === '/api/inbox') return send(res, 200, store.tasks().filter((t) => t.status === 'needs_you').map(taskDetail)), true;

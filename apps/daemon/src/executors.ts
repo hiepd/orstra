@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
+import { loadAgentConfig, type AgentSettings } from './agentConfig.ts';
 
 /** Something the run streamed: agent text, a tool call, or a line of command output. */
 export type StreamEvent =
@@ -58,17 +59,25 @@ function summarizeTool(name: string, input: Record<string, unknown>): string {
   return s.length > 140 ? s.slice(0, 137) + '…' : s;
 }
 
-/** Claude Code in streaming-input mode: stdin stays open, so we can message and interrupt it while it works. */
-function claudeSession(opts: SessionOptions): LiveSession {
+/** The claude command line for a session. A model set by the caller (a workflow step) wins over the configured default. */
+export function claudeArgs(opts: Pick<SessionOptions, 'sessionId' | 'resume' | 'model' | 'toolArgs'>, cfg: AgentSettings = {}): string[] {
   const args = [
     '-p',
     '--input-format', 'stream-json',
     '--output-format', 'stream-json',
     '--verbose',
-    ...(opts.toolArgs ?? ['--permission-mode', process.env.ORSTRA_CLAUDE_PERMISSION ?? 'acceptEdits', '--allowedTools', process.env.ORSTRA_CLAUDE_TOOLS ?? 'Bash Read Edit Write Glob Grep']),
+    ...(opts.toolArgs ?? ['--permission-mode', cfg.permissionMode ?? process.env.ORSTRA_CLAUDE_PERMISSION ?? 'acceptEdits', '--allowedTools', process.env.ORSTRA_CLAUDE_TOOLS ?? 'Bash Read Edit Write Glob Grep']),
     ...(opts.resume ? ['--resume', opts.sessionId] : ['--session-id', opts.sessionId]),
   ];
-  if (opts.model) args.push('--model', opts.model);
+  const model = opts.model || cfg.model;
+  if (model) args.push('--model', model);
+  if (cfg.effort) args.push('--effort', cfg.effort);
+  return args;
+}
+
+/** Claude Code in streaming-input mode: stdin stays open, so we can message and interrupt it while it works. */
+function claudeSession(opts: SessionOptions): LiveSession {
+  const args = claudeArgs(opts, loadAgentConfig()['claude-code']);
 
   const child = spawn(process.env.ORSTRA_CLAUDE_BIN ?? 'claude', args, { cwd: opts.cwd, stdio: ['pipe', 'pipe', 'pipe'] });
   let stderr = '';

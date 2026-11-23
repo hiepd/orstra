@@ -1941,3 +1941,7 @@ a:hover {
   --xy-background-color: transparent;
 }
 .wf-flow .react-flow__controls-button svg{fill:currentColor}
+
+/* Settings: per-agent controls */
+.ox-ctl{width:220px;flex:none;margin-left:auto}
+.ox-actions{justify-content:flex-end;background:var(--bg)}
