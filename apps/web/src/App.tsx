@@ -53,7 +53,7 @@ function Shell() {
         {route.name === 'tasks' && <TasksPage onNewTask={openNew} />}
         {route.name === 'task' && <TaskPage key={route.id} id={route.id} view={route.view} runId={route.runId} />}
         {route.name === 'workflows' && <WorkflowsPage file={route.file} />}
-        {route.name === 'settings' && <SettingsPage />}
+        {route.name === 'settings' && <SettingsPage group={route.group} />}
         {route.name === 'notFound' && (
           <div className="lx-empty">
             <b>Nothing here</b>
