@@ -188,7 +188,7 @@ function Overview({ task, git, onModal }: { task: TaskDetail; git: Resource<GitV
     if (r.status === 'waiting' && r.kind === 'agent') return 'The session is open and waiting for you.';
     if (r.kind === 'human') {
       const d = task.events.find((e) => e.runId === r.id && e.kind === 'you' && e.mode === 'decision');
-      if (d && d.kind === 'you') return `You chose “${humanize(d.choice ?? r.outcome ?? '').toLowerCase()}”.` + (d.text ? ` You said: “${d.text}”` : '');
+      if (d && d.kind === 'you') return `${d.via === 'cos' ? 'Your chief of staff chose (with your OK)' : 'You chose'} “${humanize(d.choice ?? r.outcome ?? '').toLowerCase()}”.` + (d.text ? ` Comment: “${d.text}”` : '');
       return r.status === 'waiting' ? 'Waiting for your decision.' : null;
     }
     if (r.kind === 'switch' || r.kind === 'action') {
@@ -272,7 +272,8 @@ function Overview({ task, git, onModal }: { task: TaskDetail; git: Resource<GitV
                   const badge = outcomeBadge(task, r);
                   const text = runText(r);
                   const o = isOpen(r, i);
-                  const who = r.kind === 'agent' || r.kind === 'gate' ? agentOf(r).name : r.kind === 'human' ? 'You' : 'Orstra';
+                  const byCos = task.events.some((e) => e.runId === r.id && e.kind === 'you' && e.mode === 'decision' && e.via === 'cos');
+                  const who = r.kind === 'agent' || r.kind === 'gate' ? agentOf(r).name : r.kind === 'human' ? (byCos ? 'Chief of staff' : 'You') : 'Orstra';
                   return (
                     <div key={r.id} className="ox-run">
                       <button className="ox-runh" aria-expanded={o} onClick={() => setOpen((m) => ({ ...m, [r.id]: !o }))}>

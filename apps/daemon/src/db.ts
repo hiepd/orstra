@@ -69,7 +69,39 @@ CREATE TABLE IF NOT EXISTS events (
   ts INTEGER NOT NULL, kind TEXT NOT NULL, payload TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS events_task ON events(task_id);
+CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS plans (
+  id TEXT PRIMARY KEY, status TEXT NOT NULL, actions TEXT NOT NULL, results TEXT,
+  created_at INTEGER NOT NULL, decided_at INTEGER
+);
+CREATE TABLE IF NOT EXISTS watches (
+  id TEXT PRIMARY KEY, task_id TEXT NOT NULL, until TEXT NOT NULL, instruction TEXT NOT NULL,
+  created_at INTEGER NOT NULL, fired_at INTEGER, removed_at INTEGER
+);
 `;
+
+/** A batch of actions the chief of staff wants to take that need your OK first. */
+export interface PlanRow {
+  id: string;
+  status: 'pending' | 'approved' | 'declined';
+  /** JSON: { tool, args, label }[] */
+  actions: string;
+  /** JSON: string[], one line per action, once approved */
+  results: string | null;
+  created_at: number;
+  decided_at: number | null;
+}
+
+/** "Tell me / do X when task Y reaches a state": wakes the chief of staff. */
+export interface WatchRow {
+  id: string;
+  task_id: string;
+  until: string;
+  instruction: string;
+  created_at: number;
+  fired_at: number | null;
+  removed_at: number | null;
+}
 
 export class Store {
   readonly db: DatabaseSync;
@@ -146,6 +178,48 @@ export class Store {
       .prepare('INSERT INTO events (task_id, run_id, ts, kind, payload) VALUES (?, ?, ?, ?, ?)')
       .run(taskId, runId, ts, kind, JSON.stringify(payload));
     return { id: Number(res.lastInsertRowid), task_id: taskId, run_id: runId, ts, kind, payload: JSON.stringify(payload) };
+  }
+
+  get(key: string): string | null {
+    const row = this.db.prepare('SELECT value FROM kv WHERE key = ?').get(key) as { value: string } | undefined;
+    return row ? row.value : null;
+  }
+
+  set(key: string, value: string) {
+    this.db.prepare('INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, value);
+  }
+
+  insertPlan(p: PlanRow) {
+    this.db.prepare('INSERT INTO plans (id, status, actions, results, created_at, decided_at) VALUES (?, ?, ?, ?, ?, ?)').run(p.id, p.status, p.actions, p.results, p.created_at, p.decided_at);
+  }
+
+  updatePlan(id: string, patch: Partial<PlanRow>) {
+    const keys = Object.keys(patch);
+    if (!keys.length) return;
+    this.db.prepare(`UPDATE plans SET ${keys.map((k) => `${k} = ?`).join(', ')} WHERE id = ?`).run(...keys.map((k) => (patch as Record<string, unknown>)[k] as never), id);
+  }
+
+  plan(id: string): PlanRow | undefined {
+    return this.db.prepare('SELECT * FROM plans WHERE id = ?').get(id) as PlanRow | undefined;
+  }
+
+  plans(): PlanRow[] {
+    return this.db.prepare('SELECT * FROM plans ORDER BY created_at').all() as unknown as PlanRow[];
+  }
+
+  insertWatch(w: WatchRow) {
+    this.db.prepare('INSERT INTO watches (id, task_id, until, instruction, created_at, fired_at, removed_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(w.id, w.task_id, w.until, w.instruction, w.created_at, w.fired_at, w.removed_at);
+  }
+
+  updateWatch(id: string, patch: Partial<WatchRow>) {
+    const keys = Object.keys(patch);
+    if (!keys.length) return;
+    this.db.prepare(`UPDATE watches SET ${keys.map((k) => `${k} = ?`).join(', ')} WHERE id = ?`).run(...keys.map((k) => (patch as Record<string, unknown>)[k] as never), id);
+  }
+
+  /** Watches that haven't fired and weren't removed. */
+  activeWatches(): WatchRow[] {
+    return this.db.prepare('SELECT * FROM watches WHERE fired_at IS NULL AND removed_at IS NULL ORDER BY created_at').all() as unknown as WatchRow[];
   }
 
   events(taskId: string): EventRow[] {

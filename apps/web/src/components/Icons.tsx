@@ -21,6 +21,12 @@ export const SearchIcon = () => (
     <path d="m20 20-3.5-3.5" />
   </Stroke>
 );
+export const CosIcon = () => (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <rect x="3" y="7" width="18" height="13" rx="2" />
+    <path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2M3 13h18" />
+  </svg>
+);
 export const InboxIcon = (p: P) => (
   <Stroke {...p}>
     <path d="M3 13h5l1.5 3h5l1.5-3h5" />

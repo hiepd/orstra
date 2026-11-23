@@ -5,7 +5,10 @@ import { basename, extname, join, resolve } from 'node:path';
 import { parseWorkflow, taskPath, type Progress, type Workflow } from '@orstra/core';
 import type { EventRow, RunRow, Store, TaskRow } from './db.ts';
 import type { Runner } from './runner.ts';
+import type { ChiefOfStaff } from './cos.ts';
 import { gitDiff, gitInfo } from './git.ts';
+import { listWorkflows, resolveWorkflow } from './workflows.ts';
+export { listWorkflows, resolveWorkflow };
 import { DB_PATH, HOME, PORT, SLOTS, WEB_DIST, WORKFLOW_DIRS, WORKTREES } from './paths.ts';
 
 const MIME: Record<string, string> = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.json': 'application/json', '.png': 'image/png' };
@@ -19,27 +22,6 @@ async function readJson(req: IncomingMessage): Promise<any> {
   let raw = '';
   for await (const chunk of req) raw += chunk;
   return raw ? JSON.parse(raw) : {};
-}
-
-export function listWorkflows(): { name: string; path: string; file: string; error?: string }[] {
-  const out: { name: string; path: string; file: string; error?: string }[] = [];
-  for (const dir of WORKFLOW_DIRS) {
-    if (!existsSync(dir)) continue;
-    for (const f of readdirSync(dir)) {
-      if (!/\.ya?ml$/.test(f)) continue;
-      const path = join(dir, f);
-      const m = readFileSync(path, 'utf8').match(/^name:\s*(.+)$/m);
-      out.push({ name: m?.[1]?.trim() ?? f, path, file: f });
-    }
-  }
-  return out;
-}
-
-export function resolveWorkflow(nameOrPath: string): string {
-  if (existsSync(nameOrPath) && statSync(nameOrPath).isFile()) return resolve(nameOrPath);
-  const hit = listWorkflows().find((w) => w.file === nameOrPath || w.file.replace(/\.ya?ml$/, '') === nameOrPath || w.name === nameOrPath);
-  if (!hit) throw new Error(`No workflow called "${nameOrPath}". Put YAML files in ${WORKFLOW_DIRS.join(' or ')}.`);
-  return hit.path;
 }
 
 function workflowView(wf: Workflow) {
@@ -83,7 +65,8 @@ function parseEvent(e: EventRow) {
   return { id: e.id, runId: e.run_id, ts: e.ts, kind: e.kind, ...JSON.parse(e.payload) };
 }
 
-export function buildApi(store: Store, runner: Runner) {
+/** How tasks, runs and worktrees look to the UI and to the chief of staff. */
+export function makeViews(store: Store, runner: Runner) {
   const stepTitle = (task: TaskRow, stepId: string) => {
     try { return runner.workflow(task.workflow_path).steps[stepId]?.title ?? stepId; } catch { return stepId; }
   };
@@ -167,6 +150,13 @@ const path = taskPath(wf, runs.map((r) => r.stepId), t.current_step);
       files: info?.files ?? [], commits: info?.commits ?? [], checks, pr: null as null | { number: number; url: string; state: string } };
   };
 
+  return { stepTitle, runView, taskSummary, taskDetail, gitView };
+}
+
+export type Views = ReturnType<typeof makeViews>;
+
+export function buildApi(store: Store, runner: Runner, cos?: ChiefOfStaff) {
+  const { runView, taskSummary, taskDetail, gitView } = makeViews(store, runner);
   const sessions = () => {
     const since = Date.now() - 24 * 3600_000;
     const rows = [...store.runsByStatus('running', 'waiting', 'queued'), ...store.runsSince(since).filter((r) => !['running', 'queued', 'waiting'].includes(r.status))]
@@ -235,6 +225,35 @@ const path = taskPath(wf, runs.map((r) => r.stepId), t.current_step);
         const w = workflowDetail(decodeURIComponent(mm[1]));
         return send(res, w ? 200 : 404, w ?? { error: 'No such workflow' }), true;
       }
+      if (p.startsWith('/api/cos')) {
+        if (!cos) return send(res, 404, { error: 'The chief of staff isn’t running.' }), true;
+        if (req.method === 'GET' && p === '/api/cos') return send(res, 200, cos.view()), true;
+        if (req.method === 'POST' && p === '/api/cos/messages') {
+          const b = await readJson(req);
+          cos.say(String(b.text ?? ''));
+          return send(res, 200, { ok: true }), true;
+        }
+        if (req.method === 'POST' && p === '/api/cos/interrupt') return cos.interrupt(), send(res, 200, { ok: true }), true;
+        if (req.method === 'POST' && p === '/api/cos/tool') {
+          const b = await readJson(req);
+          try {
+            return send(res, 200, { text: await cos.tool(String(b.name), b.args ?? {}) }), true;
+          } catch (err: any) {
+            return send(res, 400, { error: err?.message ?? String(err) }), true;
+          }
+        }
+        if (req.method === 'POST' && p === '/api/cos/permissions') {
+          const b = await readJson(req);
+          cos.setPermission(b.key, !!b.value);
+          return send(res, 200, { ok: true }), true;
+        }
+        if ((mm = m(/^\/api\/cos\/plans\/([\w-]+)\/(approve|decline)$/)) && req.method === 'POST') {
+          if (mm[2] === 'approve') await cos.approve(mm[1]);
+          else cos.decline(mm[1]);
+          return send(res, 200, { ok: true }), true;
+        }
+        if ((mm = m(/^\/api\/cos\/watches\/([\w-]+)\/remove$/)) && req.method === 'POST') return cos.removeWatch(mm[1]), send(res, 200, { ok: true }), true;
+      }
       if (req.method === 'GET' && p === '/api/settings') {
         return send(res, 200, { home: HOME, database: DB_PATH, worktrees: WORKTREES, workflowDirs: WORKFLOW_DIRS, port: PORT, slots: SLOTS, agents: agents() }), true;
       }
@@ -248,13 +267,18 @@ const path = taskPath(wf, runs.map((r) => r.stepId), t.current_step);
   };
 }
 
-export function startServer(store: Store, runner: Runner, port: number) {
-  const api = buildApi(store, runner);
+export function startServer(store: Store, runner: Runner, port: number, cos?: ChiefOfStaff) {
+  const api = buildApi(store, runner, cos);
   const clients = new Set<ServerResponse>();
-  runner.on('change', (e) => {
+  const broadcast = (e: unknown) => {
     const line = `data: ${JSON.stringify(e)}\n\n`;
     for (const c of clients) c.write(line);
+  };
+  runner.on('change', (e: { taskId: string }) => {
+    broadcast(e);
+    cos?.onTaskChange(e.taskId);
   });
+  cos?.on('change', broadcast);
 
   const server = createServer(async (req, res) => {
     if (req.url === '/api/events') {

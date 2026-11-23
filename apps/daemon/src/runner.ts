@@ -11,10 +11,16 @@ export interface StartTaskInput {
   description?: string;
   ref?: string;
   repo?: string;
+  /** Who asked: 'cos' when the chief of staff started it. */
+  via?: Via;
 }
 
 /** chat = talk to the agent's session; note = hand to a step's next run; ask = a forked copy answers. */
 export type MessageMode = 'chat' | 'note' | 'ask';
+
+/** Set when the chief of staff acted for you; shown on the task. */
+export type Via = 'cos' | undefined;
+const byCos = (via: Via) => (via === 'cos' ? ' (by your chief of staff)' : '');
 
 export interface RunnerOptions {
   slots: number;
@@ -97,7 +103,7 @@ export class Runner extends EventEmitter {
       inbox_reason: null, edge_counts: '{}', worktree, created_at: now, updated_at: now,
     };
     this.store.insertTask(task);
-    this.event(taskId, null, 'system', { text: `Started ${wf.name}` });
+    this.event(taskId, null, 'system', { text: `Started ${wf.name}${byCos(input.via)}` });
     this.queueStep(task, wf.start);
     this.pump();
     return task;
@@ -364,11 +370,11 @@ export class Runner extends EventEmitter {
   }
 
   /** A human step's decision. Each choice is an outgoing arrow; the comment goes to whichever step runs next. */
-  decide(runId: string, choice: string, comment?: string) {
+  decide(runId: string, choice: string, comment?: string, via?: Via) {
     const run = this.store.run(runId);
     if (!run || run.status !== 'waiting' || run.kind !== 'human') throw new Error('That decision is no longer waiting.');
     const task = this.store.task(run.task_id)!;
-    this.event(task.id, runId, 'you', { mode: 'decision', choice, text: comment ?? '' });
+    this.event(task.id, runId, 'you', { mode: 'decision', choice, text: comment ?? '', via });
     if (comment) this.store.addEvent(task.id, runId, 'note', { text: comment });
     this.finish(task.id, runId, choice);
   }
@@ -384,13 +390,13 @@ export class Runner extends EventEmitter {
    * chat: goes straight into the agent's session (read after its current action). If the session isn't
    * running any more, the same session resumes. note: handed to a step's next run. ask: a fork answers.
    */
-  async message(taskId: string, text: string, mode: MessageMode, opts: { runId?: string; stepId?: string } = {}) {
+  async message(taskId: string, text: string, mode: MessageMode, opts: { runId?: string; stepId?: string; via?: Via } = {}) {
     const task = this.store.task(taskId);
     if (!task) throw new Error('No such task.');
 
     if (mode === 'note') {
       const step = opts.stepId ?? task.current_step ?? undefined;
-      this.event(taskId, null, 'you', { mode: 'note', text, step: step ?? null });
+      this.event(taskId, null, 'you', { mode: 'note', text, step: step ?? null, via: opts.via });
       this.store.addEvent(taskId, null, 'note', { text, step });
       return;
     }
@@ -409,7 +415,7 @@ export class Runner extends EventEmitter {
       this.store.addEvent(taskId, null, 'note', { text });
       return this.event(taskId, null, 'system', { text: 'No agent has started yet. Your message goes to the next agent step.' });
     }
-    this.event(taskId, target.id, 'you', { mode: 'chat', text });
+    this.event(taskId, target.id, 'you', { mode: 'chat', text, via: opts.via });
 
     const owns = target.status === 'running' || target.status === 'waiting';
     if (owns && task.status !== 'stopped') {
@@ -447,7 +453,7 @@ export class Runner extends EventEmitter {
   }
 
   /** Run a step again (default: where the task is now) as a fresh session. */
-  retry(taskId: string, stepId?: string, note?: string) {
+  retry(taskId: string, stepId?: string, note?: string, via?: Via) {
     const task = this.store.task(taskId);
     if (!task) throw new Error('No such task.');
     const step = stepId ?? task.current_step;
@@ -457,12 +463,12 @@ export class Runner extends EventEmitter {
       if (r.status === 'waiting' || r.status === 'running') this.store.updateRun(r.id, { status: 'stopped', ended_at: Date.now() });
     }
     if (note) this.store.addEvent(taskId, null, 'note', { text: note, step });
-    this.event(taskId, null, 'system', { text: `Retrying ${step}` });
+    this.event(taskId, null, 'system', { text: `Retrying ${this.workflow(task.workflow_path).steps[step]?.title ?? step}${byCos(via)}` });
     this.queueStep(task, step);
     this.pump();
   }
 
-  stop(taskId: string) {
+  stop(taskId: string, via?: Via) {
     this.closeLive(taskId);
     for (const r of this.store.runsForTask(taskId)) {
       if (r.status === 'running' || r.status === 'queued' || r.status === 'waiting') {
@@ -471,7 +477,7 @@ export class Runner extends EventEmitter {
       }
     }
     this.store.updateTask(taskId, { status: 'stopped' });
-    this.event(taskId, null, 'system', { text: 'Stopped' });
+    this.event(taskId, null, 'system', { text: `Stopped${byCos(via)}` });
     this.pump();
   }
 }

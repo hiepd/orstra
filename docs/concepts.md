@@ -86,10 +86,18 @@ A coding CLI Orstra can drive: Claude Code today, Codex next. Configured in Sett
 ### Slot
 How many runs can work at the same time on this machine (default 4). Agent and gate runs take a slot; human, switch and action runs don't. When all slots are busy, new runs wait as **queued**.
 
+### Chief of staff
+**One ongoing conversation with an agent that sees every task.** It briefs you, answers questions about any task, and acts for you through Orstra: it messages a task's agent, leaves notes, starts, retries or stops tasks, answers decisions, and **watches** tasks to follow up later ("retry HUB-405 when HUB-432 is done").
+
+- It is Claude Code with Orstra's tools only: it can't run commands or edit code. To change code it talks to a task's agent or starts a task.
+- **Orstra, not the model, decides what needs your OK.** Actions that need it become a **plan**: a card with Do it / Not now. Messaging agents is allowed by default; starting and retrying tasks asks by default; decisions and stopping always ask.
+- Everything it does is recorded on the task, marked as done by your chief of staff.
+
 ## Screens (one home per concept)
 
 | Screen | Shows | Clicking an item |
 |---|---|---|
+| **Chief of staff** | The conversation, its plans waiting for your OK, what it is watching, what it may do without asking | Task rows open the task page |
 | **Inbox** | Tasks that need you: a decision, a question from an agent, or a stuck task | Opens the task page |
 | **Tasks** | All tasks. Board view groups them by their current step (columns = workflow steps); list view groups by status. Filter "Running now" for live work | Opens the task page |
 | **Task page** | One task: its steps (with notes), the decision if one is waiting, and the chat with its sessions | — |
@@ -97,7 +105,7 @@ How many runs can work at the same time on this machine (default 4). Agent and g
 | **Settings** | Agents, triggers, repositories, connections, notifications | — |
 
 **Rules for the UI:**
-- **One home per object.** Tasks live on the task page, workflows on Workflows, agents and triggers in Settings. Lists only navigate; they never offer a second place to act.
+- **One home per object.** Tasks live on the task page, workflows on Workflows, agents and triggers in Settings. Lists only navigate; they never offer a second place to act. The one exception is the chief of staff: you can ask it to act, and it shows every action as a plan or a receipt that links to the task.
 - **No list → list links.** From any list you go to the task page and back, never to another list.
 - **Talking and notes never mix.** Chat goes to a session; notes go on a step.
 

@@ -77,7 +77,7 @@ export type TaskEvent = EventBase &
     | { kind: 'output'; text: string }
     | ({ kind: 'progress' } & Progress)
     // 'steer' is a legacy mode from older events; treat it like 'chat'.
-    | { kind: 'you'; mode: MessageMode | 'decision' | 'interrupt' | 'steer'; text: string; choice?: string; step?: string | null }
+    | { kind: 'you'; mode: MessageMode | 'decision' | 'interrupt' | 'steer'; text: string; choice?: string; step?: string | null; via?: 'cos' }
     | { kind: 'note'; text: string; step?: string }
     | { kind: 'aside'; text: string }
   );
@@ -184,6 +184,44 @@ export interface Settings {
   agents: { id: AgentName; name: string; command: string; path: string | null }[];
 }
 
+/** One entry in the chief of staff conversation. */
+export type CosEvent = { id: number; ts: number } & (
+  | { kind: 'you'; text: string }
+  | { kind: 'message'; text: string }
+  | { kind: 'tool'; name: string; summary: string }
+  | { kind: 'show'; title: string; taskIds: string[] }
+  | { kind: 'plan'; planId: string }
+  | { kind: 'did'; text: string; taskId: string | null; view?: 'chat' | null; watch?: boolean }
+  | { kind: 'system'; text: string }
+);
+
+export interface CosPlan {
+  id: string;
+  status: 'pending' | 'approved' | 'declined';
+  actions: string[];
+  results: string[] | null;
+}
+
+export interface CosWatch {
+  id: string;
+  taskId: string;
+  task: string;
+  title: string;
+  until: 'done' | 'needs_you' | 'stopped' | 'finished';
+  instruction: string;
+  createdAt: number;
+}
+
+export type CosPermission = 'msg' | 'start';
+
+export interface CosView {
+  working: boolean;
+  events: CosEvent[];
+  plans: CosPlan[];
+  watches: CosWatch[];
+  permissions: Record<CosPermission, boolean>;
+}
+
 export interface WorkflowInfo {
   name: string;
   path: string;
@@ -238,6 +276,12 @@ export const api = {
   workflows: () => request<WorkflowInfo[]>('GET', '/api/workflows'),
   workflow: (file: string) => request<WorkflowDetail>('GET', `/api/workflows/${encodeURIComponent(file)}`),
   settings: () => request<Settings>('GET', '/api/settings'),
+  cos: () => request<CosView>('GET', '/api/cos'),
+  cosSay: (text: string) => request<{ ok: true }>('POST', '/api/cos/messages', { text }),
+  cosInterrupt: () => request<{ ok: true }>('POST', '/api/cos/interrupt'),
+  cosPlan: (id: string, answer: 'approve' | 'decline') => request<{ ok: true }>('POST', `/api/cos/plans/${encodeURIComponent(id)}/${answer}`),
+  cosUnwatch: (id: string) => request<{ ok: true }>('POST', `/api/cos/watches/${encodeURIComponent(id)}/remove`),
+  cosPermission: (key: CosPermission, value: boolean) => request<{ ok: true }>('POST', '/api/cos/permissions', { key, value }),
   git: (taskId: string) => request<GitView>('GET', `/api/tasks/${encodeURIComponent(taskId)}/git`),
   diff: (taskId: string, path: string) => request<FileDiff>('GET', `/api/tasks/${encodeURIComponent(taskId)}/diff?path=${encodeURIComponent(path)}`),
   createTask: (input: NewTaskInput) => request<TaskSummary>('POST', '/api/tasks', input),

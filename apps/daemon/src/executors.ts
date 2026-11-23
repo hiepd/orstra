@@ -20,6 +20,8 @@ export interface SessionOptions {
   /** true = continue an existing session (`--resume`), false = start a new one with this id. */
   resume: boolean;
   model?: string;
+  /** Replaces the default tool and permission flags (used by the chief of staff, which gets only Orstra's tools). */
+  toolArgs?: string[];
   onEvent: (e: StreamEvent) => void;
   onTurn: (t: TurnEnd) => void;
 }
@@ -51,7 +53,7 @@ export interface Executors {
 }
 
 function summarizeTool(name: string, input: Record<string, unknown>): string {
-  const pick = input.file_path ?? input.path ?? input.command ?? input.pattern ?? input.url ?? input.description;
+  const pick = input.file_path ?? input.path ?? input.command ?? input.pattern ?? input.url ?? input.description ?? input.task ?? input.title ?? input.workflow;
   const s = typeof pick === 'string' ? pick : JSON.stringify(input);
   return s.length > 140 ? s.slice(0, 137) + '…' : s;
 }
@@ -63,8 +65,7 @@ function claudeSession(opts: SessionOptions): LiveSession {
     '--input-format', 'stream-json',
     '--output-format', 'stream-json',
     '--verbose',
-    '--permission-mode', process.env.ORSTRA_CLAUDE_PERMISSION ?? 'acceptEdits',
-    '--allowedTools', process.env.ORSTRA_CLAUDE_TOOLS ?? 'Bash Read Edit Write Glob Grep',
+    ...(opts.toolArgs ?? ['--permission-mode', process.env.ORSTRA_CLAUDE_PERMISSION ?? 'acceptEdits', '--allowedTools', process.env.ORSTRA_CLAUDE_TOOLS ?? 'Bash Read Edit Write Glob Grep']),
     ...(opts.resume ? ['--resume', opts.sessionId] : ['--session-id', opts.sessionId]),
   ];
   if (opts.model) args.push('--model', opts.model);

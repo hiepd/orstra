@@ -7,6 +7,7 @@ import { handleEscape } from './lib/escape';
 import { useLiveConnected, useLiveResource } from './lib/live';
 import { href, useRoute } from './lib/router';
 import { STATE, taskState } from './lib/taskState';
+import { CosPage } from './pages/Cos';
 import { InboxPage } from './pages/Inbox';
 import { SettingsPage } from './pages/Settings';
 import { TaskPage } from './pages/TaskPage';
@@ -47,6 +48,7 @@ function Shell() {
     <div className="lx">
       <Sidebar route={route} inboxCount={inboxCount} runningCount={count('running')} queuedCount={count('queued')} connected={connected} />
       <div className="lx-frame">
+        {route.name === 'cos' && <CosPage />}
         {route.name === 'inbox' && <InboxPage />}
         {route.name === 'tasks' && <TasksPage onNewTask={openNew} />}
         {route.name === 'task' && <TaskPage key={route.id} id={route.id} view={route.view} runId={route.runId} />}

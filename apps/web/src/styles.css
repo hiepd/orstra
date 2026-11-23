@@ -1782,3 +1782,49 @@ a:hover {
 .wf-end{padding:8px 16px;border-radius:999px;background:#fff;border:1px solid var(--line-2);color:var(--muted);font-size:12px}
 .wf-node .react-flow__handle,.wf-end .react-flow__handle{width:6px;height:6px;background:#c4c5cd;border:0}
 .wf-detail{margin:0;padding:10px;background:var(--hover);border:1px solid var(--line);border-radius:6px;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;word-break:break-word;max-height:240px;overflow:auto}
+
+/* ---- Chief of staff (cs- classes, from the design mock) ---- */
+.cs-body{flex:1;display:flex;min-height:0}
+.cs-body .ox-chat{background:#FFFFFF}
+.cs-compwrap{padding-top:28px;background:linear-gradient(to bottom,rgba(255,255,255,0),#FFFFFF 30px)}
+.cs-ai{white-space:pre-wrap}
+.cs-intro{display:flex;flex-direction:column;gap:8px;padding:48px 8px 0;color:#6F6F78;font-size:14px;line-height:1.6;max-width:36rem}
+.cs-intro b{color:#1B1B1F;font-size:16px}
+.cs-card{border:1px solid #E3E4E8;border-radius:10px;overflow:hidden;background:#FFFFFF}
+.cs-cardh{display:flex;align-items:center;gap:8px;padding:8px 12px;font-size:12.5px;font-weight:500;color:#3C3C43;background:#F7F8FA;border-bottom:1px solid #EDEEF1}
+.lx a.cs-trow{display:flex;align-items:center;gap:10px;width:100%;padding:9px 12px;border-top:1px solid #F0F1F4;color:inherit;text-decoration:none}
+.cs-cardh + .cs-trow{border-top:0}
+.lx a.cs-trow:hover{background:#F7F8FA;text-decoration:none}
+.cs-trow svg{color:#B4B5BD;flex:none}
+.cs-tmain{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.cs-tt{font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cs-tw{font-size:12.5px;color:#6F6F78;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cs-tst{font-size:12px;font-weight:500;white-space:nowrap}
+.cs-plan{box-shadow:0 0 0 3px rgba(116,68,194,.06)}
+.cs-pstate{margin-left:auto;font-size:12px;font-weight:500}
+.cs-pstep{display:flex;gap:10px;padding:9px 12px;font-size:13.5px;line-height:1.5;border-top:1px solid #F0F1F4}
+.cs-cardh + .cs-pstep{border-top:0}
+.cs-pn{width:20px;height:20px;border-radius:50%;flex:none;display:inline-flex;align-items:center;justify-content:center;font-size:11.5px;font-weight:600;margin-top:1px;background:#F0F1F4;color:#5A5A63}
+.cs-pfoot{display:flex;align-items:center;gap:8px;padding:10px 12px;border-top:1px solid #EDEEF1;background:#FCFCFD}
+.cs-pfoot .ox-muted{flex:1}
+.cs-did{display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border:1px solid #E3E4E8;border-radius:10px;background:#FCFCFD}
+.cs-didic{width:22px;height:22px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;background:#EAF6EF;color:#1A7F4B}
+.cs-didb{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px}
+.cs-didt{font-size:13px;font-weight:500;line-height:22px;word-break:break-word}
+.cs-sugs{max-width:44rem;margin:0 auto 8px;display:flex;flex-wrap:wrap;gap:6px;pointer-events:auto}
+.cs-sug{height:28px;padding:0 11px;border:1px solid #E0E1E6;border-radius:999px;background:rgba(255,255,255,.92);font-size:12.5px;color:#3C3C43;cursor:pointer}
+.cs-sug:hover{border-color:#C6C8D1;background:#FFFFFF}
+.cs-side{flex:0 0 288px;border-left:1px solid #EDEEF1;padding:16px 14px;overflow:auto;background:#FCFCFD;display:flex;flex-direction:column;gap:2px}
+.cs-sh{font-size:12px;font-weight:500;color:#6F6F78;padding:0 2px 6px}
+.lx a.cs-nrow{display:flex;align-items:center;gap:8px;width:100%;height:30px;padding:0 6px;border-radius:6px;font-size:13px;color:#1B1B1F;text-decoration:none}
+.lx a.cs-nrow:hover{background:#F0F1F4;text-decoration:none}
+.cs-nrow b{font-weight:600}
+.cs-wrow{display:flex;align-items:flex-start;gap:8px;padding:8px 6px;border-radius:6px}
+.cs-wrow:hover{background:#F4F5F8}
+.cs-prow{display:flex;align-items:center;gap:10px;padding:8px 6px}
+.cs-wt{display:block;font-size:13px;line-height:1.4;color:#1B1B1F}
+.cs-ws{font-size:12px;color:#8A8A93;line-height:1.4;margin-top:1px}
+.cs-tog{width:30px;height:18px;border:0;border-radius:999px;background:#D5D6DC;position:relative;cursor:pointer;flex:none;padding:0}
+.cs-tog i{position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#FFFFFF;box-shadow:0 1px 1px rgba(0,0,0,.2);transition:left .12s}
+.cs-tog[aria-checked="true"]{background:#5E6AD2}
+.cs-tog[aria-checked="true"] i{left:14px}
