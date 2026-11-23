@@ -90,7 +90,9 @@ export const COS_PROMPT = `You are the user's chief of staff inside Orstra, a lo
 
 What you do: brief the user, answer questions about tasks, suggest what to do next, and act for them: message a task's agent, leave notes for upcoming steps, start, retry or stop tasks, answer decisions, and watch tasks to follow up later.
 
-Next to Orstra's tools you have the tools of a coding agent: Bash, Read, Edit, Write, Glob and Grep. Use them to look at code, to check a fact yourself, or to make a small change. You work in 4 kinds of folder: your own (~/.orstra/cos), ~/.orstra (the database, the workflow files, and every task worktree under wt/), the Orstra checkout, and the repository behind each task worktree. A path outside them still works, so give the full path, and stay out of folders the user did not ask about.
+Next to Orstra's tools you have Claude Code's own tools: Bash, Read, Edit, Write, the web tools, and whatever else this machine gives you. Use them to look at code, to check a fact yourself, or to make a small change. You may have no Glob and no Grep; search with Bash then. You work in 4 kinds of folder: your own (~/.orstra/cos), ~/.orstra (the database, the workflow files, and every task worktree under wt/), the Orstra checkout, and the repository behind each task worktree. A path outside them works too, so give the full path, and stay out of folders the user did not ask about.
+
+Nothing asks you for permission, so you are the only check. Read before you change. Do not delete, push, publish or install anything unless the user asked for it in this conversation. Say what you ran.
 
 Work on a task belongs to its agent. What you do yourself gets no plan card and no review step, and the task's agent never learns about it. So keep your own changes small, and say what you changed. For anything bigger, message the task's agent or start a task. Do not change a task's worktree while its agent runs: you would fight it.
 
@@ -104,31 +106,29 @@ Write plainly: short sentences, no headings, no tables, no emoji. Lead with what
 
 Messages that start with [Orstra] come from the system, not the user: plan results and watches that fired. Act on them, then tell the user briefly what happened.`;
 
-/** The built-in tools the chief of staff gets. Same set as a task agent (the default in executors.ts). */
-export const COS_BUILTIN_TOOLS = ['Bash', 'Read', 'Edit', 'Write', 'Glob', 'Grep'];
-
 /**
- * The Claude Code flags for the chief of staff's session: Orstra's tools over MCP plus a task agent's
- * built-in tools, and its working folders (see cosDirs in paths.ts).
+ * The Claude Code flags for the chief of staff's session: Orstra's tools, and no limit on the rest.
  *
- * Nothing here can ask the user a question. The session runs with `-p`, and the daemon answers no
- * permission request, so Claude Code refuses the call at once: the tool fails and only the model learns
- * why. Three flags keep that from happening. --tools leaves only the 6 built-in tools, --allowedTools
- * approves those 6 and every Orstra tool up front, and --permission-prompts none makes the refusal of
- * anything else explicit instead of a question that waits.
+ * `bypassPermissions` approves every tool for every path. The session runs with `-p` and the daemon
+ * answers no permission request, so a tool that needs one is refused, and only the model learns why.
+ * Measured with `--mcp-config` alone: Claude Code refused `mcp__orstra__list_tasks`. So this mode is
+ * what makes Orstra's own tools work, not only a convenience.
  *
- * An approved tool is approved for every path, so Read, Write and Edit are not held to --add-dir, the
- * same as a task agent. The folders are the session's workspace: relative paths, Glob and Grep work in
- * them, and Claude Code reads their CLAUDE.md.
+ * `--strict-mcp-config` keeps the user's own MCP servers out. Orstra's tools then stay in the first tool
+ * list instead of behind a search, and the session behaves the same on every machine.
+ *
+ * No `--tools` flag, so the built-in set is the machine's. Measured on one machine: no Glob and no Grep,
+ * with or without `--tools default`. Only a named list (`--tools Bash,Read,…`) creates them, and a named
+ * list drops everything it does not name. The prompt tells the model to search with Bash instead.
+ *
+ * The folders are the session's workspace: a relative path works in them, and Claude Code reads their
+ * CLAUDE.md. They are not a fence; every path is open.
  */
 export function cosToolArgs(opts: { mcpConfig: string; dirs: string[] }): string[] {
   return [
-    '--tools', COS_BUILTIN_TOOLS.join(','),
     '--mcp-config', opts.mcpConfig,
     '--strict-mcp-config',
-    '--allowedTools', [...COS_BUILTIN_TOOLS, 'mcp__orstra'].join(' '),
-    '--permission-mode', 'acceptEdits',
-    '--permission-prompts', 'none',
+    '--permission-mode', 'bypassPermissions',
     ...(opts.dirs.length ? ['--add-dir', ...opts.dirs] : []),
     '--append-system-prompt', COS_PROMPT,
   ];

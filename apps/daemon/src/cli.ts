@@ -2,7 +2,7 @@ import { parseArgs } from 'node:util';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { COS_DIR, DB_PATH, PORT, SLOTS, TSX, cosDirs, ensureDirs } from './paths.ts';
+import { COS_DIR, DB_PATH, HOME, PORT, REPO_ROOT, SLOTS, TSX, ensureDirs } from './paths.ts';
 
 const HELP = `orstra — a local software factory
 
@@ -51,7 +51,7 @@ async function main() {
       const runner = new Runner(store, realExecutors, { slots: SLOTS, createWorktree });
       runner.recover();
 
-      // The chief of staff: Claude Code with Orstra's tools (served by cos-mcp.ts) and a task agent's tools.
+      // The chief of staff: Claude Code with Orstra's tools (served by cos-mcp.ts) and every tool of its own.
       const { ChiefOfStaff } = await import('./cos.ts');
       const { cosToolArgs } = await import('./cos-tools.ts');
       const { makeViews } = await import('./server.ts');
@@ -61,7 +61,8 @@ async function main() {
       const cos = new ChiefOfStaff(store, runner, realExecutors, makeViews(store, runner), {
         cwd: COS_DIR,
         model: process.env.ORSTRA_COS_MODEL,
-        toolArgs: cosToolArgs({ mcpConfig, dirs: cosDirs() }),
+        // Its workspace: ~/.orstra (the database, the workflow files, the task worktrees) and this checkout.
+        toolArgs: cosToolArgs({ mcpConfig, dirs: [HOME, REPO_ROOT] }),
       });
       startServer(store, runner, PORT, cos);
       cos.start();

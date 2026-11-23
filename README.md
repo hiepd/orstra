@@ -51,7 +51,7 @@ steps:
 
 Each run is a fresh `claude -p` session (stream-json) in the task's worktree, with a known session id. The prompt includes the task's progress entries from earlier runs and any notes you left. The agent ends with a `## Progress` block and an `OUTCOME:` line. Open any session in Claude Code with the command shown in the UI (`claude --resume <id>`).
 
-Settings via environment variables: `ORSTRA_HOME` (default `~/.orstra`), `ORSTRA_WORKFLOWS` (default `$ORSTRA_HOME/workflows`), `ORSTRA_PORT` (4317), `ORSTRA_SLOTS` (4), `ORSTRA_CLAUDE_PERMISSION` (`acceptEdits`), `ORSTRA_CLAUDE_TOOLS` (`Bash Read Edit Write Glob Grep`), `ORSTRA_COS_MODEL`, `ORSTRA_COS_DIRS` (more folders for the chief of staff's file tools, separated like `PATH`).
+Settings via environment variables: `ORSTRA_HOME` (default `~/.orstra`), `ORSTRA_WORKFLOWS` (default `$ORSTRA_HOME/workflows`), `ORSTRA_PORT` (4317), `ORSTRA_SLOTS` (4), `ORSTRA_CLAUDE_PERMISSION` (`acceptEdits`), `ORSTRA_CLAUDE_TOOLS` (`Bash Read Edit Write Glob Grep`), `ORSTRA_COS_MODEL`.
 
 ## Develop
 

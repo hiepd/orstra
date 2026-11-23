@@ -29,16 +29,18 @@ const TOOL_VERB: Record<string, string> = {
   stop_task: 'Stop',
   watch: 'Watch',
   unwatch: 'Stopped watching',
-  // Its own tools, the same ones a task agent has. The target is a path, a pattern or a command,
-  // so each verb has to read well with any of them (see summarizeTool in executors.ts).
+  // Its own tools. The target is a path, a pattern, a command or a URL, so each verb has to read well
+  // with any of them (see summarizeTool in executors.ts). An unnamed tool shows its own name.
   Bash: 'Ran',
   Read: 'Read',
   Glob: 'Looked for',
   Grep: 'Searched',
   Edit: 'Changed',
   Write: 'Wrote',
+  WebSearch: 'Searched the web for',
+  WebFetch: 'Read the page',
 };
-const READS = new Set(['list_tasks', 'get_task', 'get_task_changes', 'get_diff', 'read_task_file', 'list_workflows', 'list_watches', 'Read', 'Glob', 'Grep']);
+const READS = new Set(['list_tasks', 'get_task', 'get_task_changes', 'get_diff', 'read_task_file', 'list_workflows', 'list_watches', 'Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch']);
 
 const ICON = {
   read: 'M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z',
