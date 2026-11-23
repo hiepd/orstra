@@ -1,145 +1,111 @@
-import { useEffect, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import { api, type TaskDetail } from '../api';
-import { ChatComposer } from '../components/Composer';
-import { AwaitingCard, DecisionCard, StuckBanner } from '../components/Decision';
-import { EventFeed } from '../components/EventFeed';
-import { InboxIcon, StuckCircle, WaitCircle } from '../components/Icons';
-import { reasonText, taskLabel } from '../lib/format';
+import { ChevronRight, InboxIcon, StuckCircle, WaitCircle } from '../components/Icons';
+import { AGENTS, reasonText, taskLabel } from '../lib/format';
 import { useLiveResource, useNow } from '../lib/live';
 import { href } from '../lib/router';
-import { age } from '../lib/time';
+import { STATE, stepLabel, taskState, type TaskState } from '../lib/taskState';
+import { ago } from '../lib/time';
 
-const isDecision = (t: TaskDetail) => t.human !== null;
-const isAwaiting = (t: TaskDetail) => !!t.awaiting;
+const GROUPS: { state: TaskState; name: string; icon: ReactNode }[] = [
+  { state: 'decision', name: 'Decide', icon: <WaitCircle label="Decision" /> },
+  { state: 'question', name: 'Agents waiting for you', icon: <WaitCircle label="Waiting for you" /> },
+  { state: 'stuck', name: 'Stuck', icon: <StuckCircle /> },
+];
 
+const firstLine = (s: string) => s.split('\n').find((l) => l.trim()) ?? '';
+
+/** What a task needs from you, in one line. */
+function what(t: TaskDetail, state: TaskState): string {
+  if (state === 'decision') return t.human?.question ?? 'Waiting for your decision';
+  if (state === 'question') return t.awaiting?.text ? `“${firstLine(t.awaiting.text)}”` : reasonText(t.inboxReason);
+  return reasonText(t.inboxReason);
+}
+
+/** Every task that needs you. Rows only open the task; you act there. */
 export function InboxPage() {
-  const now = useNow(30_000);
+  useNow(30_000);
   const res = useLiveResource('inbox', api.inbox);
-  const [selId, setSelId] = useState<string | null>(null);
-  const lastIndex = useRef(0);
-
+  const tasks = useLiveResource('inbox:tasks', api.tasks);
   const all = res.data ?? [];
-  const decisions = all.filter(isDecision).sort((a, b) => a.updatedAt - b.updatedAt);
-  const waiting = all.filter((t) => !isDecision(t) && isAwaiting(t)).sort((a, b) => a.updatedAt - b.updatedAt);
-  const stuck = all.filter((t) => !isDecision(t) && !isAwaiting(t)).sort((a, b) => a.updatedAt - b.updatedAt);
-  const ordered = [...decisions, ...waiting, ...stuck];
-  const groups = [
-    { name: 'Decisions', items: decisions },
-    { name: 'Waiting for your reply', items: waiting },
-    { name: 'Stuck', items: stuck },
-  ].filter((g) => g.items.length > 0);
-
-  // Keep a selection: if the selected task left the inbox (you acted on it), move to the next one.
-  let sel = ordered.find((t) => t.id === selId);
-  if (!sel && ordered.length) sel = ordered[Math.min(lastIndex.current, ordered.length - 1)];
-  const selIndex = sel ? ordered.indexOf(sel) : -1;
-  useEffect(() => {
-    if (selIndex >= 0) lastIndex.current = selIndex;
-  }, [selIndex]);
-
-  const sub = (t: TaskDetail) => `${taskLabel(t)} · ${t.human ? t.human.question : t.awaiting?.text ?? reasonText(t.inboxReason)}`;
+  const groups = GROUPS.map((g) => ({ ...g, items: all.filter((t) => taskState(t) === g.state).sort((a, b) => a.updatedAt - b.updatedAt) })).filter((g) => g.items.length > 0);
+  const count = (group: string) => tasks.data?.filter((t) => STATE[taskState(t)].group === group).length ?? 0;
+  const running = count('running');
+  const queued = count('queued');
 
   return (
     <>
       <div className="lx-bar">
-        <div className="lx-crumb">
+        <span className="lx-crumb">
           <b>Inbox</b>
-          {res.data && <span>{ordered.length ? `${ordered.length} need${ordered.length === 1 ? 's' : ''} you` : ''}</span>}
-        </div>
-        {sel && (
-          <div className="lx-acts">
-            <a className="lx-btn" href={href.task(sel.id)}>
-              Open the task
-            </a>
-          </div>
-        )}
+        </span>
+        {res.data && <span className="lx-muted">{all.length ? `${all.length} ${all.length === 1 ? 'task needs' : 'tasks need'} you` : 'Nothing needs you'}</span>}
       </div>
-      {res.error && !res.data && <div className="lx-error">{res.error}</div>}
-      {res.loading && !res.data && !res.error && (
-        <div className="lx-loading">
-          <span className="lx-spin" /> Loading…
-        </div>
-      )}
-      {res.data && (
-        <div className="lx-ibody">
-          <nav className="lx-list" aria-label="Inbox items">
-            {groups.map((g) => (
-              <div key={g.name}>
-                <div className="lx-lgh">
-                  {g.name}
-                  <span className="lx-cnt">{g.items.length}</span>
-                </div>
-                {g.items.map((t) => (
-                  <button key={t.id} className="lx-irow" aria-current={t.id === sel?.id} onClick={() => setSelId(t.id)}>
-                    <span className="lx-ic">{isDecision(t) || isAwaiting(t) ? <WaitCircle label={isDecision(t) ? 'Needs a decision' : 'Waiting for your reply'} /> : <StuckCircle />}</span>
-                    <span className="lx-it">
-                      <span className="lx-itt">{t.title}</span>
-                      <span className="lx-its">{sub(t)}</span>
-                    </span>
-                    <span className="lx-age">{age(t.updatedAt, now)}</span>
-                  </button>
-                ))}
-              </div>
-            ))}
-            {ordered.length === 0 && <div className="lx-lgh">Nothing needs you</div>}
-          </nav>
-          <section className="lx-pane" aria-label="Selected item">
-            <div className="lx-scroll">
-              {sel ? (
-                <InboxDetail key={sel.id} task={sel} onDone={() => setSelId(ordered[selIndex + 1]?.id ?? ordered[selIndex - 1]?.id ?? null)} />
-              ) : (
-                <div className="lx-empty">
-                  <InboxIcon size={28} stroke="#B4B5BD" strokeWidth={1.6} />
-                  <b>You’re clear</b>
-                  <span>
-                    The factory is running. See what’s going on in <a href={href.sessions}>Sessions</a>.
-                  </span>
-                </div>
-              )}
+      <div className="ox-scroll">
+        <div className="ox-col">
+          {res.error && !res.data && <div className="lx-error">{res.error}</div>}
+          {res.loading && !res.data && !res.error && (
+            <div className="lx-loading">
+              <span className="lx-spin" /> Loading…
             </div>
-          </section>
+          )}
+          {res.data && all.length === 0 && (
+            <div className="lx-empty" style={{ padding: '48px 0 8px' }}>
+              <span style={{ color: '#B4B5BD' }}>
+                <InboxIcon />
+              </span>
+              <b>Nothing needs you</b>
+              <span>Decisions, questions from agents and stuck tasks show up here.</span>
+            </div>
+          )}
+          {groups.map((g) => (
+            <section key={g.state}>
+              <h2 className="ox-gh">
+                {g.name}
+                <span className="ox-gn">{g.items.length}</span>
+              </h2>
+              <div className="ox-card">
+                {g.items.map((t) => {
+                  const a = AGENTS[t.agent ?? 'claude-code'];
+                  return (
+                    <a key={t.id} className="ox-irow" href={g.state === 'question' ? href.chat(t.id) : href.task(t.id)}>
+                      <span className="ox-iic" style={{ background: STATE[g.state].bg }}>
+                        {g.icon}
+                      </span>
+                      <span className="ox-imain">
+                        <span className="ox-iline">
+                          <span className="ox-id">{taskLabel(t)}</span>
+                          <span className="ox-iname">{t.title}</span>
+                        </span>
+                        <span className="ox-iwhat">{what(t, g.state)}</span>
+                        <span className="ox-imeta">
+                          <span className="lx-av ox-av" style={{ background: a.color }}>
+                            {a.av}
+                          </span>
+                          <span>
+                            {a.name} · {stepLabel(t)} · {ago(t.updatedAt)}
+                          </span>
+                        </span>
+                      </span>
+                      <span className="ox-go">
+                        <ChevronRight size={14} />
+                      </span>
+                    </a>
+                  );
+                })}
+              </div>
+            </section>
+          ))}
+          {tasks.data && (running > 0 || queued > 0) && (
+            <div className="ox-calm">
+              <span className="ox-sd ox-live" style={{ background: '#5E6AD2' }} />
+              <span>
+                {running} {running === 1 ? 'task is' : 'tasks are'} running and {queued} queued. {all.length ? 'Nothing else needs you.' : ''}
+              </span>
+            </div>
+          )}
         </div>
-      )}
+      </div>
     </>
-  );
-}
-
-function InboxDetail({ task, onDone }: { task: TaskDetail; onDone: () => void }) {
-  const recent = task.events.filter((e) => e.kind !== 'output').slice(-12);
-  return (
-    <div className="lx-doc2">
-      <div className="lx-dmeta">
-        {task.human || task.awaiting ? <WaitCircle /> : <StuckCircle />}
-        <span>{task.human ? 'Decision' : task.awaiting ? 'Waiting for your reply' : 'Stuck'}</span>
-        <span>·</span>
-        <span className="lx-mono">{taskLabel(task)}</span>
-        <span>·</span>
-        <span>{task.workflow}</span>
-        {task.currentStepTitle && (
-          <>
-            <span>·</span>
-            <span>{task.currentStepTitle}</span>
-          </>
-        )}
-      </div>
-      <h1 className="lx-title">{task.title}</h1>
-      {task.description && <p className="lx-desc">{task.description}</p>}
-      {task.human ? (
-        <DecisionCard task={task} onDone={onDone} />
-      ) : task.awaiting ? (
-        <AwaitingCard task={task}>
-          <ChatComposer taskId={task.id} runId={task.awaiting.runId} working={false} awaiting autoFocus onSent={onDone} />
-        </AwaitingCard>
-      ) : (
-        <StuckBanner task={task} onDone={onDone} />
-      )}
-      <div className="lx-shead">
-        Recent activity
-        <a className="lx-sright" style={{ fontWeight: 400, fontSize: 12.5 }} href={href.task(task.id)}>
-          Open the task
-        </a>
-      </div>
-      <EventFeed events={recent} runs={task.runs} steps={task.steps} empty={<div className="lx-hint">Nothing yet.</div>} />
-    </div>
   );
 }

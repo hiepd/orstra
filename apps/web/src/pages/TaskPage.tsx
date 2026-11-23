@@ -1,24 +1,25 @@
-import { useCallback, useMemo, useState } from 'react';
-import { api, type RunView, type StepView, type TaskDetail } from '../api';
+import { useCallback, useState } from 'react';
+import { api, errorMessage, type GitView, type RunView, type TaskDetail } from '../api';
 import { ClaudeCodeModal } from '../components/ClaudeCodeModal';
-import { ChatComposer } from '../components/Composer';
 import { AwaitingCard, DecisionCard, RetryModal, StopModal, StuckBanner } from '../components/Decision';
-import { EventFeed, useAutoScroll } from '../components/EventFeed';
-import { CopyIcon, LinkIcon, MoreIcon, TerminalIcon } from '../components/Icons';
-import { Menu, useToast } from '../components/Overlay';
-import { AgentAvatar, RunStatusIcon, TaskStatusIcon } from '../components/Status';
-import { StepPeek } from '../components/StepPeek';
-import { agentOf, humanize, reasonText, TASK_STATUS_LABEL, taskLabel } from '../lib/format';
-import { useLiveResource, useNow } from '../lib/live';
-import { href } from '../lib/router';
-import { ago, duration } from '../lib/time';
+import { shortPath, useGit } from '../components/GitPanel';
+import { ChevronRight, TerminalIcon } from '../components/Icons';
+import { Menu, Modal, useToast } from '../components/Overlay';
+import { ProgressList } from '../components/ProgressList';
+import { AgentAvatar, RunStatusIcon } from '../components/Status';
+import { currentRun, describeTask } from '../lib/describe';
+import { agentOf, humanize, taskLabel } from '../lib/format';
+import { useLiveResource, useNow, type Resource } from '../lib/live';
+import { href, type TaskViewName } from '../lib/router';
+import { STATE, stepLabel, taskState } from '../lib/taskState';
+import { ago, clock, duration } from '../lib/time';
+import { defaultSession, runName, TaskChat } from './TaskChat';
 
-type Modal = { kind: 'retry'; stepId?: string } | { kind: 'stop' } | { kind: 'cc'; run: RunView } | null;
+type ModalState = { kind: 'retry'; stepId?: string } | { kind: 'stop' } | { kind: 'cc'; run: RunView } | { kind: 'note'; stepId: string; title: string } | null;
 
-export function TaskPage({ id }: { id: string }) {
+export function TaskPage({ id, view, runId }: { id: string; view: TaskViewName; runId?: string }) {
   const res = useLiveResource(`task:${id}`, useCallback(() => api.task(id), [id]), (taskId) => taskId === id);
   const task = res.data;
-
   if (!task) {
     return (
       <>
@@ -45,53 +46,29 @@ export function TaskPage({ id }: { id: string }) {
       </>
     );
   }
-  return <TaskView task={task} />;
+  return <TaskView task={task} view={view} runId={runId} />;
 }
 
-function latestRunByStep(runs: RunView[]): Map<string, RunView> {
-  const m = new Map<string, RunView>();
-  for (const r of runs) m.set(r.stepId, r); // runs come oldest first
-  return m;
-}
-
-function TaskView({ task }: { task: TaskDetail }) {
+/** One task, two views: Overview (where it is and what happened) and Chat (the agent sessions and the worktree). */
+function TaskView({ task, view, runId }: { task: TaskDetail; view: TaskViewName; runId?: string }) {
   const toast = useToast();
   useNow(15_000);
-  const [peekStep, setPeekStep] = useState<string | null>(null);
-  const [modal, setModal] = useState<Modal>(null);
-  const [menu, setMenu] = useState(false);
-  const [allRuns, setAllRuns] = useState(false);
-  const closeMenu = useCallback(() => setMenu(false), []);
-  const closePeek = useCallback(() => setPeekStep(null), []);
+  const git = useGit(task.id);
+  const [modal, setModal] = useState<ModalState>(null);
+  const [editorMenu, setEditorMenu] = useState(false);
+  const [openPath, setOpenPath] = useState<string | null>(null);
+  const closeMenu = useCallback(() => setEditorMenu(false), []);
 
-  const latest = useMemo(() => latestRunByStep(task.runs), [task.runs]);
-  const byId = (rid?: string | null) => (rid ? task.runs.find((r) => r.id === rid) : undefined);
-  const focusRun =
-    byId(task.workingRunId) ?? byId(task.awaiting?.runId) ?? (task.currentStep ? latest.get(task.currentStep) : undefined) ?? task.runs[task.runs.length - 1];
-  const agentRun = [...task.runs].reverse().find((r) => r.kind === 'agent');
-  const ccRun = [...task.runs].reverse().find((r) => r.kind === 'agent' && r.sessionId);
-  const stepsDone = task.steps.filter((s) => latest.get(s.id)?.status === 'done').length;
-  const active = task.status === 'running' || task.status === 'needs_you';
-
-  const feed = useMemo(
-    () =>
-      allRuns
-        ? task.events
-        : task.events.filter((e) => e.runId === null || e.runId === focusRun?.id || ['you', 'note', 'aside', 'system', 'progress'].includes(e.kind)),
-    [task.events, allRuns, focusRun?.id],
-  );
-  const scroll = useAutoScroll<HTMLElement>(feed.length);
-
-  const copyText = async (text: string, what: string) => {
+  const state = taskState(task);
+  const ccRun = (view === 'chat' && runId ? task.runs.find((r) => r.id === runId && r.sessionId) : undefined) ?? defaultSession(task);
+  const copyPath = async () => {
     try {
-      await navigator.clipboard.writeText(text);
-      toast(`${what} copied`);
+      await navigator.clipboard.writeText(task.worktree ?? '');
+      toast('Worktree path copied');
     } catch {
       toast('Couldn’t copy to the clipboard', { error: true });
     }
   };
-
-  const peek = peekStep ? task.steps.find((s) => s.id === peekStep) : undefined;
 
   return (
     <>
@@ -99,320 +76,385 @@ function TaskView({ task }: { task: TaskDetail }) {
         <div className="lx-crumb">
           <a href={href.tasks}>Tasks</a>
           <span>›</span>
-          <b>{taskLabel(task)}</b>
+          <span className="ox-id">{taskLabel(task)}</span>
+          <b className="ox-trunc">{task.title}</b>
+        </div>
+        <span className="ox-pill" style={{ background: STATE[state].bg, color: STATE[state].fg }}>
+          <span className={`ox-sd${state === 'running' ? ' ox-live' : ''}`} style={{ background: STATE[state].fg }} />
+          {STATE[state].label}
+        </span>
+        <div className="ox-seg" role="group" aria-label="Task view" style={{ marginLeft: 10 }}>
+          <a href={href.task(task.id)} aria-current={view === 'overview' ? 'page' : undefined}>
+            Overview
+          </a>
+          <a href={href.chat(task.id)} aria-current={view === 'chat' ? 'page' : undefined}>
+            Chat
+          </a>
         </div>
         <div className="lx-acts">
+          {task.worktree && (
+            <>
+              <button className="lx-btn" aria-expanded={editorMenu} onClick={() => setEditorMenu((m) => !m)}>
+                Open in editor
+              </button>
+              {editorMenu && (
+                <Menu onClose={closeMenu} style={{ right: ccRun ? 168 : 0, top: 34 }} label="Open the worktree">
+                  <a role="menuitem" href={`vscode://file${encodeURI(task.worktree)}`} onClick={closeMenu}>
+                    VS Code
+                  </a>
+                  <a role="menuitem" href={`cursor://file${encodeURI(task.worktree)}`} onClick={closeMenu}>
+                    Cursor
+                  </a>
+                  <hr />
+                  <button
+                    role="menuitem"
+                    onClick={() => {
+                      closeMenu();
+                      void copyPath();
+                    }}
+                  >
+                    Copy worktree path
+                  </button>
+                </Menu>
+              )}
+            </>
+          )}
           {ccRun && (
             <button className="lx-btn" onClick={() => setModal({ kind: 'cc', run: ccRun })}>
               <TerminalIcon size={13} strokeWidth={2.2} />
-              Open in Claude Code
+              Open in {agentOf(ccRun).name}
             </button>
-          )}
-          <button className="lx-ib" aria-label="Copy link" title="Copy link" onClick={() => void copyText(window.location.href, 'Link')}>
-            <LinkIcon />
-          </button>
-          <button className="lx-ib" aria-label="More actions" aria-expanded={menu} onClick={() => setMenu((m) => !m)}>
-            <MoreIcon />
-          </button>
-          {menu && (
-            <Menu onClose={closeMenu} style={{ right: 0, top: 34 }} label="Task actions">
-              <button
-                role="menuitem"
-                disabled={!task.currentStep}
-                onClick={() => {
-                  setMenu(false);
-                  setModal({ kind: 'retry' });
-                }}
-              >
-                Re-run the current step…
-              </button>
-              {task.worktree && (
-                <button
-                  role="menuitem"
-                  onClick={() => {
-                    setMenu(false);
-                    void copyText(task.worktree ?? '', 'Worktree path');
-                  }}
-                >
-                  Copy worktree path
-                </button>
-              )}
-              <hr />
-              <button
-                role="menuitem"
-                className="lx-red"
-                disabled={!active}
-                style={active ? undefined : { opacity: 0.45 }}
-                onClick={() => {
-                  setMenu(false);
-                  setModal({ kind: 'stop' });
-                }}
-              >
-                Stop task…
-              </button>
-            </Menu>
           )}
         </div>
       </div>
 
-      <div className="lx-split">
-        <main className="lx-main" ref={scroll.ref} onScroll={scroll.onScroll}>
-          <div className="lx-doc">
-            <h1 className="lx-title">{task.title}</h1>
-            {task.description && <p className="lx-desc">{task.description}</p>}
-
-            {task.human && <DecisionCard task={task} />}
-            {!task.human && task.awaiting && <AwaitingCard task={task} />}
-            {!task.human && !task.awaiting && task.status === 'needs_you' && <StuckBanner task={task} />}
-
-            <div className="lx-shead">
-              Steps
-              {task.steps.length > 0 && (
-                <>
-                  <span className="lx-prog" aria-hidden="true">
-                    <i style={{ width: `${(stepsDone / task.steps.length) * 100}%` }} />
-                  </span>
-                  <span>
-                    {stepsDone} / {task.steps.length}
-                  </span>
-                </>
-              )}
-            </div>
-            <div className="lx-rows">
-              {task.steps.length === 0 && <div className="lx-hint" style={{ padding: '10px 8px' }}>Couldn’t read this task’s workflow.</div>}
-              {task.steps.map((s) => (
-                <StepRow key={s.id} step={s} task={task} latest={latest.get(s.id)} selected={peekStep === s.id} onOpen={() => setPeekStep(s.id)} />
-              ))}
-            </div>
-
-            <div className="lx-shead" style={{ marginTop: 32 }}>
-              Activity
-              {focusRun && !allRuns && (
-                <span>
-                  {focusRun.stepTitle}
-                  {focusRun.attempt > 1 ? ` · attempt ${focusRun.attempt}` : ''}
-                </span>
-              )}
-              {task.runs.length > 1 && (
-                <button className="lx-more lx-sright" onClick={() => setAllRuns((a) => !a)}>
-                  {allRuns ? 'Show the latest run' : 'Show all runs'}
-                </button>
-              )}
-            </div>
-            <EventFeed events={feed} runs={task.runs} steps={task.steps} empty={<div className="lx-hint">Nothing yet.</div>} />
-
-            <div className="lx-compose">
-              {active || ccRun ? (
-                <ChatComposer
-                  key={task.awaiting?.runId ?? 'chat'}
-                  taskId={task.id}
-                  working={!!task.workingRunId}
-                  awaiting={!!task.awaiting}
-                  autoFocus={!!task.awaiting}
-                  who={agentRun ? agentOf(agentRun).name : 'Claude Code'}
-                />
-              ) : (
-                <div className="lx-hint" style={{ textAlign: 'center' }}>
-                  This task is {task.status === 'done' ? 'done' : 'stopped'}. Re-run a step to pick it up again.
-                </div>
-              )}
-            </div>
-          </div>
-        </main>
-
-        <Properties task={task} focusRun={focusRun} agentRun={agentRun} ccRun={ccRun} onCopy={copyText} onOpenCC={(run) => setModal({ kind: 'cc', run })} />
-      </div>
-
-      {peek && (
-        <StepPeek
-          task={task}
-          step={peek}
-          onClose={closePeek}
-          onRerun={() => setModal({ kind: 'retry', stepId: peek.id })}
-          onOpenCC={(run) => setModal({ kind: 'cc', run })}
-        />
+      {view === 'overview' ? (
+        <Overview task={task} git={git} onModal={setModal} />
+      ) : (
+        <TaskChat task={task} runId={runId} git={git} openPath={openPath} onOpenPath={setOpenPath} />
       )}
-      {modal?.kind === 'retry' && <RetryModal task={task} stepId={modal.stepId} onClose={() => setModal(null)} onDone={closePeek} />}
+
+      {modal?.kind === 'retry' && <RetryModal task={task} stepId={modal.stepId} onClose={() => setModal(null)} />}
       {modal?.kind === 'stop' && <StopModal task={task} onClose={() => setModal(null)} />}
       {modal?.kind === 'cc' && <ClaudeCodeModal run={modal.run} crumb={taskLabel(task)} onClose={() => setModal(null)} />}
+      {modal?.kind === 'note' && <NoteModal task={task} stepId={modal.stepId} title={modal.title} onClose={() => setModal(null)} />}
     </>
   );
 }
 
-const KIND_SUMMARY: Record<StepView['kind'], string> = {
-  agent: 'Agent step',
-  gate: 'Runs checks',
-  human: 'Your decision',
-  switch: 'Picks a branch',
-  action: 'Action',
-  workflow: 'Runs another workflow',
+const KIND: Record<string, string> = { agent: 'agent', gate: 'checks', human: 'your decision', switch: 'picks a branch', action: 'action', workflow: 'starts a workflow' };
+const TONE = {
+  ok: { bg: '#EAF6EF', fg: '#1A7F4B' },
+  fail: { bg: '#FCEBEA', fg: '#C4302B' },
+  live: { bg: '#EEF0FB', fg: '#4B55B8' },
+  wait: { bg: '#F3EEFC', fg: '#7444C2' },
+  back: { bg: '#FDF0E8', fg: '#B4531B' },
+  plain: { bg: '#F0F1F4', fg: '#5A5A63' },
 };
 
-function StepRow({ step, task, latest, selected, onOpen }: { step: StepView; task: TaskDetail; latest?: RunView; selected: boolean; onOpen: () => void }) {
-  const attempts = task.runs.filter((r) => r.stepId === step.id).length;
-  let summary = KIND_SUMMARY[step.kind];
-  if (!latest) {
-    const note = [...task.events].reverse().find((e) => e.kind === 'note' && e.step === step.id);
-    if (note && note.kind === 'note') summary = `Your note: ${note.text}`;
-  }
-  if (latest) {
-    if (latest.status === 'running') summary = step.kind === 'gate' ? 'Running checks…' : 'Working…';
-    else if (latest.status === 'queued') summary = 'Queued';
-    else if (latest.status === 'waiting') summary = latest.kind === 'human' ? 'Waiting for your decision' : 'Waiting for you';
-    else if (latest.progress?.did) summary = latest.progress.did;
-    else if (latest.outcome) summary = humanize(latest.outcome);
-  }
-  const meta = [
-    attempts > 1 ? `${attempts} runs` : null,
-    latest?.startedAt && latest.kind !== 'human' ? duration(latest.startedAt, latest.endedAt ?? Date.now()) : null,
-  ]
-    .filter(Boolean)
-    .join(' · ');
-  const showAv = latest && (latest.kind === 'agent' || latest.kind === 'gate');
+/** How a run ended, as a badge: "done", "fail → Implement", "waiting for you". */
+function outcomeBadge(task: TaskDetail, r: RunView): { text: string; tone: keyof typeof TONE } {
+  if (r.status === 'running') return { text: 'running', tone: 'live' };
+  if (r.status === 'queued') return { text: 'queued', tone: 'plain' };
+  if (r.status === 'waiting') return { text: 'waiting for you', tone: 'wait' };
+  if (r.status === 'stopped') return { text: 'stopped', tone: 'plain' };
+  const outcome = r.outcome ?? r.status;
+  const to = task.steps.find((s) => s.id === r.stepId)?.on[outcome];
+  const order = task.track.map((s) => s.title);
+  const loopsBack = !!to && to !== 'end' && order.indexOf(to) >= 0 && order.indexOf(to) <= order.indexOf(r.stepTitle);
+  const text = humanize(outcome).toLowerCase() + (loopsBack ? ` → ${to}` : '');
+  if (r.status === 'failed') return { text, tone: 'fail' };
+  if (loopsBack) return { text, tone: 'back' };
+  return { text, tone: r.kind === 'switch' ? 'plain' : 'ok' };
+}
+
+function Overview({ task, git, onModal }: { task: TaskDetail; git: Resource<GitView>; onModal: (m: ModalState) => void }) {
+  const state = taskState(task);
+  const { now, next } = describeTask(task);
+  const cur = currentRun(task);
+  const active = task.status === 'running' || task.status === 'needs_you';
+  const lastIdx = task.runs.length - 1;
+  const [open, setOpen] = useState<Record<string, boolean>>({});
+  const isOpen = (r: RunView, i: number) => open[r.id] ?? i === lastIdx;
+
+  // Steps that haven't run yet in this pass, plus the current one while it is still queued: these can take a note.
+  const upcoming = task.track.filter((s) => s.state === 'todo' || (s.state === 'current' && cur?.status === 'queued'));
+  const agentRun = [...task.runs].reverse().find((r) => r.kind === 'agent');
+  const g = git.data;
+
+  /** What a non-agent run did, in a sentence, from the task's events. */
+  const runText = (r: RunView): string | null => {
+    if (r.status === 'running' && r.kind === 'agent') return 'Running now. Open Chat to watch it or talk to it.';
+    if (r.status === 'waiting' && r.kind === 'agent') return 'The session is open and waiting for you.';
+    if (r.kind === 'human') {
+      const d = task.events.find((e) => e.runId === r.id && e.kind === 'you' && e.mode === 'decision');
+      if (d && d.kind === 'you') return `You chose “${humanize(d.choice ?? r.outcome ?? '').toLowerCase()}”.` + (d.text ? ` You said: “${d.text}”` : '');
+      return r.status === 'waiting' ? 'Waiting for your decision.' : null;
+    }
+    if (r.kind === 'switch' || r.kind === 'action') {
+      const sys = task.events.find((e) => e.runId === r.id && e.kind === 'system');
+      return sys && sys.kind === 'system' ? sys.text : null;
+    }
+    return null;
+  };
+
   return (
-    <button className={`lx-row${selected ? ' lx-sel' : ''}`} onClick={onOpen}>
-      <RunStatusIcon status={latest?.status ?? 'todo'} outcome={latest?.outcome} />
-      <b>{step.title}</b>
-      <span className="lx-rs">{summary}</span>
-      {showAv && <AgentAvatar run={latest} />}
-      {!latest && <span className="lx-kind">{step.kind}</span>}
-      {meta && <span className="lx-rm">{meta}</span>}
-    </button>
+    <div className="ox-ov">
+      <div className="ox-ovmain">
+        <div className="ox-ovcol">
+          <div>
+            <h1 className="ox-h1">{task.title}</h1>
+            <div className="ox-sub">
+              {task.ref ? `${task.ref} · ` : ''}
+              {task.workflow} · started {ago(task.createdAt)}
+            </div>
+          </div>
+
+          <section className="ox-where" aria-label="Where this task is">
+            {task.track.length > 0 && (
+              <div className="ox-track">
+                {task.track.map((s) => (
+                  <div key={s.id} className={`ox-tstep${s.state === 'done' ? ' ox-done' : s.state === 'current' ? ` ox-cur ox-cur-${state}` : ''}`}>
+                    <span className="ox-tdot">
+                      {s.state === 'done' && (
+                        <svg width="10" height="10" viewBox="0 0 12 12" aria-hidden="true">
+                          <path d="m2.5 6.2 2.3 2.3 4.7-5" fill="none" stroke="#FFFFFF" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      )}
+                    </span>
+                    <span className="ox-tname">{s.title}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <p className="ox-now">{now}</p>
+            <div className="ox-next">
+              <span className="ox-k">Next</span>
+              <span>{next}</span>
+            </div>
+          </section>
+
+          {task.human && (
+            <div>
+              <DecisionCard task={task} />
+              {g && g.files.length > 0 && (
+                <a className="ox-link" style={{ display: 'inline-block', marginTop: 8 }} href={href.chat(task.id)}>
+                  See what it changed ({g.files.length} {g.files.length === 1 ? 'file' : 'files'}) in Chat →
+                </a>
+              )}
+            </div>
+          )}
+          {!task.human && task.awaiting && (
+            <AwaitingCard task={task}>
+              <div>
+                <a className="lx-btn lx-pri" href={href.chat(task.id, task.awaiting.runId)}>
+                  Answer in Chat
+                </a>
+              </div>
+            </AwaitingCard>
+          )}
+          {!task.human && !task.awaiting && task.status === 'needs_you' && <StuckBanner task={task} />}
+
+          {task.description && (
+            <section>
+              <h2 className="ox-h2">Description</h2>
+              <p className="ox-desc">{task.description}</p>
+            </section>
+          )}
+
+          <section>
+            <h2 className="ox-h2">
+              Runs<span className="ox-gn">{task.runs.length}</span>
+            </h2>
+            {task.runs.length > 0 ? (
+              <div className="ox-card">
+                {task.runs.map((r, i) => {
+                  const badge = outcomeBadge(task, r);
+                  const text = runText(r);
+                  const o = isOpen(r, i);
+                  const who = r.kind === 'agent' || r.kind === 'gate' ? agentOf(r).name : r.kind === 'human' ? 'You' : 'Orstra';
+                  return (
+                    <div key={r.id} className="ox-run">
+                      <button className="ox-runh" aria-expanded={o} onClick={() => setOpen((m) => ({ ...m, [r.id]: !o }))}>
+                        <RunStatusIcon status={r.status} outcome={r.outcome} />
+                        <span className="ox-rname">{runName(task, r)}</span>
+                        <span className="ox-rwho">
+                          {r.kind === 'agent' || r.kind === 'gate' ? <AgentAvatar run={r} /> : null}
+                          {who}
+                        </span>
+                        <span className="ox-rdur" title={r.startedAt ? `Started ${clock(r.startedAt)}` : undefined}>
+                          {r.startedAt ? duration(r.startedAt, r.endedAt ?? Date.now()) : '—'}
+                        </span>
+                        <span className="ox-oc" style={{ background: TONE[badge.tone].bg, color: TONE[badge.tone].fg }}>
+                          {badge.text}
+                        </span>
+                        <ChevronRight open={o} size={11} />
+                      </button>
+                      {o && (
+                        <div className="ox-runb">
+                          {text && <div className="ox-rtext">{text}</div>}
+                          {r.progress && <ProgressList progress={r.progress} />}
+                          {r.output && <pre className="ox-pre">{r.output.trim().split('\n').slice(-30).join('\n')}</pre>}
+                          {!text && !r.progress && !r.output && <div className="lx-hint">Nothing recorded for this run.</div>}
+                          <div className="ox-brow">
+                            {r.sessionId && (
+                              <a className="ox-link" href={href.chat(task.id, r.id)}>
+                                {r.status === 'running' || r.status === 'waiting' ? 'Open the live session in Chat →' : 'Open this session in Chat →'}
+                              </a>
+                            )}
+                            {active && r.status !== 'running' && r.status !== 'queued' && r.kind !== 'human' && r.kind !== 'switch' && (
+                              <button className="ox-link" onClick={() => onModal({ kind: 'retry', stepId: r.stepId })}>
+                                Re-run this step…
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="ox-calm">No runs yet. The first step starts when a slot is free.</div>
+            )}
+            <div className="lx-hint" style={{ marginTop: 8 }}>
+              A run is one step executed once. A retry is a new run with a fresh session; it reads the earlier runs’ progress notes.
+            </div>
+          </section>
+
+          {active && upcoming.length > 0 && (
+            <section>
+              <h2 className="ox-h2">
+                Up next<span className="ox-gn">{upcoming.length}</span>
+              </h2>
+              <div className="ox-card">
+                {upcoming.map((s) => {
+                  const notes = task.notes[s.id] ?? [];
+                  return (
+                    <div key={s.id} className="ox-urow">
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span style={{ fontWeight: 500 }}>{s.title}</span>
+                          <span className="ox-ukind">{KIND[s.kind] ?? s.kind}</span>
+                        </div>
+                        {notes.map((n) => (
+                          <div key={n.ts} className="ox-note">
+                            {n.text}
+                          </div>
+                        ))}
+                      </div>
+                      {s.kind === 'agent' && (
+                        <button className="ox-link" onClick={() => onModal({ kind: 'note', stepId: s.id, title: s.title })}>
+                          + Add a note
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="lx-hint" style={{ marginTop: 8 }}>
+                These are the steps the task reaches if each one succeeds. A note is read by that step’s agent when it runs. To talk to an agent that is running now, use Chat.
+              </div>
+            </section>
+          )}
+        </div>
+      </div>
+
+      <aside className="ox-props" aria-label="Task details">
+        <Prop k="Status" v={STATE[state].label} />
+        <Prop k="Step" v={stepLabel({ ...task, run: cur ? { status: cur.status, attempt: cur.attempt, kind: cur.kind } : null })} />
+        <div className="ox-prop">
+          <span className="ox-pk">Workflow</span>
+          <a className="ox-pv" href={href.workflow(task.workflowFile)}>
+            {task.workflow}
+          </a>
+        </div>
+        <Prop k="Agent" v={agentRun ? agentOf(agentRun).name : 'None yet'} />
+        {task.ref && <Prop k="Ticket" v={task.ref} mono />}
+        <Prop k="Branch" v={g?.branch ? g.branch + (g.base ? ` → ${g.base}` : '') : task.worktree ? '…' : 'None'} mono />
+        <Prop k="Worktree" v={task.worktree ? shortPath(task.worktree) : 'None'} mono />
+        <Prop k="Changes" v={g ? (g.files.length ? `${g.files.length} ${g.files.length === 1 ? 'file' : 'files'} · ${g.commits.length} ${g.commits.length === 1 ? 'commit' : 'commits'}` : 'None yet') : '…'} />
+        <Prop k="PR" v={g?.pr ? `#${g.pr.number} · ${g.pr.state}` : 'Not opened yet'} />
+        <Prop k="Started" v={ago(task.createdAt)} title={new Date(task.createdAt).toLocaleString()} />
+        <Prop k="Updated" v={ago(task.updatedAt)} title={new Date(task.updatedAt).toLocaleString()} />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 14 }}>
+          <a className="lx-btn" style={{ justifyContent: 'center' }} href={href.chat(task.id)}>
+            Open Chat
+          </a>
+          {active && task.currentStep && (
+            <button className="lx-btn" style={{ justifyContent: 'center' }} onClick={() => onModal({ kind: 'retry' })}>
+              Re-run the current step…
+            </button>
+          )}
+          {active && (
+            <button className="lx-btn lx-dan" style={{ justifyContent: 'center' }} onClick={() => onModal({ kind: 'stop' })}>
+              Stop task…
+            </button>
+          )}
+        </div>
+      </aside>
+    </div>
   );
 }
 
-function Properties({
-  task,
-  focusRun,
-  agentRun,
-  ccRun,
-  onCopy,
-  onOpenCC,
-}: {
-  task: TaskDetail;
-  focusRun?: RunView;
-  agentRun?: RunView;
-  ccRun?: RunView;
-  onCopy: (text: string, what: string) => void;
-  onOpenCC: (run: RunView) => void;
-}) {
-  const open = ccRun?.status === 'running' || ccRun?.status === 'waiting';
-  const cmd = ccRun ? (open ? ccRun.openCommand : ccRun.forkCommand ?? ccRun.openCommand) : null;
+function Prop({ k, v, mono, title }: { k: string; v: string; mono?: boolean; title?: string }) {
   return (
-    <aside className="lx-props" aria-label="Properties">
-      <div>
-        <p className="lx-ph">Properties</p>
-        <dl style={{ margin: 0 }}>
-          <div className="lx-prop">
-            <dt>Status</dt>
-            <dd>
-              <TaskStatusIcon task={task} />
-              <span title={task.status === 'needs_you' ? reasonText(task.inboxReason) : undefined}>{TASK_STATUS_LABEL[task.status]}</span>
-            </dd>
-          </div>
-          <div className="lx-prop">
-            <dt>Step</dt>
-            <dd>
-              {focusRun && <RunStatusIcon status={focusRun.status} outcome={focusRun.outcome} />}
-              <span>
-                {task.currentStepTitle ?? (task.status === 'done' ? 'Finished' : '—')}
-                {focusRun && focusRun.stepId === task.currentStep && focusRun.attempt > 1 ? ` · attempt ${focusRun.attempt}` : ''}
-              </span>
-            </dd>
-          </div>
-          <div className="lx-prop">
-            <dt>Agent</dt>
-            <dd>
-              {agentRun ? (
-                <>
-                  <AgentAvatar run={agentRun} />
-                  <span>{agentOf(agentRun).name}</span>
-                </>
-              ) : (
-                <span className="lx-hint">None yet</span>
-              )}
-            </dd>
-          </div>
-          <div className="lx-prop">
-            <dt>Workflow</dt>
-            <dd>
-              <span>{task.workflow}</span>
-            </dd>
-          </div>
-          {task.ref && (
-            <div className="lx-prop">
-              <dt>Ticket</dt>
-              <dd>
-                <span className="lx-mono">{task.ref}</span>
-              </dd>
-            </div>
-          )}
-          <div className="lx-prop">
-            <dt>Started</dt>
-            <dd>
-              <span title={new Date(task.createdAt).toLocaleString()}>{ago(task.createdAt)}</span>
-            </dd>
-          </div>
-          <div className="lx-prop">
-            <dt>Updated</dt>
-            <dd>
-              <span title={new Date(task.updatedAt).toLocaleString()}>{ago(task.updatedAt)}</span>
-            </dd>
-          </div>
-        </dl>
-      </div>
-      <div>
-        <p className="lx-ph">Session</p>
-        <dl style={{ margin: 0 }}>
-          <div className="lx-prop">
-            <dt>Worktree</dt>
-            <dd>
-              {task.worktree ? (
-                <span className="lx-copyrow">
-                  <span className="lx-mono" title={task.worktree}>
-                    {task.worktree.replace(/^\/Users\/[^/]+/, '~')}
-                  </span>
-                  <button className="lx-ib" aria-label="Copy worktree path" onClick={() => onCopy(task.worktree ?? '', 'Worktree path')}>
-                    <CopyIcon />
-                  </button>
-                </span>
-              ) : (
-                <span className="lx-hint">None</span>
-              )}
-            </dd>
-          </div>
-          <div className="lx-prop">
-            <dt>Session id</dt>
-            <dd>
-              {ccRun?.sessionId ? (
-                <span className="lx-copyrow">
-                  <span className="lx-mono" title={ccRun.sessionId}>
-                    {ccRun.sessionId}
-                  </span>
-                  <button className="lx-ib" aria-label="Copy session id" onClick={() => onCopy(ccRun.sessionId ?? '', 'Session id')}>
-                    <CopyIcon />
-                  </button>
-                </span>
-              ) : (
-                <span className="lx-hint">None yet</span>
-              )}
-            </dd>
-          </div>
-        </dl>
-        {ccRun && cmd && (
-          <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <span className="lx-hint">{open ? 'Resume the open session' : 'Open a copy of the last session'}</span>
-            <div className="lx-cmd" style={{ fontSize: 11.5, padding: '7px 8px' }}>
-              <code title={cmd}>{cmd}</code>
-              <button onClick={() => onCopy(cmd, 'Command')}>Copy</button>
-            </div>
-            <button className="lx-btn" style={{ alignSelf: 'flex-start' }} onClick={() => onOpenCC(ccRun)}>
-              <TerminalIcon size={13} />
-              Open in Claude Code
-            </button>
-          </div>
-        )}
-      </div>
-    </aside>
+    <div className="ox-prop">
+      <span className="ox-pk">{k}</span>
+      <span className={mono ? 'ox-pvm' : 'ox-pv'} title={title ?? v}>
+        {v}
+      </span>
+    </div>
+  );
+}
+
+/** A note for a step that hasn't run yet. Its agent reads it when the step starts. */
+function NoteModal({ task, stepId, title, onClose }: { task: TaskDetail; stepId: string; title: string; onClose: () => void }) {
+  const toast = useToast();
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState(false);
+  const save = async () => {
+    const t = text.trim();
+    if (!t || busy) return;
+    setBusy(true);
+    try {
+      await api.message(task.id, { text: t, mode: 'note', stepId });
+      toast(`Note saved. ${title} reads it when it runs.`);
+      onClose();
+    } catch (err) {
+      toast(errorMessage(err), { error: true });
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal
+      crumb={<span>{taskLabel(task)} › Note</span>}
+      title={`Note for ${title}`}
+      onClose={onClose}
+      footer={
+        <>
+          <button className="lx-btn" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="lx-btn lx-pri" onClick={() => void save()} disabled={!text.trim() || busy}>
+            {busy && <span className="lx-spin" aria-hidden="true" />}
+            Save note
+          </button>
+        </>
+      }
+    >
+      <p>Read by this step’s agent when it runs. It is not sent to an agent that is running now; use Chat for that.</p>
+      <textarea
+        className="lx-field"
+        aria-label={`Note for ${title}`}
+        placeholder="e.g. Also run the e2e suite"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        autoFocus
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) void save();
+        }}
+      />
+    </Modal>
   );
 }

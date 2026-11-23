@@ -1,5 +1,5 @@
 import { parseArgs } from 'node:util';
-import { DB_PATH, PORT, ensureDirs } from './paths.ts';
+import { DB_PATH, PORT, SLOTS, ensureDirs } from './paths.ts';
 
 const HELP = `orstra — a local software factory
 
@@ -42,7 +42,7 @@ async function main() {
       const { createWorktree } = await import('./worktree.ts');
       const { startServer } = await import('./server.ts');
       const store = new Store(DB_PATH);
-      const runner = new Runner(store, realExecutors, { slots: Number(process.env.ORSTRA_SLOTS ?? 4), createWorktree });
+      const runner = new Runner(store, realExecutors, { slots: SLOTS, createWorktree });
       runner.recover();
       startServer(store, runner, PORT);
       console.log(`Orstra is running at http://localhost:${PORT}  (data: ${DB_PATH})`);

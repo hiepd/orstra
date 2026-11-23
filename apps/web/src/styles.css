@@ -1536,3 +1536,234 @@ a:hover {
   font-size: 13px;
   line-height: 1.5;
 }
+
+
+/* ---- Tasks, task page (Overview + Chat), Workflows, Settings: ported from the design mock (ox- classes) ---- */
+@keyframes ox-pulse{0%,100%{opacity:.35}50%{opacity:1}}
+@keyframes ox-shine{0%{background-position:-4.5rem 0}100%{background-position:calc(100% + 4.5rem) 0}}
+.ox-muted{font-size:12.5px;color:#8A8A93}
+.ox-trunc{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.ox-scroll{flex:1;overflow:auto;padding:26px 20px 40px}
+.ox-col{max-width:760px;margin:0 auto;display:flex;flex-direction:column;gap:24px}
+.ox-gh{margin:0 0 8px;padding:0 2px;font-size:12px;font-weight:500;color:#6F6F78;display:flex;align-items:center;gap:8px}
+.ox-gh .ox-gn{color:#A0A1A9;font-weight:400}
+.ox-card{background:#FFFFFF;border:1px solid #E3E4E8;border-radius:8px;overflow:hidden}
+.ox-irow{display:flex;align-items:flex-start;gap:12px;width:100%;padding:12px 14px;border:0;border-top:1px solid #EDEEF1;background:transparent;text-align:left;cursor:pointer}
+.ox-irow:first-child{border-top:0}
+.ox-irow:hover{background:#F7F8FA}
+.ox-iic{width:26px;height:26px;border-radius:6px;display:flex;align-items:center;justify-content:center;flex:none;margin-top:1px}
+.ox-imain{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.ox-iline{display:flex;align-items:center;gap:8px;min-width:0}
+.ox-id{font-family:'JetBrains Mono',monospace;font-size:12px;color:#6F6F78;flex:none}
+.ox-iname{font-size:13.5px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ox-iwhat{font-size:13px;color:#3C3C43;line-height:1.5}
+.ox-imeta{display:flex;align-items:center;gap:6px;font-size:12px;color:#8A8A93}
+.ox-go{flex:none;align-self:center;color:#B4B5BD}
+.ox-calm{display:flex;align-items:center;gap:9px;padding:12px 14px;border:1px dashed #E0E1E6;border-radius:8px;font-size:13px;color:#6F6F78}
+.ox-sd{width:8px;height:8px;border-radius:50%;flex:none;display:inline-block}
+.ox-live{animation:ox-pulse 1.6s ease-in-out infinite}
+.ox-fbar{display:flex;align-items:center;gap:6px;padding:8px 18px;border-bottom:1px solid #EDEEF1;flex:none}
+.ox-fchip{height:26px;padding:0 10px;border:1px solid #E0E1E6;border-radius:999px;background:#FFFFFF;font-size:12.5px;font-weight:500;color:#3C3C43;cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+.lx .ox-fchip[aria-pressed="true"]{background:#1B1B1F;border-color:#1B1B1F;color:#FFFFFF}
+.ox-fn{font-size:11.5px;opacity:.65}
+.ox-board{flex:1;overflow:auto;display:flex;gap:10px;padding:14px 14px 20px;background:#FBFBFC}
+.ox-bcol{flex:1 1 0;min-width:148px;display:flex;flex-direction:column;gap:8px}
+.ox-bch{display:flex;align-items:center;gap:6px;height:26px;padding:0 2px;font-size:12.5px;font-weight:500;color:#3C3C43;white-space:nowrap}
+.ox-bch .ox-gn{color:#A0A1A9;font-weight:400}
+.ox-bempty{flex:0 0 32px;display:flex;justify-content:center;padding-top:8px;border-radius:8px;background:#F0F1F4}
+.ox-bempty span{writing-mode:vertical-rl;font-size:12px;color:#A0A1A9;white-space:nowrap}
+.ox-tcard{display:flex;flex-direction:column;gap:7px;padding:10px 11px;border:1px solid #E3E4E8;border-radius:8px;background:#FFFFFF;text-align:left;cursor:pointer;box-shadow:0 1px 1px rgba(0,0,0,.03)}
+.ox-tcard:hover{border-color:#C6C8D1}
+.ox-tct{font-size:13px;font-weight:500;line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.ox-tcf{display:flex;align-items:center;gap:6px;font-size:12px}
+.ox-st{display:inline-flex;align-items:center;gap:5px;font-weight:500;white-space:nowrap}
+.ox-list{flex:1;overflow:auto;padding-bottom:24px}
+.ox-lgh{display:flex;align-items:center;gap:8px;height:34px;padding:0 18px;font-size:12.5px;font-weight:500;color:#3C3C43;background:#F7F8FA;border-bottom:1px solid #EDEEF1}
+.ox-lgh .ox-gn{color:#A0A1A9;font-weight:400}
+.ox-lrow{display:grid;grid-template-columns:16px 76px minmax(0,1fr) 220px 22px 60px;align-items:center;gap:10px;width:100%;height:40px;padding:0 18px;border:0;border-bottom:1px solid #F0F1F4;background:transparent;text-align:left;cursor:pointer;font-size:13px}
+.ox-lrow:hover{background:#F7F8FA}
+.ox-lstep{font-size:12.5px;color:#6F6F78;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ox-ltime{font-size:12px;color:#A0A1A9;text-align:right}
+.ox-pill{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 9px;border-radius:999px;font-size:12px;font-weight:500;white-space:nowrap;flex:none}
+.ox-ov{flex:1;display:flex;min-height:0}
+.ox-ovmain{flex:1;min-width:0;overflow:auto;padding:28px 28px 60px}
+.ox-ovcol{max-width:760px;margin:0 auto;display:flex;flex-direction:column;gap:26px}
+.ox-h1{margin:0;font-size:22px;font-weight:600;letter-spacing:-.01em;line-height:1.3}
+.ox-sub{font-size:13px;color:#6F6F78;margin-top:6px}
+.ox-h2{margin:0 0 10px;font-size:13px;font-weight:600;color:#1B1B1F;display:flex;align-items:center;gap:8px}
+.ox-h2 .ox-gn{color:#A0A1A9;font-weight:400}
+.ox-where{border:1px solid #E3E4E8;border-radius:10px;padding:16px 16px 14px;display:flex;flex-direction:column;gap:12px;background:#FFFFFF}
+.ox-track{display:flex;align-items:flex-start}
+.ox-tstep{flex:1 1 0;min-width:0;display:flex;flex-direction:column;align-items:center;gap:6px;position:relative}
+.ox-tstep::before{content:"";position:absolute;top:9px;right:50%;width:100%;height:2px;background:#E3E4E8}
+.ox-tstep:first-child::before{display:none}
+.ox-tstep.ox-done::before,.ox-tstep.ox-cur::before{background:#5E6AD2}
+.ox-tdot{width:20px;height:20px;border-radius:50%;border:2px solid #D5D6DC;background:#FFFFFF;position:relative;z-index:1;display:flex;align-items:center;justify-content:center;color:#FFFFFF}
+.ox-done .ox-tdot{background:#5E6AD2;border-color:#5E6AD2}
+.ox-tname{font-size:11.5px;color:#8A8A93;text-align:center;line-height:1.3;padding:0 3px}
+.ox-done .ox-tname{color:#3C3C43}
+.ox-cur .ox-tname{color:#1B1B1F;font-weight:600}
+.ox-now{margin:0;font-size:13.5px;line-height:1.6;color:#1B1B1F}
+.ox-next{display:flex;gap:8px;font-size:13px;line-height:1.55;color:#3C3C43}
+.ox-k{flex:none;font-size:11.5px;font-weight:600;color:#6F6F78;text-transform:uppercase;letter-spacing:.04em;padding-top:2px;width:44px}
+.ox-brow{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.ox-desc{margin:0;font-size:13.5px;line-height:1.65;color:#3C3C43}
+.ox-runh{display:grid;grid-template-columns:18px minmax(0,1fr) 116px 50px minmax(0,210px) 14px;align-items:center;gap:10px;width:100%;min-height:40px;padding:0 14px;border:0;border-top:1px solid #EDEEF1;background:transparent;text-align:left;cursor:pointer;font-size:13px}
+.ox-run:first-child .ox-runh{border-top:0}
+.ox-runh:hover{background:#F7F8FA}
+.ox-rname{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ox-rwho{display:flex;align-items:center;gap:6px;font-size:12.5px;color:#6F6F78;white-space:nowrap}
+.ox-rdur{font-size:12px;color:#8A8A93;text-align:right;white-space:nowrap}
+.ox-oc{justify-self:start;max-width:100%;overflow:hidden;text-overflow:ellipsis;font-size:11.5px;font-weight:500;padding:2px 8px;border-radius:4px;white-space:nowrap}
+.ox-runb{padding:4px 14px 14px 42px;display:flex;flex-direction:column;gap:8px}
+.ox-pre{margin:0;font-family:'JetBrains Mono',monospace;font-size:12px;line-height:1.6;background:#F7F8FA;border:1px solid #EDEEF1;border-radius:6px;padding:8px 10px;white-space:pre-wrap;color:#3C3C43}
+.ox-urow{display:flex;align-items:flex-start;gap:10px;padding:10px 14px;border-top:1px solid #EDEEF1;font-size:13px}
+.ox-urow:first-child{border-top:0}
+.ox-ukind{font-size:12px;color:#8A8A93;white-space:nowrap}
+.ox-note{background:#FFF8DB;border:1px solid #F1E3A4;border-radius:6px;padding:7px 10px;font-size:13px;line-height:1.5;margin-top:6px}
+.ox-props{flex:0 0 280px;border-left:1px solid #EDEEF1;padding:20px 18px;overflow:auto;display:flex;flex-direction:column;gap:2px;background:#FCFCFD}
+.ox-prop{display:grid;grid-template-columns:92px minmax(0,1fr);align-items:center;min-height:32px;font-size:13px}
+.ox-pk{color:#6F6F78}
+.ox-pv{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ox-pvm{font-family:'JetBrains Mono',monospace;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ox-chatv{flex:1;display:flex;min-height:0}
+.ox-sess{flex:0 0 212px;border-right:1px solid #EDEEF1;padding:12px 8px;overflow:auto;display:flex;flex-direction:column;gap:2px;background:#FCFCFD}
+.ox-sessh{font-size:12px;font-weight:500;color:#6F6F78;padding:2px 8px 6px}
+.ox-srow{display:grid;grid-template-columns:10px minmax(0,1fr);column-gap:8px;row-gap:1px;align-items:center;width:100%;padding:7px 8px;border:0;border-radius:6px;background:transparent;text-align:left;cursor:pointer}
+.ox-srow:hover{background:#F0F1F4}
+.lx .ox-srow[aria-current="true"]{background:#E9EAF8}
+.ox-sname{font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ox-smeta{grid-column:2;font-size:12px;color:#8A8A93;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ox-chat{flex:1;min-width:0;display:flex;flex-direction:column;position:relative;background:#FFFFFF}
+.ox-cscroll{flex:1;overflow:auto;padding:18px 20px 190px}
+.ox-lane{max-width:44rem;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+.ox-sline{display:flex;align-items:center;gap:8px;font-size:12px;color:#A0A1A9;white-space:nowrap}
+.ox-sline::before,.ox-sline::after{content:"";flex:1;height:1px;background:#EDEEF1}
+.ox-user{display:flex;justify-content:flex-end}
+.ox-bubble{max-width:80%;border-radius:16px;background:#EDEDEF;padding:10px 13px;font-size:14px;line-height:1.6}
+.ox-ai{padding:2px 4px;font-size:14px;line-height:1.65;color:#27272B}
+.ox-sys{align-self:center;font-size:12.5px;color:#6F6F78;background:#F4F5F8;border-radius:999px;padding:4px 12px}
+.ox-fold{display:flex;align-items:center;gap:6px;border:0;border-bottom:1px solid #EDEEF1;background:transparent;padding:0 0 8px;font-size:13px;color:#6F6F78;cursor:pointer;width:100%;text-align:left}
+.ox-fsum{margin-left:auto;font-size:12px;color:#A0A1A9;white-space:nowrap}
+.ox-wrow{display:flex;align-items:center;gap:8px;padding:5px 2px;font-size:13px;color:#6F6F78}
+.ox-wt{font-family:'JetBrains Mono',monospace;font-size:12px;color:#3C3C43;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ox-shine{background:linear-gradient(90deg,#6F6F78 0,#6F6F78 40%,#C9CAD3 50%,#6F6F78 60%,#6F6F78 100%);background-size:9rem 100%;-webkit-background-clip:text;background-clip:text;color:transparent;animation:ox-shine 1.8s linear infinite}
+.ox-fcard{border:1px solid #E3E4E8;border-radius:10px;overflow:hidden}
+.ox-fch{display:flex;align-items:center;padding:8px 12px;font-size:12.5px;font-weight:500;background:#F7F8FA;border-bottom:1px solid #EDEEF1}
+.ox-frow{display:flex;align-items:center;gap:8px;width:100%;padding:7px 12px;border:0;border-top:1px solid #F0F1F4;background:transparent;text-align:left;cursor:pointer;font-size:12px}
+.ox-frow:first-child{border-top:0}
+.ox-frow:hover{background:#F7F8FA}
+.ox-fpath{font-family:'JetBrains Mono',monospace;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;direction:rtl;text-align:left}
+.ox-add{font-family:'JetBrains Mono',monospace;color:#1A7F4B;flex:none}
+.ox-del{font-family:'JetBrains Mono',monospace;color:#C4302B;flex:none}
+.ox-compwrap{position:absolute;left:0;right:0;bottom:0;padding:0 20px 16px;pointer-events:none}
+.ox-composer{max-width:44rem;margin:0 auto;pointer-events:auto;border:1px solid #E0E1E6;border-radius:16px;background:rgba(255,255,255,.86);backdrop-filter:blur(10px);box-shadow:0 8px 28px rgba(0,0,0,.08)}
+.ox-composer:focus-within{border-color:#5E6AD2;box-shadow:0 0 0 3px rgba(94,106,210,.15),0 8px 28px rgba(0,0,0,.08)}
+.lx .ox-composer textarea{width:100%;border:0;outline:none;resize:none;padding:14px 16px 4px;font-size:14px;line-height:1.55;min-height:54px;background:transparent;display:block}
+.ox-cfoot{display:flex;align-items:center;gap:8px;padding:6px 10px 10px 14px;font-size:12px;color:#6F6F78}
+.ox-cctx{display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 8px;border-radius:6px;background:#F4F5F8;white-space:nowrap}
+.ox-send{margin-left:auto;width:30px;height:30px;border:0;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#FFFFFF;cursor:pointer;flex:none}
+.ox-ended{max-width:44rem;margin:0 auto;pointer-events:auto;display:flex;align-items:center;gap:12px;border:1px solid #E3E4E8;border-radius:12px;background:#FFFFFF;padding:10px 12px 10px 16px;font-size:13px;color:#3C3C43;box-shadow:0 8px 28px rgba(0,0,0,.06)}
+.ox-cempty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;color:#6F6F78;font-size:13.5px;text-align:center;padding:20px}
+.ox-cempty b{color:#1B1B1F;font-size:15px}
+.ox-git{flex:0 0 348px;border-left:1px solid #EDEEF1;display:flex;flex-direction:column;min-height:0;background:#FCFCFD}
+.ox-gitc{padding:12px 14px 10px;display:flex;flex-direction:column;gap:2px;border-bottom:1px solid #EDEEF1}
+.ox-grow{display:grid;grid-template-columns:70px minmax(0,1fr) auto;align-items:center;gap:8px;min-height:28px;font-size:12.5px}
+.ox-gk{color:#6F6F78}
+.ox-gv{font-family:'JetBrains Mono',monospace;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ox-gvp{font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ox-gbtn{height:22px;padding:0 7px;border:1px solid #E0E1E6;border-radius:5px;background:#FFFFFF;font-size:11.5px;font-weight:500;color:#3C3C43;cursor:pointer;white-space:nowrap}
+.ox-gbtn:hover{background:#F0F1F4}
+.ox-gtabs{display:flex;gap:4px;padding:8px 10px;border-bottom:1px solid #EDEEF1}
+.ox-gbody{flex:1;overflow:auto;min-height:0}
+.ox-crow{display:flex;align-items:center;gap:8px;width:100%;padding:8px 14px;border:0;border-bottom:1px solid #F0F1F4;background:transparent;text-align:left;cursor:pointer;font-size:12px}
+.ox-crow:hover{background:#F0F1F4}
+.ox-chk{display:flex;align-items:flex-start;gap:9px;padding:10px 14px;border-bottom:1px solid #F0F1F4;font-size:12.5px}
+.ox-chkn{font-family:'JetBrains Mono',monospace;font-size:12px}
+.ox-cmt{display:grid;grid-template-columns:58px minmax(0,1fr) auto;gap:8px;align-items:center;padding:8px 14px;border-bottom:1px solid #F0F1F4;font-size:12.5px}
+.ox-dhead{display:flex;align-items:center;gap:6px;padding:6px 8px 6px 6px;border-bottom:1px solid #EDEEF1;font-size:12px}
+.ox-diff{font-family:'JetBrains Mono',monospace;font-size:11.5px;line-height:1.7;padding:6px 0;overflow-x:auto}
+.ox-dl{display:flex;white-space:pre;min-width:max-content}
+.ox-dn{flex:0 0 34px;text-align:right;padding-right:8px;color:#B4B5BD;user-select:none}
+.ox-dt{padding-right:12px}
+.ox-dadd{background:#E9F7EF}
+.ox-ddel{background:#FCEBEA}
+.ox-dhunk{color:#8A8A93;background:#F4F5F8}
+.ox-gempty{padding:22px 16px;font-size:12.5px;color:#8A8A93;line-height:1.55}
+.ox-set{flex:1;display:flex;min-height:0}
+.ox-snav{flex:0 0 190px;border-right:1px solid #EDEEF1;padding:12px 8px;display:flex;flex-direction:column;gap:2px}
+.ox-snb{height:28px;padding:0 10px;border:0;border-radius:6px;background:transparent;text-align:left;font-size:13px;color:#3C3C43;cursor:pointer}
+.ox-snb:hover{background:#F0F1F4}
+.lx .ox-snb[aria-current="page"]{background:#E9EAEE;color:#1B1B1F;font-weight:500}
+.ox-smain{flex:1;overflow:auto;padding:30px 28px 50px}
+.ox-sdoc{max-width:680px;margin:0 auto}
+.ox-srow2{display:flex;align-items:center;gap:14px;padding:12px 14px;border-top:1px solid #EDEEF1}
+.ox-srow2:first-child{border-top:0}
+.ox-sl{flex:1;min-width:0}
+.ox-lb{font-size:13px;font-weight:500}
+.ox-hp{font-size:12.5px;color:#8A8A93;margin-top:2px}
+.ox-val{font-size:12.5px;color:#3C3C43;white-space:nowrap}
+/* ---- added for the app ---- */
+.lx a.ox-irow,.lx a.ox-tcard,.lx a.ox-lrow,.lx a.ox-srow,.lx a.ox-snb{color:inherit;text-decoration:none}
+.lx-menu a{display:flex;align-items:center;gap:8px;height:30px;padding:0 8px;border-radius:5px;font-size:13px;color:inherit;text-decoration:none}
+.lx-menu a:hover{background:#f0f1f4;text-decoration:none}
+.ox-av{width:16px;height:16px;border-radius:4px;flex:none}
+.ox-seg{display:inline-flex;background:#F0F1F4;border-radius:6px;padding:2px;flex:none}
+.ox-seg button,.ox-seg a{height:24px;padding:0 10px;border:0;background:transparent;border-radius:4px;font-size:12.5px;font-weight:500;color:#6F6F78;cursor:pointer;display:inline-flex;align-items:center;text-decoration:none}
+.ox-seg a:hover{text-decoration:none;color:#1B1B1F}
+.ox-seg button[aria-pressed="true"],.ox-seg a[aria-current="page"]{background:#FFFFFF;color:#1B1B1F;box-shadow:0 1px 2px rgba(0,0,0,.08)}
+.ox-tab{height:26px;padding:0 10px;border:0;border-radius:5px;background:transparent;font-size:12.5px;font-weight:500;color:#6F6F78;cursor:pointer}
+.ox-tab[aria-pressed="true"]{background:#F0F1F4;color:#1B1B1F}
+.ox-link{border:0;background:transparent;padding:0;color:#5E6AD2;font-size:12.5px;font-weight:500;cursor:pointer;white-space:nowrap}
+.ox-link:hover{text-decoration:underline}
+.ox-wfpick{margin-left:auto;display:inline-flex;align-items:center;gap:8px;font-size:12.5px;color:#6F6F78}
+.ox-wfpick .lx-select{width:auto;height:28px;max-width:260px}
+.ox-iic svg{display:block}
+.ox-cur .ox-tdot{border-color:#5E6AD2;background:#EEF0FB}
+.ox-cur-decision .ox-tdot{border-color:#7444C2;background:#F3EEFC}
+.ox-cur-stuck .ox-tdot{border-color:#E5484D;background:#FCEBEA}
+.ox-cur-stopped .ox-tdot,.ox-cur-queued .ox-tdot{border-color:#8A8A93;background:#F0F1F4}
+.ox-track{overflow-x:auto;padding-bottom:2px}
+.ox-tstep{min-width:84px}
+.ox-rtext{font-size:13px;line-height:1.55;color:#3C3C43}
+.ox-runb .lx-dl{font-size:13px}
+.ox-runh svg{flex:none}
+.ox-fs{width:16px;height:16px;border-radius:4px;font-size:10px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;flex:none;background:#FDF0E8;color:#B4531B}
+.ox-fs-A{background:#EAF6EF;color:#1A7F4B}
+.ox-fs-D{background:#FCEBEA;color:#C4302B}
+.ox-unc{width:6px;height:6px;border-radius:50%;background:#E08A3C;flex:none}
+.ox-chkd{margin:6px 0 0;max-height:180px;overflow:auto}
+.ox-send{background:#5E6AD2}
+.ox-send:disabled{background:#C9CAD3;cursor:default}
+.ox-send.ox-stopbtn{background:#E5484D}
+.ox-tag{display:block;font-size:11.5px;font-weight:500;color:#8A8A93;margin-bottom:3px}
+.ox-aside{border-left:2px solid #E0E1E6;padding-left:12px;color:#6F6F78}
+.ox-ai,.ox-bubble{white-space:pre-wrap;word-break:break-word}
+.ox-pcard{border:1px solid #E3E4E8;border-radius:10px;padding:12px 14px;background:#FCFCFD}
+.ox-pcardh{font-size:12px;font-weight:500;color:#6F6F78;margin-bottom:8px}
+.ox-pcard .lx-dl{font-size:13px}
+.ox-diff .ox-dl:hover{filter:brightness(.98)}
+.ox-wfitem{display:flex;flex-direction:column;align-items:flex-start;justify-content:center;height:auto;padding:7px 10px;gap:1px}
+.ox-wffile{font-family:'JetBrains Mono',monospace;font-size:11.5px;color:#8A8A93}
+.ox-wfsteps{display:flex;flex-direction:column;gap:10px;margin-top:22px}
+.ox-wfstep{border:1px solid #E3E4E8;border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;background:#FFFFFF}
+.ox-wfh{display:flex;align-items:center;gap:8px;font-size:13.5px;min-width:0}
+.ox-wfwhat{margin-left:auto;font-size:12.5px;color:#6F6F78;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;max-width:50%}
+.ox-wfprompt{font-family:'JetBrains Mono',monospace;font-size:12px;line-height:1.6;color:#3C3C43;background:#F7F8FA;border:1px solid #EDEEF1;border-radius:6px;padding:8px 10px;white-space:pre-wrap;max-height:96px;overflow:auto}
+.ox-wfon{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12.5px;color:#3C3C43}
+.ox-arrow{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.ox-arrowk{font-size:11.5px;font-weight:500;padding:1px 7px;border-radius:4px;background:#EEF0FB;color:#4B55B8}
+.ox-arrow-inbox{color:#8A8A93}
+.ox-arrow-inbox .ox-arrowk{background:#F3EEFC;color:#7444C2}
+.ox-yaml{margin-top:22px;max-height:none}
+.ox-val{max-width:55%;overflow:hidden;text-overflow:ellipsis}
+.lx-card .ox-brow{margin-top:2px}
+
+.ox-ovcol .lx-card{margin:0}
+.ox-sys{display:block;width:fit-content;max-width:100%;margin:0 auto;text-align:center}
+.ox-sess{flex-basis:232px}
+.ox-sname{white-space:normal;line-height:1.35}
+.ox-git{min-width:0;overflow:hidden}
+.ox-cscroll{overflow-x:hidden}
+.ox-sline{overflow:hidden}
+.ox-bcol{max-width:300px}

@@ -1,24 +1,78 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { api, type TaskSummary } from '../api';
-import { ChevronRight, PlusIcon, TasksIcon } from '../components/Icons';
-import { TaskStatusIcon } from '../components/Status';
-import { reasonText, taskLabel } from '../lib/format';
+import { PlusIcon, TasksIcon } from '../components/Icons';
+import { taskLabel } from '../lib/format';
 import { useLiveResource, useNow } from '../lib/live';
 import { href } from '../lib/router';
+import { agentMeta, STATE, stepLabel, taskState, type StateGroup } from '../lib/taskState';
 import { age } from '../lib/time';
 
-const GROUPS: { status: TaskSummary['status']; name: string }[] = [
-  { status: 'needs_you', name: 'Needs you' },
-  { status: 'running', name: 'Running' },
-  { status: 'done', name: 'Done' },
-  { status: 'stopped', name: 'Stopped' },
+type View = 'board' | 'list';
+type Filter = 'all' | 'needs' | 'running' | 'done';
+const FILTERS: { id: Filter; label: string }[] = [
+  { id: 'all', label: 'All' },
+  { id: 'needs', label: 'Needs you' },
+  { id: 'running', label: 'Running now' },
+  { id: 'done', label: 'Done' },
+];
+const LIST_GROUPS: { group: StateGroup; name: string; color: string }[] = [
+  { group: 'needs', name: 'Needs you', color: '#7444C2' },
+  { group: 'running', name: 'Running', color: '#4B55B8' },
+  { group: 'queued', name: 'Queued', color: '#8A8A93' },
+  { group: 'done', name: 'Done or stopped', color: '#1A7F4B' },
 ];
 
+const remember = <T extends string>(key: string, fallback: T): T => {
+  try {
+    return (window.localStorage.getItem(key) as T | null) ?? fallback;
+  } catch {
+    return fallback;
+  }
+};
+const store = (key: string, value: string) => {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    /* private mode: just don't remember */
+  }
+};
+
+function StatusText({ t }: { t: TaskSummary }) {
+  const s = taskState(t);
+  const attempt = t.run && t.run.attempt > 1 && (s === 'running' || s === 'stuck') ? ` · attempt ${t.run.attempt}` : '';
+  return (
+    <span className="ox-st" style={{ color: STATE[s].fg }}>
+      <span className={`ox-sd${s === 'running' ? ' ox-live' : ''}`} style={{ background: STATE[s].fg }} />
+      {STATE[s].short}
+      {attempt}
+    </span>
+  );
+}
+
+/** All tasks. Board groups them by the step they're at; list groups by status. Both only open the task. */
 export function TasksPage({ onNewTask }: { onNewTask: () => void }) {
-  const now = useNow(30_000);
+  useNow(30_000);
   const res = useLiveResource('tasks', api.tasks);
-  const [collapsed, setCollapsed] = useState<Partial<Record<TaskSummary['status'], boolean>>>({});
+  const [view, setView] = useState<View>(() => remember<View>('orstra.tasks.view', 'board'));
+  const [filter, setFilter] = useState<Filter>('all');
+  const [wfFile, setWfFile] = useState<string | null>(null);
   const tasks = res.data ?? [];
+
+  // Workflows that have tasks, the busiest first. The board shows one workflow at a time.
+  const countOf = (f: string) => tasks.filter((t) => t.workflowFile === f).length;
+  const files = [...new Map(tasks.map((t) => [t.workflowFile, t.workflow])).entries()].sort((a, b) => countOf(b[0]) - countOf(a[0]));
+  const file = wfFile && files.some(([f]) => f === wfFile) ? wfFile : files[0]?.[0] ?? null;
+  useEffect(() => store('orstra.tasks.view', view), [view]);
+
+  const wf = useLiveResource(`wf:${file ?? ''}`, useCallback(() => (file ? api.workflow(file) : Promise.resolve(null)), [file]), () => false);
+  const inGroup = (t: TaskSummary, f: Filter) => f === 'all' || STATE[taskState(t)].group === f;
+  const shown = (t: TaskSummary) => inGroup(t, filter);
+  const ofWorkflow = tasks.filter((t) => t.workflowFile === file);
+
+  const columns = [
+    ...(wf.data?.steps ?? []).map((s) => ({ id: s.id, name: s.title, cards: ofWorkflow.filter((t) => t.status !== 'done' && t.status !== 'stopped' && t.currentStep === s.id) })),
+    { id: '__done', name: 'Done', cards: ofWorkflow.filter((t) => t.status === 'done' || t.status === 'stopped') },
+  ];
 
   return (
     <>
@@ -26,69 +80,135 @@ export function TasksPage({ onNewTask }: { onNewTask: () => void }) {
         <span className="lx-crumb">
           <b>Tasks</b>
         </span>
-        {res.data && <span className="lx-muted">{tasks.length} total</span>}
+        <div className="ox-seg" role="group" aria-label="View">
+          <button aria-pressed={view === 'board'} onClick={() => setView('board')}>
+            Board
+          </button>
+          <button aria-pressed={view === 'list'} onClick={() => setView('list')}>
+            List
+          </button>
+        </div>
         <div className="lx-acts">
-          <button className="lx-btn" onClick={onNewTask}>
+          <button className="lx-btn lx-pri" onClick={onNewTask}>
             <PlusIcon />
             New task
           </button>
         </div>
       </div>
-      <div className="lx-body">
-        {res.error && !res.data && <div className="lx-error">{res.error}</div>}
-        {res.loading && !res.data && !res.error && (
-          <div className="lx-loading">
-            <span className="lx-spin" /> Loading tasks…
-          </div>
-        )}
-        {res.data && tasks.length === 0 && (
-          <div className="lx-empty">
-            <span style={{ color: '#B4B5BD' }}>
-              <TasksIcon />
-            </span>
-            <b>No tasks yet</b>
-            <span>A task is one thing moving through a workflow, like a Linear ticket.</span>
-            <button className="lx-btn lx-pri" onClick={onNewTask}>
-              <PlusIcon />
-              New task
-            </button>
-          </div>
-        )}
-        {GROUPS.map((g) => {
-          const rows = tasks.filter((t) => t.status === g.status);
-          if (rows.length === 0) return null;
-          const open = !collapsed[g.status];
-          return (
-            <div key={g.status}>
-              <button className="lx-gh" onClick={() => setCollapsed((c) => ({ ...c, [g.status]: open }))} aria-expanded={open}>
-                <ChevronRight open={open} />
-                {g.name}
-                <span>{rows.length}</span>
+
+      {res.error && !res.data && <div className="lx-error">{res.error}</div>}
+      {res.loading && !res.data && !res.error && (
+        <div className="lx-loading">
+          <span className="lx-spin" /> Loading tasks…
+        </div>
+      )}
+      {res.data && tasks.length === 0 && (
+        <div className="lx-empty">
+          <span style={{ color: '#B4B5BD' }}>
+            <TasksIcon />
+          </span>
+          <b>No tasks yet</b>
+          <span>A task is one thing moving through a workflow, like a ticket.</span>
+          <button className="lx-btn lx-pri" onClick={onNewTask}>
+            <PlusIcon />
+            New task
+          </button>
+        </div>
+      )}
+
+      {tasks.length > 0 && (
+        <>
+          <div className="ox-fbar">
+            {FILTERS.map((f) => (
+              <button key={f.id} className="ox-fchip" aria-pressed={filter === f.id} onClick={() => setFilter(f.id)}>
+                {f.label}
+                <span className="ox-fn">{tasks.filter((t) => inGroup(t, f.id)).length}</span>
               </button>
-              {open &&
-                rows.map((t) => (
-                  <a
-                    key={t.id}
-                    className="lx-trow"
-                    href={href.task(t.id)}
-                    style={{ color: 'inherit', textDecoration: 'none' }}
-                  >
-                    <TaskStatusIcon task={t} />
-                    <span className="lx-id">{taskLabel(t)}</span>
-                    <span className="lx-ttl">{t.title}</span>
-                    <span className="lx-now" style={{ color: '#6F6F78' }}>
-                      {t.status === 'needs_you' ? reasonText(t.inboxReason) : t.currentStepTitle ?? ''}
-                    </span>
-                    <span className="lx-muted" style={{ whiteSpace: 'nowrap' }}>
-                      {t.workflow}
-                    </span>
-                    <span className="lx-time">{age(t.updatedAt, now)}</span>
-                  </a>
-                ))}
+            ))}
+            {view === 'board' && (
+              <label className="ox-wfpick">
+                Workflow
+                <select className="lx-select" value={file ?? ''} onChange={(e) => setWfFile(e.target.value)} disabled={files.length < 2}>
+                  {files.map(([f, name]) => (
+                    <option key={f} value={f}>
+                      {name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+          </div>
+
+          {view === 'board' ? (
+            <div className="ox-board">
+              {wf.error && <div className="lx-error">Couldn’t read this workflow: {wf.error}</div>}
+              {columns.map((c) =>
+                c.cards.length === 0 ? (
+                  <div key={c.id} className="ox-bempty" title="No tasks at this step">
+                    <span>{c.name}</span>
+                  </div>
+                ) : (
+                  <div key={c.id} className="ox-bcol">
+                    <div className="ox-bch">
+                      {c.name}
+                      <span className="ox-gn">{c.cards.length}</span>
+                    </div>
+                    {c.cards.map((t) => {
+                      const a = agentMeta(t);
+                      return (
+                        <a key={t.id} className="ox-tcard" href={href.task(t.id)} style={shown(t) ? undefined : { opacity: 0.3 }}>
+                          <span className="ox-id">{taskLabel(t)}</span>
+                          <span className="ox-tct">{t.title}</span>
+                          <span className="ox-tcf">
+                            <StatusText t={t} />
+                            <span className="lx-av ox-av" style={{ background: a.color, marginLeft: 'auto' }} title={a.name}>
+                              {a.av}
+                            </span>
+                          </span>
+                        </a>
+                      );
+                    })}
+                  </div>
+                ),
+              )}
             </div>
-          );
-        })}
-      </div>
+          ) : (
+            <div className="ox-list">
+              {LIST_GROUPS.map((g) => {
+                const rows = tasks.filter((t) => STATE[taskState(t)].group === g.group && shown(t));
+                if (!rows.length) return null;
+                return (
+                  <div key={g.group}>
+                    <div className="ox-lgh">
+                      <span className="ox-sd" style={{ background: g.color }} />
+                      {g.name}
+                      <span className="ox-gn">{rows.length}</span>
+                    </div>
+                    {rows.map((t) => {
+                      const s = taskState(t);
+                      const a = agentMeta(t);
+                      return (
+                        <a key={t.id} className="ox-lrow" href={href.task(t.id)}>
+                          <span className={`ox-sd${s === 'running' ? ' ox-live' : ''}`} style={{ background: STATE[s].fg }} title={STATE[s].label} />
+                          <span className="ox-id">{taskLabel(t)}</span>
+                          <span className="ox-trunc">{t.title}</span>
+                          <span className="ox-lstep">
+                            {s === 'done' || s === 'stopped' ? STATE[s].label : `${stepLabel(t)} · ${STATE[s].short}`} · {t.workflow}
+                          </span>
+                          <span className="lx-av ox-av" style={{ background: a.color }} title={a.name}>
+                            {a.av}
+                          </span>
+                          <span className="ox-ltime">{age(t.updatedAt)}</span>
+                        </a>
+                      );
+                    })}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </>
+      )}
     </>
   );
 }

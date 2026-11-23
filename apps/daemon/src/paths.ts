@@ -10,6 +10,7 @@ export const REPO_ROOT = resolve(fileURLToPath(new URL('../../..', import.meta.u
 export const WORKFLOW_DIRS = [join(REPO_ROOT, 'workflows'), join(HOME, 'workflows')];
 export const WEB_DIST = join(REPO_ROOT, 'apps/web/dist');
 export const PORT = Number(process.env.ORSTRA_PORT ?? 4317);
+export const SLOTS = Number(process.env.ORSTRA_SLOTS ?? 4);
 
 export function ensureDirs() {
   mkdirSync(HOME, { recursive: true });

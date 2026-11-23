@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseWorkflow, route, renderTemplate, parseAgentResult, stripProgressBlock } from '../src/index.ts';
+import { parseWorkflow, route, renderTemplate, parseAgentResult, stripProgressBlock, taskPath } from '../src/index.ts';
 
 const YAML = `
 name: Linear ticket to PR
@@ -121,5 +121,26 @@ describe('parseAgentResult', () => {
   it('accepts needs_you and cant_do', () => {
     expect(parseAgentResult('OUTCOME: needs_you').outcome).toBe('needs_you');
     expect(parseAgentResult('outcome: cant_do').outcome).toBe('cant_do');
+  });
+});
+
+describe('taskPath', () => {
+  const wf = parseWorkflow(YAML);
+  it('predicts the default path for a task that has not started', () => {
+    expect(taskPath(wf, [], null)[0]).toBe('route');
+  });
+  it('keeps visited steps first and follows success arrows from the current step', () => {
+    const path = taskPath(wf, ['route', 'repro'], 'impl');
+    expect(path.slice(0, 3)).toEqual(['route', 'repro', 'impl']);
+    expect(path).not.toContain('spec');
+    expect(new Set(path).size).toBe(path.length);
+  });
+  it('still shows later steps when the task loops back', () => {
+    const path = taskPath(wf, ['route', 'spec', 'approve', 'spec'], 'spec');
+    expect(path.slice(0, 3)).toEqual(['route', 'spec', 'approve']);
+    expect(path).toContain('impl');
+  });
+  it('adds nothing after the last run of a finished task', () => {
+    expect(taskPath(wf, ['route', 'repro'], null)).toEqual(['route', 'repro']);
   });
 });

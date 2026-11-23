@@ -17,6 +17,11 @@ export interface TaskSummary {
   currentStep: string | null;
   currentStepTitle: string | null;
   inboxReason: string | null;
+  workflowFile: string;
+  /** The run that says where the task is right now. */
+  run: { status: RunStatus; attempt: number; kind: StepKind } | null;
+  /** The agent of the task's latest agent run. */
+  agent: AgentName | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -43,16 +48,11 @@ export interface RunView {
   live?: boolean;
 }
 
-export interface SessionView extends RunView {
-  kind: 'agent' | 'gate';
-  task: TaskSummary;
-  now: string | null;
-}
-
 export interface StepView {
   id: string;
   title: string;
   kind: StepKind;
+  agent: AgentName | null;
   on: Record<string, string>;
 }
 
@@ -95,11 +95,93 @@ export interface TaskDetail extends TaskSummary {
   description: string | null;
   worktree: string | null;
   steps: StepView[];
+  /** The steps this task has been through, then the ones it will most likely reach. */
+  track: TrackStep[];
+  /** Notes waiting for a step's next run, by step id. */
+  notes: Record<string, { text: string; ts: number }[]>;
   runs: RunView[];
   human: HumanDecision | null;
   awaiting?: Awaiting | null;
   workingRunId?: string | null;
   events: TaskEvent[];
+}
+
+export interface TrackStep {
+  id: string;
+  title: string;
+  kind: StepKind;
+  state: 'done' | 'current' | 'todo';
+}
+
+export interface ChangedFile {
+  path: string;
+  status: 'A' | 'M' | 'D' | 'R';
+  add: number;
+  del: number;
+  uncommitted: boolean;
+}
+
+export interface Check {
+  runId: string;
+  name: string;
+  state: 'running' | 'pass' | 'fail' | 'stopped';
+  detail: string;
+  endedAt: number | null;
+}
+
+/** A task's worktree: branch, what changed compared with where it started, commits and checks. */
+export interface GitView {
+  worktree: string | null;
+  branch: string | null;
+  base: string | null;
+  ahead: number;
+  uncommitted: number;
+  files: ChangedFile[];
+  commits: { sha: string; message: string; ts: number }[];
+  checks: Check[];
+  pr: null | { number: number; url: string; state: string };
+}
+
+export interface FileDiff {
+  path: string;
+  diff: string;
+  truncated: boolean;
+}
+
+export interface WorkflowStep {
+  id: string;
+  title: string;
+  kind: StepKind;
+  agent: AgentName | null;
+  model: string | null;
+  prompt: string | null;
+  run: string[] | null;
+  question: string | null;
+  action: string | null;
+  on: { outcome: string; to: string; toTitle: string; max: number | null }[];
+}
+
+export interface WorkflowDetail {
+  file: string;
+  path: string;
+  yaml: string;
+  error: string | null;
+  name: string;
+  description: string | null;
+  repo: string | null;
+  start: string | null;
+  concurrency: number | null;
+  steps: WorkflowStep[];
+}
+
+export interface Settings {
+  home: string;
+  database: string;
+  worktrees: string;
+  workflowDirs: string[];
+  port: number;
+  slots: number;
+  agents: { id: AgentName; name: string; command: string; path: string | null }[];
 }
 
 export interface WorkflowInfo {
@@ -150,11 +232,14 @@ async function request<T>(method: 'GET' | 'POST', path: string, body?: unknown):
 }
 
 export const api = {
-  sessions: () => request<SessionView[]>('GET', '/api/sessions'),
   tasks: () => request<TaskSummary[]>('GET', '/api/tasks'),
   task: (id: string) => request<TaskDetail>('GET', `/api/tasks/${encodeURIComponent(id)}`),
   inbox: () => request<TaskDetail[]>('GET', '/api/inbox'),
   workflows: () => request<WorkflowInfo[]>('GET', '/api/workflows'),
+  workflow: (file: string) => request<WorkflowDetail>('GET', `/api/workflows/${encodeURIComponent(file)}`),
+  settings: () => request<Settings>('GET', '/api/settings'),
+  git: (taskId: string) => request<GitView>('GET', `/api/tasks/${encodeURIComponent(taskId)}/git`),
+  diff: (taskId: string, path: string) => request<FileDiff>('GET', `/api/tasks/${encodeURIComponent(taskId)}/diff?path=${encodeURIComponent(path)}`),
   createTask: (input: NewTaskInput) => request<TaskSummary>('POST', '/api/tasks', input),
   message: (taskId: string, body: { text: string; mode: MessageMode; runId?: string; stepId?: string }) =>
     request<{ ok: true }>('POST', `/api/tasks/${encodeURIComponent(taskId)}/messages`, body),

@@ -90,6 +90,8 @@ export function useLiveResource<T>(
   key: string,
   load: () => Promise<T>,
   filter?: (taskId: string | null) => boolean,
+  /** How long to wait after a change before refetching. Raise it for expensive calls. */
+  delay = 150,
 ): Resource<T> {
   const [state, setState] = useState<{ key: string; data: T | undefined; error: string | null; loading: boolean }>({
     key,
@@ -122,7 +124,7 @@ export function useLiveResource<T>(
   filterRef.current = filter;
   useLiveChanges((taskId) => {
     if (taskId === null || !filterRef.current || filterRef.current(taskId)) reload();
-  });
+  }, delay);
 
   const fresh = state.key === key;
   return { data: fresh ? state.data : undefined, error: fresh ? state.error : null, loading: !fresh || state.loading, reload };

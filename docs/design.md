@@ -46,8 +46,12 @@ workflows/    Example workflow YAML files
 - **Worktrees:** when a workflow names a repo, each task gets `git worktree add ~/.orstra/wt/<task> -b orstra/<task>`.
 - **API:** REST for tasks, runs, sessions, decisions, messages; SSE `/api/events` for live updates.
 
-## First slice (this milestone)
+## What is built
 
-- Engine: parse a workflow, start a task by hand (CLI or UI), run agent / gate / human / switch steps, route outcomes with capped loops, record runs, sessions, events and progress.
-- UI: Sessions (running, queued, ended), Task page (steps, activity, message box, decision for human steps), Inbox (what needs you).
-- Not yet: Linear trigger polling, Codex runner, Board, Workflows canvas editor, Triggers/Agents/Settings screens, mirroring progress to Linear, steering a run mid-flight (messages are recorded and handed to the next run).
+- Engine: parse a workflow, start a task by hand (CLI or UI), run agent / gate / human / switch steps, route outcomes with capped loops, record runs, sessions, events and progress. You can message a running agent, stop its turn, and reopen an ended session.
+- UI, four places (see [concepts.md](concepts.md)):
+  - **Inbox**: tasks that need you, grouped by decision, agent waiting, stuck. Rows only open the task.
+  - **Tasks**: board (columns are one workflow's steps) and list (grouped by status).
+  - **Task page**, two views. **Overview**: where the task is, what happens next, the decision if one is waiting, every run with its progress note, and notes for upcoming steps. **Chat**: the task's sessions, the conversation with the selected one, and the worktree panel (branch, changed files with diffs, checks, commits).
+  - **Workflows** (read-only steps and YAML) and **Settings** (read-only: agents found, slots, file locations).
+- Not yet: triggers (Linear polling), the Codex runner, action steps (so no PR is opened yet), the workflow canvas editor, editable settings, mirroring progress to the ticket.
