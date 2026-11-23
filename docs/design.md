@@ -19,15 +19,7 @@ Mock (all screens): https://claude.ai/artifact/6ekxsGvdsWrBfEEoyyv3Ce
 
 ## Concepts
 
-| Term | Meaning |
-|---|---|
-| Workflow | A YAML file: triggers plus a graph of steps |
-| Task | One thing moving through a workflow (e.g. Linear ticket HUB-416) |
-| Step | A node: `agent`, `gate`, `human`, `switch`, `action`, `workflow` |
-| Run | One execution of one step for one task. Retries are new runs |
-| Session | The agent conversation behind an agent run (Claude Code or Codex) |
-| Outcome | How a run ended: `done`, `fail`, `pass`, `approved`, `needs_you`, `timeout`… |
-| Progress entry | What a run did, decided, left and wants avoided. Written when it ends |
+Task, workflow, step, trigger, run, session, outcome, progress entry, note and decision are defined in [concepts.md](concepts.md), along with which screen is each one's home. Use those words exactly.
 
 ## The rules we settled
 
