@@ -1693,7 +1693,11 @@ a:hover {
 .ox-pvm{font-family:'JetBrains Mono',monospace;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ox-chatv{flex:1;display:flex;min-height:0}
 .ox-sess{flex:0 0 212px;border-right:1px solid var(--line);padding:12px 8px;overflow:auto;display:flex;flex-direction:column;gap:2px;background:var(--surface-2)}
-.ox-sessh{font-size:12px;font-weight:500;color:var(--muted);padding:2px 8px 6px}
+.ox-sessh{display:flex;align-items:center;font-size:12px;font-weight:500;color:var(--muted);padding:2px 2px 6px 8px}
+.ox-sessb{margin-left:auto;width:22px;height:22px}
+/* The way back when the panel is collapsed: a button in a gutter at the left edge of the chat. */
+.ox-sessx{position:absolute;top:10px;left:8px;z-index:1}
+.ox-chatx .ox-cscroll{padding-left:46px}
 .ox-srow{display:grid;grid-template-columns:10px minmax(0,1fr);column-gap:8px;row-gap:1px;align-items:center;width:100%;padding:7px 8px;border:0;border-radius:6px;background:transparent;text-align:left;cursor:pointer}
 .ox-srow:hover{background:var(--line-3)}
 .lx .ox-srow[aria-current="true"]{background:var(--accent-line)}
