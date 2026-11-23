@@ -48,11 +48,11 @@ workflows/    Default workflows, copied into ~/.orstra/workflows/ on first run (
 
 ## What is built
 
-- Engine: parse a workflow, start a task by hand (CLI or UI), run agent / gate / human / switch steps, route outcomes with capped loops, record runs, sessions, events and progress. You can message a running agent, stop its turn, and reopen an ended session.
+- Engine: parse a workflow, start a task by hand (CLI or UI), run agent / gate / human / switch steps, route outcomes with capped loops, record runs, sessions, events and progress. You can message a running agent, stop its turn, and reopen an ended session. One action step is built: `git.merge` merges the task branch into the branch the repository has checked out (`apps/daemon/src/merge.ts`), locally, never forced and never pushed.
 - Chief of staff: a long-running Claude Code session with only Orstra's tools (an MCP server, `apps/daemon/src/cos-mcp.ts`, that forwards to the daemon). The daemon enforces what needs your OK; gated actions become plans. Watches wake it when a task reaches a state.
 - UI: the chief of staff page, then four places (see [concepts.md](concepts.md)):
   - **Inbox**: tasks that need you, grouped by decision, agent waiting, stuck. Rows only open the task.
   - **Tasks**: board (columns are one workflow's steps) and list (grouped by status).
   - **Task page**, two views. **Overview**: where the task is, what happens next, the decision if one is waiting, every run with its progress note, and notes for upcoming steps. **Chat**: the task's sessions, the conversation with the selected one, and the worktree panel (branch, changed files with diffs, checks, commits).
   - **Workflows** (read-only steps and YAML) and **Settings** (read-only: agents found, slots, file locations).
-- Not yet: a scheduled morning brief, the chief of staff on screens other than its own; triggers (Linear polling), the Codex runner, action steps (so no PR is opened yet), the workflow canvas editor, editable settings, mirroring progress to the ticket.
+- Not yet: a scheduled morning brief, the chief of staff on screens other than its own; triggers (Linear polling), the Codex runner, service actions (so no PR is opened yet), the workflow canvas editor, editable settings, mirroring progress to the ticket.

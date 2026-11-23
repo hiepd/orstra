@@ -27,5 +27,15 @@ steps:
       - close
       - reopen
     on:
-      close: end
+      close: merge
       reopen: work
+
+  # Merges the task branch into the branch the repository has checked out. Local only; it never pushes.
+  # It does nothing when the task has no commits or its own scratch repository.
+  # "conflict" and "error" have no arrow on purpose: the task goes to the Inbox with that reason,
+  # and nothing is merged.
+  merge:
+    title: Merge
+    use: action
+    action: git.merge
+    next: end
