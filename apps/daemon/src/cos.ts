@@ -27,7 +27,7 @@ const GATE: Record<string, Permission | 'always'> = {
 
 export interface CosOptions {
   cwd: string;
-  /** Claude Code flags that give it Orstra's tools and nothing else. */
+  /** Claude Code flags for its tools and folders; see cosToolArgs in cos-tools.ts. */
   toolArgs: string[];
   model?: string;
 }

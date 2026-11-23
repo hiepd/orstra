@@ -1,6 +1,7 @@
 /**
- * The tools the chief of staff has. It has nothing else: no shell, no file edits. Read tools always run;
- * action tools run or become a plan the user approves, depending on permissions (see cos.ts).
+ * Orstra's own tools for the chief of staff. Read tools always run; action tools run or become a plan
+ * the user approves, depending on permissions (see cos.ts). Next to these it has the same built-in tools
+ * as a task agent (see COS_BUILTIN_TOOLS).
  * Shared by the daemon (which runs them) and the MCP server (which advertises them to Claude Code).
  */
 
@@ -89,7 +90,11 @@ export const COS_PROMPT = `You are the user's chief of staff inside Orstra, a lo
 
 What you do: brief the user, answer questions about tasks, suggest what to do next, and act for them: message a task's agent, leave notes for upcoming steps, start, retry or stop tasks, answer decisions, and watch tasks to follow up later.
 
-You only have Orstra's tools. You can't run commands or edit code yourself; to change code, message the task's agent or start a task. Always read tasks with your tools before answering; never guess.
+Next to Orstra's tools you have the tools of a coding agent: Bash, Read, Edit, Write, Glob and Grep. Use them to look at code, to check a fact yourself, or to make a small change. You work in 4 kinds of folder: your own (~/.orstra/cos), ~/.orstra (the database, the workflow files, and every task worktree under wt/), the Orstra checkout, and the repository behind each task worktree. A path outside them still works, so give the full path, and stay out of folders the user did not ask about.
+
+Work on a task belongs to its agent. What you do yourself gets no plan card and no review step, and the task's agent never learns about it. So keep your own changes small, and say what you changed. For anything bigger, message the task's agent or start a task. Do not change a task's worktree while its agent runs: you would fight it.
+
+Always read tasks with your tools before answering; never guess.
 
 Some actions need the user's OK. When a tool says it was added to a plan, the user sees a card with "Do it" and "Not now". Propose everything the request needs first, then end your turn with one short sentence. Never say you did something that is still waiting for OK. If they approve, you get a message with the results; then do any follow-up you promised (for example a watch).
 
@@ -98,3 +103,32 @@ When you mention more than one task, call show_tasks so they appear as clickable
 Write plainly: short sentences, no headings, no tables, no emoji. Lead with what needs the user. When you recommend something, say why in one sentence.
 
 Messages that start with [Orstra] come from the system, not the user: plan results and watches that fired. Act on them, then tell the user briefly what happened.`;
+
+/** The built-in tools the chief of staff gets. Same set as a task agent (the default in executors.ts). */
+export const COS_BUILTIN_TOOLS = ['Bash', 'Read', 'Edit', 'Write', 'Glob', 'Grep'];
+
+/**
+ * The Claude Code flags for the chief of staff's session: Orstra's tools over MCP plus a task agent's
+ * built-in tools, and its working folders (see cosDirs in paths.ts).
+ *
+ * Nothing here can ask the user a question. The session runs with `-p`, where nobody answers a permission
+ * prompt, so one prompt would hang the conversation. Three flags prevent that: --tools leaves only the 6
+ * built-in tools, --allowedTools approves those 6 and every Orstra tool up front, and
+ * --permission-prompts none denies anything else at once instead of waiting for an answer.
+ *
+ * An approved tool is approved for every path, so Read, Write and Edit are not held to --add-dir, the
+ * same as a task agent. The folders are the session's workspace: relative paths, Glob and Grep work in
+ * them, and Claude Code reads their CLAUDE.md.
+ */
+export function cosToolArgs(opts: { mcpConfig: string; dirs: string[] }): string[] {
+  return [
+    '--tools', COS_BUILTIN_TOOLS.join(','),
+    '--mcp-config', opts.mcpConfig,
+    '--strict-mcp-config',
+    '--allowedTools', [...COS_BUILTIN_TOOLS, 'mcp__orstra'].join(' '),
+    '--permission-mode', 'acceptEdits',
+    '--permission-prompts', 'none',
+    ...(opts.dirs.length ? ['--add-dir', ...opts.dirs] : []),
+    '--append-system-prompt', COS_PROMPT,
+  ];
+}

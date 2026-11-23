@@ -29,8 +29,16 @@ const TOOL_VERB: Record<string, string> = {
   stop_task: 'Stop',
   watch: 'Watch',
   unwatch: 'Stopped watching',
+  // Its own tools, the same ones a task agent has. The target is a path, a pattern or a command,
+  // so each verb has to read well with any of them (see summarizeTool in executors.ts).
+  Bash: 'Ran',
+  Read: 'Read',
+  Glob: 'Looked for',
+  Grep: 'Searched',
+  Edit: 'Changed',
+  Write: 'Wrote',
 };
-const READS = new Set(['list_tasks', 'get_task', 'get_task_changes', 'get_diff', 'read_task_file', 'list_workflows', 'list_watches']);
+const READS = new Set(['list_tasks', 'get_task', 'get_task_changes', 'get_diff', 'read_task_file', 'list_workflows', 'list_watches', 'Read', 'Glob', 'Grep']);
 
 const ICON = {
   read: 'M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z',
@@ -222,7 +230,7 @@ function Conversation({ view, tasks }: { view: CosView; tasks: TaskSummary[] }) 
       <div className="cs-intro">
         <b>Your chief of staff</b>
         <span>It keeps track of every task. Ask what needs you or how a task is going, or tell it what to do, like “tell Codex reposts count as duplicates” or “retry HUB-405 when HUB-432 is done”.</span>
-        <span>It can’t touch code itself: it works through the tasks’ agents, and asks before starting tasks or making decisions.</span>
+        <span>It can read files, change files and run commands itself, and it asks before it starts a task or answers a decision. For real work on a task it goes through the task’s agent.</span>
       </div>
     );
   return (

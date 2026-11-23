@@ -89,9 +89,10 @@ How many runs can work at the same time on this machine (default 4). Agent and g
 ### Chief of staff
 **One ongoing conversation with an agent that sees every task.** It briefs you, answers questions about any task, and acts for you through Orstra: it messages a task's agent, leaves notes, starts, retries or stops tasks, answers decisions, and **watches** tasks to follow up later ("retry HUB-405 when HUB-432 is done").
 
-- It is Claude Code with Orstra's tools only: it can't run commands or edit code. To change code it talks to a task's agent or starts a task.
-- **Orstra, not the model, decides what needs your OK.** Actions that need it become a **plan**: a card with Do it / Not now. Messaging agents is allowed by default; starting and retrying tasks asks by default; decisions and stopping always ask.
-- Everything it does is recorded on the task, marked as done by your chief of staff.
+- It is Claude Code with Orstra's tools **and** the tools of a task agent: Bash, Read, Edit, Write, Glob and Grep. So it can read a file, change a file and run a command itself. Its working folders are `~/.orstra` (the database, the workflow files, every task worktree), the Orstra checkout, and the repository behind each task worktree; `ORSTRA_COS_DIRS` adds more. These folders are where it works, not a fence: like a task agent, it can reach any path on your machine.
+- **Orstra, not the model, decides what needs your OK** for Orstra's own actions. Actions that need it become a **plan**: a card with Do it / Not now. Messaging agents is allowed by default; starting and retrying tasks asks by default; decisions and stopping always ask.
+- **A file or a command of its own has no plan card and no review step.** Work on a task still belongs to the task's agent: only then does the change land on the task's branch and go through the workflow. Ask it for a small fix or a quick look; ask a task for the work.
+- Everything it does through Orstra's tools is recorded on the task, marked as done by your chief of staff. Its own files and commands show in the conversation only.
 
 ## Screens (one home per concept)
 
