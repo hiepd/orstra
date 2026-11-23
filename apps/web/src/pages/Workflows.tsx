@@ -2,18 +2,11 @@ import { useCallback, useState } from 'react';
 import { api, type WorkflowStep } from '../api';
 import { shortPath } from '../components/GitPanel';
 import { WorkflowsIcon } from '../components/Icons';
+import { WorkflowCanvas } from '../components/WorkflowCanvas';
 import { AGENTS, humanize } from '../lib/format';
 import { useLiveResource } from '../lib/live';
 import { href } from '../lib/router';
-
-const KIND: Record<string, { label: string; bg: string; fg: string }> = {
-  agent: { label: 'Agent', bg: '#EEF0FB', fg: '#4B55B8' },
-  gate: { label: 'Checks', bg: '#EAF6EF', fg: '#1A7F4B' },
-  human: { label: 'Your decision', bg: '#F3EEFC', fg: '#7444C2' },
-  switch: { label: 'Branch', bg: '#F0F1F4', fg: '#5A5A63' },
-  action: { label: 'Action', bg: '#FDF0E8', fg: '#B4531B' },
-  workflow: { label: 'Workflow', bg: '#F0F1F4', fg: '#5A5A63' },
-};
+import { KIND } from '../lib/stepKinds';
 
 function what(s: WorkflowStep): string {
   if (s.kind === 'agent') return `${AGENTS[s.agent ?? 'claude-code'].name}${s.model ? ` · ${s.model}` : ''}`;
@@ -28,7 +21,7 @@ export function WorkflowsPage({ file }: { file?: string }) {
   const list = useLiveResource('workflows', api.workflows, () => false);
   const sel = file ?? list.data?.[0]?.file;
   const wf = useLiveResource(`workflow:${sel ?? ''}`, useCallback(() => (sel ? api.workflow(sel) : Promise.resolve(null)), [sel]), () => false);
-  const [tab, setTab] = useState<'steps' | 'yaml'>('steps');
+  const [tab, setTab] = useState<'steps' | 'canvas' | 'yaml'>('steps');
   const w = wf.data;
 
   return (
@@ -48,6 +41,9 @@ export function WorkflowsPage({ file }: { file?: string }) {
             <button aria-pressed={tab === 'steps'} onClick={() => setTab('steps')}>
               Steps
             </button>
+            <button aria-pressed={tab === 'canvas'} onClick={() => setTab('canvas')}>
+              Canvas
+            </button>
             <button aria-pressed={tab === 'yaml'} onClick={() => setTab('yaml')}>
               YAML
             </button>
@@ -65,7 +61,7 @@ export function WorkflowsPage({ file }: { file?: string }) {
           {list.data && list.data.length === 0 && <div className="lx-hint" style={{ padding: 8 }}>No workflow files found.</div>}
         </nav>
         <div className="ox-smain">
-          <div className="ox-sdoc" style={{ maxWidth: 760 }}>
+          <div className="ox-sdoc" style={{ maxWidth: tab === 'canvas' ? 'none' : 760 }}>
             {list.error && <div className="lx-error">{list.error}</div>}
             {!sel && list.data && (
               <div className="lx-empty">
@@ -122,6 +118,7 @@ export function WorkflowsPage({ file }: { file?: string }) {
                     ))}
                   </div>
                 )}
+                {tab === 'canvas' && !w.error && <WorkflowCanvas steps={w.steps} start={w.start ?? w.steps[0]?.id ?? ''} />}
                 {tab === 'yaml' && <pre className="ox-pre ox-yaml">{w.yaml}</pre>}
                 <div className="lx-hint" style={{ marginTop: 14 }}>
                   Read-only for now. Edit the YAML file in your editor; Orstra picks up the change when it restarts. The visual editor isn’t built yet.
