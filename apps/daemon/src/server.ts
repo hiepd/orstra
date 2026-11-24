@@ -88,7 +88,7 @@ function parseEvent(e: EventRow) {
 /** How tasks, runs and worktrees look to the UI and to the chief of staff. */
 export function makeViews(store: Store, runner: Runner) {
   const stepTitle = (task: TaskRow, stepId: string) => {
-    try { return runner.workflow(task.workflow_path).steps[stepId]?.title ?? stepId; } catch { return stepId; }
+    try { return runner.workflowFor(task).steps[stepId]?.title ?? stepId; } catch { return stepId; }
   };
 
   const runView = (task: TaskRow, r: RunRow) => ({
@@ -120,7 +120,7 @@ export function makeViews(store: Store, runner: Runner) {
     let human: unknown = null;
     let track: { id: string; title: string; kind: string; state: 'done' | 'current' | 'todo' }[] = [];
     try {
-      const wf = runner.workflow(t.workflow_path);
+      const wf = runner.workflowFor(t);
       steps = Object.values(wf.steps).map((s) => ({
         id: s.id, title: s.title ?? s.id, kind: s.use, agent: s.agent ?? null,
         on: Object.fromEntries(Object.entries(s.on).map(([k, v]) => [k, v.goto === 'end' ? 'end' : wf.steps[v.goto]?.title ?? v.goto])),
@@ -238,6 +238,10 @@ export function buildApi(store: Store, runner: Runner, cos?: ChiefOfStaff) {
       if ((mm = m(/^\/api\/tasks\/([\w-]+)\/retry$/)) && req.method === 'POST') {
         const b = await readJson(req);
         runner.retry(mm[1], b.stepId, b.note);
+        return send(res, 200, { ok: true }), true;
+      }
+      if ((mm = m(/^\/api\/tasks\/([\w-]+)\/workflow\/refresh$/)) && req.method === 'POST') {
+        runner.refreshWorkflow(mm[1]);
         return send(res, 200, { ok: true }), true;
       }
       if ((mm = m(/^\/api\/tasks\/([\w-]+)\/interrupt$/)) && req.method === 'POST') {

@@ -22,6 +22,14 @@ export interface TaskRow {
   worktree: string | null;
   created_at: number;
   updated_at: number;
+  /** The workflow YAML as it was when the task started. Editing the file does not change a running task. */
+  workflow_yaml: string | null;
+  /** The pull request a `github.pr` step opened. */
+  pr_url: string | null;
+  /** Where the task came from, e.g. `linear:<issue id>`. Null for a task you started. */
+  source: string | null;
+  /** Set when you archive the task; archived tasks leave the lists. */
+  archived_at: number | null;
 }
 
 export interface RunRow {
@@ -39,6 +47,11 @@ export interface RunRow {
   created_at: number;
   started_at: number | null;
   ended_at: number | null;
+  /** What the agent's session cost so far, in US dollars (Claude Code's own estimate). */
+  cost_usd: number | null;
+  /** Tokens the session read (input, cache reads and cache writes) and wrote. */
+  tokens_in: number | null;
+  tokens_out: number | null;
 }
 
 export interface EventRow {
@@ -69,6 +82,7 @@ CREATE TABLE IF NOT EXISTS events (
   ts INTEGER NOT NULL, kind TEXT NOT NULL, payload TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS events_task ON events(task_id);
+CREATE INDEX IF NOT EXISTS events_run ON events(run_id);
 CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS plans (
   id TEXT PRIMARY KEY, status TEXT NOT NULL, actions TEXT NOT NULL, results TEXT,
@@ -110,15 +124,32 @@ export class Store {
     this.db = new DatabaseSync(path);
     this.db.exec('PRAGMA journal_mode = WAL;');
     this.db.exec(SCHEMA);
+    this.migrate();
+  }
+
+  /** Add the columns that came after the first release. Each one is added once, when it is absent. */
+  private migrate() {
+    const add = (table: string, column: string, type: string) => {
+      const cols = this.db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+      if (!cols.some((c) => c.name === column)) this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+    };
+    add('tasks', 'workflow_yaml', 'TEXT');
+    add('tasks', 'pr_url', 'TEXT');
+    add('tasks', 'source', 'TEXT');
+    add('tasks', 'archived_at', 'INTEGER');
+    add('runs', 'cost_usd', 'REAL');
+    add('runs', 'tokens_in', 'INTEGER');
+    add('runs', 'tokens_out', 'INTEGER');
   }
 
   insertTask(t: TaskRow) {
     this.db
       .prepare(
-        `INSERT INTO tasks (id, ref, title, description, workflow_path, workflow_name, status, current_step, inbox_reason, edge_counts, worktree, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO tasks (id, ref, title, description, workflow_path, workflow_name, status, current_step, inbox_reason, edge_counts, worktree, created_at, updated_at, workflow_yaml, pr_url, source, archived_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(t.id, t.ref, t.title, t.description, t.workflow_path, t.workflow_name, t.status, t.current_step, t.inbox_reason, t.edge_counts, t.worktree, t.created_at, t.updated_at);
+      .run(t.id, t.ref, t.title, t.description, t.workflow_path, t.workflow_name, t.status, t.current_step, t.inbox_reason, t.edge_counts, t.worktree, t.created_at, t.updated_at,
+        t.workflow_yaml ?? null, t.pr_url ?? null, t.source ?? null, t.archived_at ?? null);
   }
 
   updateTask(id: string, patch: Partial<TaskRow>) {
@@ -140,10 +171,11 @@ export class Store {
   insertRun(r: RunRow) {
     this.db
       .prepare(
-        `INSERT INTO runs (id, task_id, step_id, kind, attempt, status, outcome, agent, session_id, progress, output, created_at, started_at, ended_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO runs (id, task_id, step_id, kind, attempt, status, outcome, agent, session_id, progress, output, created_at, started_at, ended_at, cost_usd, tokens_in, tokens_out)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(r.id, r.task_id, r.step_id, r.kind, r.attempt, r.status, r.outcome, r.agent, r.session_id, r.progress, r.output, r.created_at, r.started_at, r.ended_at);
+      .run(r.id, r.task_id, r.step_id, r.kind, r.attempt, r.status, r.outcome, r.agent, r.session_id, r.progress, r.output, r.created_at, r.started_at, r.ended_at,
+        r.cost_usd ?? null, r.tokens_in ?? null, r.tokens_out ?? null);
   }
 
   updateRun(id: string, patch: Partial<RunRow>) {
@@ -224,5 +256,38 @@ export class Store {
 
   events(taskId: string): EventRow[] {
     return this.db.prepare('SELECT * FROM events WHERE task_id = ? ORDER BY id').all(taskId) as unknown as EventRow[];
+  }
+
+  /** A task's events after event `afterId`: what the UI has not seen yet. */
+  eventsAfter(taskId: string, afterId: number): EventRow[] {
+    return this.db.prepare('SELECT * FROM events WHERE task_id = ? AND id > ? ORDER BY id').all(taskId, afterId) as unknown as EventRow[];
+  }
+
+  /** A task's events of these kinds only (notes, decisions), without the long stream of tool calls. */
+  eventsOfKind(taskId: string, ...kinds: string[]): EventRow[] {
+    return this.db
+      .prepare(`SELECT * FROM events WHERE task_id = ? AND kind IN (${kinds.map(() => '?').join(',')}) ORDER BY id`)
+      .all(taskId, ...kinds) as unknown as EventRow[];
+  }
+
+  /** The latest event of a run among these kinds: what its session is doing now. */
+  lastRunEvent(runId: string, ...kinds: string[]): EventRow | undefined {
+    return this.db
+      .prepare(`SELECT * FROM events WHERE run_id = ? AND kind IN (${kinds.map(() => '?').join(',')}) ORDER BY id DESC LIMIT 1`)
+      .get(runId, ...kinds) as EventRow | undefined;
+  }
+
+  /** The total cost of a task's runs so far. */
+  taskCost(taskId: string): { usd: number; tokensIn: number; tokensOut: number } {
+    const r = this.db
+      .prepare('SELECT COALESCE(SUM(cost_usd), 0) AS usd, COALESCE(SUM(tokens_in), 0) AS tin, COALESCE(SUM(tokens_out), 0) AS tout FROM runs WHERE task_id = ?')
+      .get(taskId) as { usd: number; tin: number; tout: number };
+    return { usd: r.usd, tokensIn: r.tin, tokensOut: r.tout };
+  }
+
+  /** What every run cost since `ts`, for the cost total in Settings. */
+  costSince(ts: number): number {
+    const r = this.db.prepare('SELECT COALESCE(SUM(cost_usd), 0) AS usd FROM runs WHERE created_at >= ?').get(ts) as { usd: number };
+    return r.usd;
   }
 }

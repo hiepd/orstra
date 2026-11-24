@@ -270,7 +270,7 @@ export class ChiefOfStaff extends EventEmitter {
 
   private stepId(t: TaskRow, step: unknown): string {
     const q = String(step ?? '').trim().toLowerCase();
-    const wf = this.runner.workflow(t.workflow_path);
+    const wf = this.runner.workflowFor(t);
     const hit = Object.values(wf.steps).find((s) => s.id.toLowerCase() === q || (s.title ?? '').toLowerCase() === q);
     if (!hit) throw new Error(`${label(t)}'s workflow has no step "${step}". Steps: ${Object.values(wf.steps).map((s) => s.title ?? s.id).join(', ')}.`);
     return hit.id;
@@ -293,7 +293,7 @@ export class ChiefOfStaff extends EventEmitter {
       return `Start a task: “${a.title}” · ${wf}`;
     }
     const t = this.task(a.task);
-    const stepTitle = (s: unknown) => this.runner.workflow(t.workflow_path).steps[this.stepId(t, s)]?.title ?? String(s);
+    const stepTitle = (s: unknown) => this.runner.workflowFor(t).steps[this.stepId(t, s)]?.title ?? String(s);
     switch (tool) {
       case 'message_agent':
         return `Message ${this.agentName(t)} on ${label(t)}: “${clip(String(a.text), 300)}”`;

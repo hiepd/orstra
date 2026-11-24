@@ -16,6 +16,8 @@ export interface StartTaskInput {
   repo?: string;
   /** Who asked: 'cos' when the chief of staff started it. */
   via?: Via;
+  /** Where it came from, e.g. `linear:<issue id>` for a task a trigger started. */
+  source?: string;
 }
 
 /** chat = talk to the agent's session; note = hand to a step's next run; ask = a forked copy answers. */
@@ -59,6 +61,10 @@ const SLOT_KINDS = new Set(['agent', 'gate']);
 
 export class Runner extends EventEmitter {
   private workflows = new Map<string, Workflow>();
+  /** Task id -> the parse of the workflow copy the task started with. */
+  private snapshots = new Map<string, Workflow>();
+  /** Run id -> chat messages that wait for a free slot before they go in. */
+  private held = new Map<string, { taskId: string; body: string }[]>();
   private controllers = new Map<string, AbortController>();
   private live = new Map<string, Live>();
   private timers = 0;
@@ -81,9 +87,47 @@ export class Runner extends EventEmitter {
     return wf;
   }
 
-  /** Drop the cached parse of a workflow file after it was edited, so the next step reads the new version. */
+  /** Drop the cached parse of a workflow file after it was edited, so the next task reads the new version. */
   forgetWorkflow(path: string) {
     this.workflows.delete(path);
+  }
+
+  /** The workflow a task follows: the copy it started with, or the file for a task from before copies. */
+  workflowFor(task: TaskRow): Workflow {
+    if (!task.workflow_yaml) return this.workflow(task.workflow_path);
+    let wf = this.snapshots.get(task.id);
+    if (!wf) {
+      wf = parseWorkflow(task.workflow_yaml);
+      this.snapshots.set(task.id, wf);
+    }
+    return wf;
+  }
+
+  /** true when the workflow file changed after the task started, so "use the new version" has an effect. */
+  workflowChanged(task: TaskRow): boolean {
+    if (!task.workflow_yaml) return false;
+    try {
+      return readFileSync(locateWorkflow(task.workflow_path), 'utf8') !== task.workflow_yaml;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Move a task to the current version of its workflow file. It refuses when the step the task is at
+   * is gone from the new version, because the task would then have nowhere to be.
+   */
+  refreshWorkflow(taskId: string, via?: Via) {
+    const task = this.store.task(taskId);
+    if (!task) throw new Error('No such task.');
+    const yaml = readFileSync(locateWorkflow(task.workflow_path), 'utf8');
+    const wf = parseWorkflow(yaml);
+    if (task.current_step && !wf.steps[task.current_step]) {
+      throw new Error(`The new version has no step "${task.current_step}", where this task is now. Add it back, or retry another step first.`);
+    }
+    this.store.updateTask(taskId, { workflow_yaml: yaml, workflow_name: wf.name });
+    this.snapshots.delete(taskId);
+    this.event(taskId, null, 'system', { text: `Now follows the current version of ${wf.name}${byCos(via)}` });
   }
 
   isLive(runId: string): boolean {
@@ -119,7 +163,8 @@ export class Runner extends EventEmitter {
   }
 
   startTask(input: StartTaskInput): TaskRow {
-    const wf = this.workflow(input.workflowPath);
+    const yaml = readFileSync(locateWorkflow(input.workflowPath), 'utf8');
+    const wf = parseWorkflow(yaml);
     const taskId = id('t');
     const worktree = this.opts.createWorktree(taskId, input.repo ?? wf.repo);
     const now = Date.now();
@@ -127,6 +172,7 @@ export class Runner extends EventEmitter {
       id: taskId, ref: input.ref ?? null, title: input.title, description: input.description ?? '',
       workflow_path: input.workflowPath, workflow_name: wf.name, status: 'running', current_step: wf.start,
       inbox_reason: null, edge_counts: '{}', worktree, created_at: now, updated_at: now,
+      workflow_yaml: yaml, pr_url: null, source: input.source ?? null, archived_at: null,
     };
     this.store.insertTask(task);
     this.event(taskId, null, 'system', { text: `Started ${wf.name}${byCos(input.via)}` });
@@ -136,26 +182,55 @@ export class Runner extends EventEmitter {
   }
 
   private queueStep(task: TaskRow, stepId: string) {
-    const step = this.workflow(task.workflow_path).steps[stepId];
+    const step = this.workflowFor(task).steps[stepId];
     const attempt = this.store.runsForTask(task.id).filter((r) => r.step_id === stepId).length + 1;
     const run: RunRow = {
       id: id('r'), task_id: task.id, step_id: stepId, kind: step.use, attempt, status: 'queued', outcome: null,
       agent: step.use === 'agent' ? step.agent ?? 'claude-code' : null, session_id: null, progress: null, output: null,
-      created_at: Date.now(), started_at: null, ended_at: null,
+      created_at: Date.now(), started_at: null, ended_at: null, cost_usd: null, tokens_in: null, tokens_out: null,
     };
     this.store.insertRun(run);
     this.store.updateTask(task.id, { current_step: stepId, status: 'running', inbox_reason: null });
     this.changed(task.id);
   }
 
-  /** Start queued runs while there are free slots. Human, switch and action steps don't take a slot. */
+  /** Agent and gate runs that work now: each one takes a slot. */
+  private busySlots(): RunRow[] {
+    return this.store.runsByStatus('running').filter((r) => SLOT_KINDS.has(r.kind));
+  }
+
+  /**
+   * Start queued runs while there are free slots. Human, switch and action steps don't take a slot.
+   * Chat messages that wait for a slot go first: you sent them before the queued runs could start.
+   * A workflow's `concurrency` caps how many of its tasks work at the same time.
+   */
   pump() {
-    let busy = this.store.runsByStatus('running').filter((r) => SLOT_KINDS.has(r.kind)).length;
+    const running = this.busySlots();
+    let busy = running.length;
+    for (const [runId, msgs] of [...this.held]) {
+      if (busy >= this.opts.slots) break;
+      const run = this.store.run(runId);
+      const task = run && this.store.task(run.task_id);
+      this.held.delete(runId);
+      if (!run || !task || task.status === 'stopped' || run.status !== 'waiting') continue;
+      busy++;
+      for (const m of msgs) this.deliver(task, run, m.body);
+    }
+    const perWorkflow = new Map<string, number>();
+    for (const r of running) {
+      const t = this.store.task(r.task_id);
+      if (t) perWorkflow.set(t.workflow_path, (perWorkflow.get(t.workflow_path) ?? 0) + 1);
+    }
     for (const run of this.store.runsByStatus('queued')) {
       const task = this.store.task(run.task_id);
       if (!task || task.status === 'stopped') continue;
       if (SLOT_KINDS.has(run.kind)) {
         if (busy >= this.opts.slots) continue;
+        let cap = Infinity;
+        try { cap = this.workflowFor(task).concurrency; } catch { /* a broken workflow fails in execute() */ }
+        const n = perWorkflow.get(task.workflow_path) ?? 0;
+        if (n >= cap) continue;
+        perWorkflow.set(task.workflow_path, n + 1);
         busy++;
       }
       this.store.updateRun(run.id, { status: 'running', started_at: Date.now() });
@@ -366,7 +441,7 @@ export class Runner extends EventEmitter {
   }
 
   private async execute(task: TaskRow, run: RunRow) {
-    const wf = this.workflow(task.workflow_path);
+    const wf = this.workflowFor(task);
     const step = wf.steps[run.step_id];
     const cwd = task.worktree ?? process.cwd();
 
@@ -434,7 +509,7 @@ export class Runner extends EventEmitter {
     const okOutcomes = new Set(['done', 'pass', 'ok', 'approved', 'started']);
     this.store.updateRun(runId, { status: okOutcomes.has(outcome) || run.kind === 'switch' || run.kind === 'human' ? 'done' : 'failed', outcome, ended_at: Date.now() });
 
-    const wf = this.workflow(task.workflow_path);
+    const wf = this.workflowFor(task);
     const counts = JSON.parse(task.edge_counts) as Record<string, number>;
     const next = route(wf, run.step_id, outcome, counts);
     if (next.type === 'goto') {
@@ -507,15 +582,28 @@ export class Runner extends EventEmitter {
     }
     this.event(taskId, target.id, 'you', { mode: 'chat', ...said, via: opts.via });
 
+    // A run that waits on you takes a slot again when it works. With no free slot, the message waits.
+    if (target.status === 'waiting' && task.status !== 'stopped' && this.busySlots().length >= this.opts.slots) {
+      const list = this.held.get(target.id) ?? [];
+      list.push({ taskId, body });
+      this.held.set(target.id, list);
+      return this.event(taskId, target.id, 'system', { text: `All ${this.opts.slots} slots are busy. Your message goes in when one is free.` });
+    }
+    this.deliver(task, target, body);
+  }
+
+  /** Put a chat message into a run's session: resume the session if it is closed, and start its clock again. */
+  private deliver(task: TaskRow, target: RunRow, body: string) {
+    const taskId = task.id;
     const owns = target.status === 'running' || target.status === 'waiting';
     if (owns && task.status !== 'stopped') {
       this.store.updateRun(target.id, { status: 'running' });
       this.store.updateTask(taskId, { status: 'running', inbox_reason: null, current_step: target.step_id });
     }
     let live = this.live.get(target.id);
-    const step = this.workflow(task.workflow_path).steps[target.step_id];
+    const step = this.workflowFor(task).steps[target.step_id];
     if (!live) {
-      live = this.openSession(task, target, { sessionId: target.session_id, resume: true, routes: owns && task.status !== 'stopped', model: step?.model });
+      live = this.openSession(task, target, { sessionId: target.session_id!, resume: true, routes: owns && task.status !== 'stopped', model: step?.model });
     }
     // The run works again, so its clock starts again.
     if (live.routes && owns && task.status !== 'stopped' && step) this.arm(taskId, target.id, step);
@@ -537,6 +625,7 @@ export class Runner extends EventEmitter {
   private closeLive(taskId: string) {
     for (const r of this.store.runsForTask(taskId)) {
       this.disarm(r.id);
+      this.held.delete(r.id);
       const live = this.live.get(r.id);
       if (live) {
         live.finished = true;
@@ -556,7 +645,7 @@ export class Runner extends EventEmitter {
       if (r.status === 'waiting' || r.status === 'running') this.store.updateRun(r.id, { status: 'stopped', ended_at: Date.now() });
     }
     if (note) this.store.addEvent(taskId, null, 'note', { text: note, step });
-    this.event(taskId, null, 'system', { text: `Retrying ${this.workflow(task.workflow_path).steps[step]?.title ?? step}${byCos(via)}` });
+    this.event(taskId, null, 'system', { text: `Retrying ${this.workflowFor(task).steps[step]?.title ?? step}${byCos(via)}` });
     this.queueStep(task, step);
     this.pump();
   }

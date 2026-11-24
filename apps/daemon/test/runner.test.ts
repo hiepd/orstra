@@ -377,4 +377,52 @@ steps:
     await waitFor(() => store.task(task.id)!.status === 'needs_you');
     expect(store.task(task.id)!.inbox_reason).toBe('timeout');
   });
+
+  it('keeps a running task on the workflow it started with, until you move it to the new version', async () => {
+    const { store, runner, wfPath, prompts } = setup(LOOP, () => done('ok'), () => false);
+    const task = runner.startTask({ workflowPath: wfPath, title: 'x' });
+    await runner.idle();
+    writeFileSync(wfPath, LOOP.replace('Fix {{ trigger.title }}', 'Repair {{ trigger.title }}'));
+    runner.forgetWorkflow(wfPath);
+    expect(runner.workflowChanged(store.task(task.id)!)).toBe(true);
+    runner.retry(task.id, 'impl');
+    await runner.idle();
+    expect(prompts().at(-1)).toContain('Fix x');
+    runner.refreshWorkflow(task.id);
+    runner.retry(task.id, 'impl');
+    await runner.idle();
+    expect(prompts().at(-1)).toContain('Repair x');
+  });
+
+  it('refuses the new version when it has no step where the task is', async () => {
+    const { runner, wfPath } = setup(LOOP, () => done('ok'), () => false);
+    const task = runner.startTask({ workflowPath: wfPath, title: 'x' });
+    await runner.idle();
+    writeFileSync(wfPath, 'name: Fix\nsteps:\n  other:\n    use: human\n    question: q\n    on: { approved: end }\n');
+    expect(() => runner.refreshWorkflow(task.id)).toThrow(/has no step "verify"/);
+  });
+
+  it('holds your message to a waiting agent until a slot is free', async () => {
+    const { store, runner, wfPath, fake } = setup(LOOP, (text, n, opts) => (text.includes('go on') ? done('ok') : text.startsWith('Fix busy') ? null : 'Which one?\n\nOUTCOME: needs_you'));
+    const waiting = runner.startTask({ workflowPath: wfPath, title: 'a' });
+    await waitFor(() => store.task(waiting.id)!.status === 'needs_you');
+    const b1 = runner.startTask({ workflowPath: wfPath, title: 'busy 1' });
+    const b2 = runner.startTask({ workflowPath: wfPath, title: 'busy 2' });
+    await waitFor(() => store.runsByStatus('running').length === 2);
+    await runner.message(waiting.id, 'go on', 'chat');
+    expect(fake.sent.some((s) => s.text === 'go on')).toBe(false);
+    expect(store.events(waiting.id).some((e) => e.payload.includes('slots are busy'))).toBe(true);
+    runner.stop(b1.id);
+    await waitFor(() => fake.sent.some((s) => s.text === 'go on'));
+    runner.stop(b2.id);
+  });
+
+  it('runs no more tasks of one workflow at a time than its concurrency', async () => {
+    const { store, runner, wfPath } = setup('concurrency: 1\n' + LOOP, () => null);
+    runner.startTask({ workflowPath: wfPath, title: 'a' });
+    runner.startTask({ workflowPath: wfPath, title: 'b' });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(store.runsByStatus('running')).toHaveLength(1);
+    expect(store.runsByStatus('queued')).toHaveLength(1);
+  });
 });
