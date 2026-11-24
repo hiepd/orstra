@@ -174,6 +174,25 @@ describe('ChiefOfStaff', () => {
     expect(first.resume).toBe(false);
     expect(store.get('cos.session')).toBe(first.sessionId);
   });
+
+  it('gives it the paths of the files you attached, and keeps your text on the row', async () => {
+    const { cos, store, toCos } = setup();
+    const file = { name: 'screen.png', path: 'attachments/ab12/screen.png', bytes: 2048, mime: 'image/png' };
+    cos.say('what is wrong here?', [file]);
+    expect(toCos[0]).toContain('what is wrong here?');
+    expect(toCos[0]).toContain('attachments/ab12/screen.png');
+    const you = store.events(COS_ID).map((e) => JSON.parse(e.payload)).at(-1);
+    expect(you).toMatchObject({ text: 'what is wrong here?', files: [file] });
+  });
+
+  it('takes a message that is only a file, and leaves a plain message alone', async () => {
+    const { cos, toCos } = setup();
+    cos.say('', [{ name: 'run.log', path: 'attachments/cd34/run.log', bytes: 10, mime: 'text/plain' }]);
+    expect(toCos[0]).toContain('attachments/cd34/run.log');
+    cos.say('and this?');
+    expect(toCos[1]).toBe('and this?');
+    expect(() => cos.say('')).toThrow('Say something.');
+  });
 });
 
 describe('cos-mcp', () => {

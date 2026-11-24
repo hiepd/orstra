@@ -2,6 +2,7 @@ import { useState, type ReactNode } from 'react';
 import type { RunView, TaskEvent } from '../api';
 import { useNow } from '../lib/live';
 import { duration } from '../lib/time';
+import { SentFiles } from './FileChips';
 import { ChevronRight } from './Icons';
 import { Markdown } from './Markdown';
 import { ProgressList } from './ProgressList';
@@ -111,7 +112,7 @@ export function Transcript({ run, events, working, agentName }: { run: RunView; 
       });
     else if (e.kind === 'you') {
       if (e.mode === 'interrupt') items.push({ key, node: <div className="ox-sys">You stopped {agentName}</div> });
-      else if (e.text)
+      else if (e.text || e.files?.length)
         items.push({
           key,
           node: (
@@ -120,6 +121,7 @@ export function Transcript({ run, events, working, agentName }: { run: RunView; 
                 {e.mode === 'ask' && <span className="ox-tag">Asked a copy</span>}
                 {e.via === 'cos' && <span className="ox-tag">Sent by your chief of staff</span>}
                 {e.text}
+                {!!e.files?.length && <SentFiles to={{ kind: 'task', taskId: run.taskId }} files={e.files} />}
               </div>
             </div>
           ),

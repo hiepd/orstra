@@ -63,6 +63,18 @@ export interface HumanDecision {
   artifact: null | { step: string; progress: Progress };
 }
 
+/**
+ * A file you added to a message. It sits in the task's worktree at `path`, so the agent reads it
+ * from there. A file a step produces is an artifact, not an attachment.
+ */
+export interface ChatFile {
+  name: string;
+  /** Relative to the worktree: `.orstra/attachments/<id>/<name>`. */
+  path: string;
+  bytes: number;
+  mime: string;
+}
+
 interface EventBase {
   id: number | string;
   runId: string | null;
@@ -77,7 +89,7 @@ export type TaskEvent = EventBase &
     | { kind: 'output'; text: string }
     | ({ kind: 'progress' } & Progress)
     // 'steer' is a legacy mode from older events; treat it like 'chat'.
-    | { kind: 'you'; mode: MessageMode | 'decision' | 'interrupt' | 'steer'; text: string; choice?: string; step?: string | null; via?: 'cos' }
+    | { kind: 'you'; mode: MessageMode | 'decision' | 'interrupt' | 'steer'; text: string; choice?: string; step?: string | null; via?: 'cos'; files?: ChatFile[] }
     | { kind: 'note'; text: string; step?: string }
     | { kind: 'aside'; text: string }
   );
@@ -224,7 +236,7 @@ export interface AgentSettings {
 
 /** One entry in the chief of staff conversation. */
 export type CosEvent = { id: number; ts: number } & (
-  | { kind: 'you'; text: string }
+  | { kind: 'you'; text: string; files?: ChatFile[] }
   | { kind: 'message'; text: string }
   | { kind: 'tool'; name: string; summary: string }
   | { kind: 'show'; title: string; taskIds: string[] }
@@ -316,7 +328,9 @@ export const api = {
   settings: () => request<Settings>('GET', '/api/settings'),
   saveAgentSettings: (agent: AgentName, body: AgentSettings) => request<Record<AgentName, AgentSettings>>('PUT', `/api/settings/agents/${encodeURIComponent(agent)}`, body),
   cos: () => request<CosView>('GET', '/api/cos'),
-  cosSay: (text: string) => request<{ ok: true }>('POST', '/api/cos/messages', { text }),
+  cosSay: (text: string, files?: ChatFile[]) => request<{ ok: true }>('POST', '/api/cos/messages', { text, files }),
+  /** Put one file in the chief of staff's own folder, the one its session works in. */
+  cosAttach: (body: { name: string; data: string }) => request<ChatFile>('POST', '/api/cos/attachments', body),
   cosInterrupt: () => request<{ ok: true }>('POST', '/api/cos/interrupt'),
   cosPlan: (id: string, answer: 'approve' | 'decline') => request<{ ok: true }>('POST', `/api/cos/plans/${encodeURIComponent(id)}/${answer}`),
   cosUnwatch: (id: string) => request<{ ok: true }>('POST', `/api/cos/watches/${encodeURIComponent(id)}/remove`),
@@ -325,8 +339,11 @@ export const api = {
   diff: (taskId: string, path: string) => request<FileDiff>('GET', `/api/tasks/${encodeURIComponent(taskId)}/diff?path=${encodeURIComponent(path)}`),
   saveWorkflow: (file: string, graph: WorkflowGraphInput) => request<WorkflowDetail>('PUT', `/api/workflows/${encodeURIComponent(file)}`, graph),
   createTask: (input: NewTaskInput) => request<TaskSummary>('POST', '/api/tasks', input),
-  message: (taskId: string, body: { text: string; mode: MessageMode; runId?: string; stepId?: string }) =>
+  message: (taskId: string, body: { text: string; mode: MessageMode; runId?: string; stepId?: string; files?: ChatFile[] }) =>
     request<{ ok: true }>('POST', `/api/tasks/${encodeURIComponent(taskId)}/messages`, body),
+  /** Put one file in the task's worktree. `data` is the file's bytes as base64. */
+  attach: (taskId: string, body: { name: string; data: string }) =>
+    request<ChatFile>('POST', `/api/tasks/${encodeURIComponent(taskId)}/attachments`, body),
   retry: (taskId: string, body: { stepId?: string; note?: string }) =>
     request<{ ok: true }>('POST', `/api/tasks/${encodeURIComponent(taskId)}/retry`, body),
   interrupt: (taskId: string) => request<{ ok: true }>('POST', `/api/tasks/${encodeURIComponent(taskId)}/interrupt`),
@@ -336,3 +353,7 @@ export const api = {
 };
 
 export const errorMessage = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
+/** Where the browser reads an attachment's bytes (a thumbnail, or a click to open it). */
+export const fileUrl = (taskId: string, path: string) => `/api/tasks/${encodeURIComponent(taskId)}/attachment?path=${encodeURIComponent(path)}`;
+export const cosFileUrl = (path: string) => `/api/cos/attachment?path=${encodeURIComponent(path)}`;

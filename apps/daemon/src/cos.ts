@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { withFiles, type Attachment } from './attachments.ts';
 import { WATCH_UNTIL, type WatchUntil } from './cos-tools.ts';
 import type { Store, TaskRow, WatchRow } from './db.ts';
 import type { Executors, LiveSession } from './executors.ts';
@@ -112,12 +113,14 @@ export class ChiefOfStaff extends EventEmitter {
 
   // ---------- the conversation ----------
 
-  say(text: string) {
+  /** `files` are attachments already written into the chief of staff folder; it reads them by path. */
+  say(text: string, files: Attachment[] = []) {
     const t = text.trim();
-    if (!t) throw new Error('Say something.');
-    this.event('you', { text: t });
+    if (!t && !files.length) throw new Error('Say something.');
+    this.event('you', files.length ? { text: t, files } : { text: t });
     const notes = this.pendingNotes.splice(0);
-    this.send(notes.length ? `${notes.join('\n')}\n\n${t}` : t);
+    const body = withFiles(t, files);
+    this.send(notes.length ? `${notes.join('\n')}\n\n${body}` : body);
   }
 
   interrupt() {

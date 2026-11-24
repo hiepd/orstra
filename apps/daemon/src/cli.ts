@@ -62,6 +62,7 @@ async function main() {
         cwd: COS_DIR,
         model: process.env.ORSTRA_COS_MODEL,
         // Its workspace: ~/.orstra (the database, the workflow files, the task worktrees) and this checkout.
+        // The files you attach live under ~/.orstra/cos/attachments/, so they are inside it.
         toolArgs: cosToolArgs({ mcpConfig, dirs: [HOME, REPO_ROOT] }),
       });
       startServer(store, runner, PORT, cos);

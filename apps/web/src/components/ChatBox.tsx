@@ -1,10 +1,9 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { api, errorMessage } from '../api';
-import { useToast } from './Overlay';
+import { api, type ChatFile } from '../api';
+import { Composer } from './Composer';
 
 /**
- * The message box for one session. Enter sends. While the agent is working and the box is empty,
- * the button stops its current turn; the session stays open for your next message.
+ * The message box for one agent session. It is the shared `Composer` with what a task adds: the
+ * branch the session works on, the states of a run, and stop for the run the task is on.
  */
 export function ChatBox({
   taskId,
@@ -33,64 +32,23 @@ export function ChatBox({
   color: string;
   branch: string | null;
 }) {
-  const toast = useToast();
-  const [draft, setDraft] = useState('');
-  const [busy, setBusy] = useState(false);
-  const ref = useRef<HTMLTextAreaElement>(null);
-
-  useEffect(() => {
-    if (waiting) ref.current?.focus();
-  }, [waiting]);
-
-  const send = async () => {
-    const text = draft.trim();
-    if (!text || busy) return;
-    setBusy(true);
-    setDraft('');
-    try {
-      await api.message(taskId, { text, mode: 'chat', runId });
-    } catch (err) {
-      setDraft(text);
-      toast(errorMessage(err), { error: true });
-    } finally {
-      setBusy(false);
-    }
-  };
-  const stop = async () => {
-    setBusy(true);
-    try {
-      await api.interrupt(taskId);
-      ref.current?.focus();
-    } catch (err) {
-      toast(errorMessage(err), { error: true });
-    } finally {
-      setBusy(false);
-    }
-  };
-  const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-      e.preventDefault();
-      void send();
-    }
-  };
-
-  const hasText = !!draft.trim();
-  const showStop = working && canStop && !hasText;
   const placeholder = waiting ? `Reply to ${who}…` : working ? `Message ${who}. It reads this after its current action.` : reopened ? 'Ask about this session. The task doesn’t move.' : `Message ${who}…`;
   const status = working ? 'working' : waiting ? 'waiting for you' : reopened ? 'reopened; doesn’t move the task' : '';
 
   return (
-    <div className="ox-composer">
-      <textarea ref={ref} aria-label={placeholder} placeholder={placeholder} value={draft} rows={Math.min(8, Math.max(2, draft.split('\n').length))} onChange={(e) => setDraft(e.target.value)} onKeyDown={onKey} />
-      <div className="ox-cfoot">
-        <span className="ox-cctx">
-          <span className="lx-av ox-av" style={{ background: color, width: 14, height: 14, fontSize: 8.5 }}>
-            {av}
-          </span>
-          {who}
-        </span>
-        {branch && (
-          <span className="ox-cctx" title="The branch this session works on">
+    <Composer
+      to={{ kind: 'task', taskId }}
+      who={who}
+      av={av}
+      color={color}
+      placeholder={placeholder}
+      status={status}
+      working={working}
+      canStop={canStop}
+      focusWhen={waiting}
+      context={
+        branch ? (
+          <span className="ox-cctx ox-cbranch" title="The branch this session works on">
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <circle cx="6" cy="5" r="2.5" />
               <circle cx="6" cy="19" r="2.5" />
@@ -99,22 +57,10 @@ export function ChatBox({
             </svg>
             {branch}
           </span>
-        )}
-        <span>{status}</span>
-        {showStop ? (
-          <button className="ox-send ox-stopbtn" aria-label={`Stop ${who}`} title={`Stop ${who}’s current turn`} onClick={() => void stop()} disabled={busy}>
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-              <path d="M6 6h12v12H6z" />
-            </svg>
-          </button>
-        ) : (
-          <button className="ox-send" aria-label="Send" onClick={() => void send()} disabled={!hasText || busy}>
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M12 19V5M5 12l7-7 7 7" />
-            </svg>
-          </button>
-        )}
-      </div>
-    </div>
+        ) : null
+      }
+      onSend={(text: string, files: ChatFile[]) => api.message(taskId, { text, mode: 'chat', runId, files: files.length ? files : undefined }).then(() => undefined)}
+      onStop={() => api.interrupt(taskId).then(() => undefined)}
+    />
   );
 }

@@ -74,6 +74,18 @@ What a run did, written when it ends: **Did · Decided · Left · Avoid**. It is
 ### Note
 Something you write **on a step that hasn't run yet**, for its next run to read ("also run the e2e suite"). A note is never sent to a running agent. To talk to a running agent, chat with its session.
 
+### Attachment
+A file **you** add to a chat message: a screenshot you paste, a log you drop, a PDF you pick. It works the same in a task's chat and in the chief of staff's chat. Orstra writes the file into the folder that chat's agent works in, and puts its path at the end of your message, so the agent can open it.
+
+| Chat | Folder | Kept out of git by |
+|---|---|---|
+| A task's session | `<worktree>/.orstra/attachments/<id>/` | the repository's own exclude file, never your `.gitignore` |
+| Chief of staff | `~/.orstra/cos/attachments/<id>/` | no git there at all |
+
+The caps are 10 MB per file and 25 MB per message; over them, Orstra tells you and attaches nothing.
+
+An attachment is a file **you** add. A file a **step** produces is an **artifact** (not built yet). One root, 2 folders: `.orstra/attachments/` and `.orstra/artifacts/`.
+
 ### Decision
 Your answer at a `human` step. You see what you're deciding (e.g. the spec, the agent's assumptions and open questions) and what each choice leads to. Each choice is an arrow.
 
@@ -99,6 +111,7 @@ How many runs can work at the same time on this machine (default 4). Agent and g
 **One ongoing conversation with an agent that sees every task.** It briefs you, answers questions about any task, and acts for you through Orstra: it messages a task's agent, leaves notes, starts, retries or stops tasks, answers decisions, and **watches** tasks to follow up later ("retry HUB-405 when HUB-432 is done").
 
 - It is Claude Code with Orstra's tools **and** its own: Bash, Read, Edit, Write, the web tools, and whatever else Claude Code gives your machine. So it can read a file, change a file and run a command itself. Nothing limits it: no tool list, no path check, no permission question. Its working folders are `~/.orstra` (the database, the workflow files, every task worktree) and the Orstra checkout, and those are where it works, not a fence. It can reach any path you can.
+- It opens a file you **attach** to a message the same way, by the path Orstra puts at the end of your message. That folder, `~/.orstra/cos/attachments/`, is inside its workspace.
 - **Orstra, not the model, decides what needs your OK** for Orstra's own actions. Actions that need it become a **plan**: a card with Do it / Not now. Messaging agents is allowed by default; starting and retrying tasks asks by default; decisions and stopping always ask.
 - **A file or a command of its own has no plan card and no review step.** Work on a task still belongs to the task's agent: only then does the change land on the task's branch and go through the workflow. Ask it for a small fix or a quick look; ask a task for the work.
 - Everything it does through Orstra's tools is recorded on the task, marked as done by your chief of staff. Its own files and commands show in the conversation only.
@@ -127,3 +140,4 @@ How many runs can work at the same time on this machine (default 4). Agent and g
 | "Steer" | Chat / message | It's just talking to the live session |
 | "Job", "pipeline", "execution" | Run / workflow | One word per concept |
 | "Board" as a separate place | Tasks (board view) | It's a view of tasks, not its own thing |
+| "Attachment" for a file a step makes | Artifact | You add an attachment; a step produces an artifact |
