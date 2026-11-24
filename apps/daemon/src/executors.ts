@@ -3,6 +3,7 @@ import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { loadAgentConfig, type AgentSettings } from './agentConfig.ts';
 import { PORT, TSX } from './paths.ts';
+import { codexSession } from './codex.ts';
 
 /** Something the run streamed: agent text, a tool call, or a line of command output. */
 export type StreamEvent =
@@ -49,6 +50,8 @@ export interface SessionOptions {
   toolArgs?: string[];
   /** The Orstra run this session works for. With it, permission questions go to the Inbox. */
   runId?: string;
+  /** Codex picks its own session id; this reports it so the runner can resume that session. */
+  onSessionId?: (id: string) => void;
   onEvent: (e: StreamEvent) => void;
   onTurn: (t: TurnEnd) => void;
 }
@@ -76,7 +79,7 @@ export interface GateRequest {
 export interface Executors {
   session(kind: 'claude-code' | 'codex', opts: SessionOptions): LiveSession;
   gate(req: GateRequest): Promise<{ pass: boolean; output: string }>;
-  ask(sessionId: string, cwd: string, question: string): Promise<string>;
+  ask(sessionId: string, cwd: string, question: string, agent?: 'claude-code' | 'codex'): Promise<string>;
 }
 
 export function summarizeTool(name: string, input: Record<string, unknown>): string {
@@ -191,14 +194,10 @@ function runShell(command: string, cwd: string, onLine: (l: string) => void, sig
   });
 }
 
-/** A session that fails immediately, for agents we can't run yet. */
-function unsupported(message: string): LiveSession {
-  return { send() {}, interrupt() {}, end() {}, kill() {}, closed: Promise.resolve({ ok: false, error: message }) };
-}
 
 export const realExecutors: Executors = {
   session(kind, opts) {
-    if (kind === 'codex') return unsupported('The Codex runner is not built yet. Use agent: claude-code for now.');
+    if (kind === 'codex') return codexSession(opts, loadAgentConfig().codex);
     return claudeSession(opts);
   },
 
@@ -214,7 +213,8 @@ export const realExecutors: Executors = {
   },
 
   /** Answers from a fork of the session, so the original is untouched. */
-  ask(sessionId, cwd, question) {
+  ask(sessionId, cwd, question, agent) {
+    if (agent === 'codex') return Promise.resolve('Ask on the side works with Claude Code sessions only. Message the Codex session in Chat instead.');
     return new Promise((resolve) => {
       const child = spawn(process.env.ORSTRA_CLAUDE_BIN ?? 'claude', ['-p', question, '--resume', sessionId, '--fork-session', '--output-format', 'json'], { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
       let out = '';

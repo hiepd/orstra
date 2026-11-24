@@ -98,8 +98,8 @@ export function makeViews(store: Store, runner: Runner) {
     progress: r.progress ? (JSON.parse(r.progress) as Progress) : null, output: r.output,
     createdAt: r.created_at, startedAt: r.started_at, endedAt: r.ended_at,
     costUsd: r.cost_usd, tokensIn: r.tokens_in, tokensOut: r.tokens_out,
-    openCommand: r.session_id && task.worktree ? `cd ${task.worktree} && claude --resume ${r.session_id}` : null,
-    forkCommand: r.session_id && task.worktree ? `cd ${task.worktree} && claude --resume ${r.session_id} --fork-session` : null,
+    openCommand: r.session_id && task.worktree ? (r.agent === 'codex' ? `cd ${task.worktree} && codex resume ${r.session_id}` : `cd ${task.worktree} && claude --resume ${r.session_id}`) : null,
+    forkCommand: r.session_id && task.worktree ? (r.agent === 'codex' ? `cd ${task.worktree} && codex fork ${r.session_id}` : `cd ${task.worktree} && claude --resume ${r.session_id} --fork-session`) : null,
     live: runner.isLive(r.id),
   });
 

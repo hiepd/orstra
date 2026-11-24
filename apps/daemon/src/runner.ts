@@ -340,6 +340,9 @@ export class Runner extends EventEmitter {
     const live: Live = { session: null as unknown as LiveSession, routes: opts.routes, humanSpoke: false, sendSeq: 0, finished: false, nudged: false, baseCost: this.store.run(run.id)?.cost_usd ?? 0 };
     live.session = this.exec.session((run.agent as 'claude-code' | 'codex') ?? 'claude-code', {
       cwd: task.worktree ?? process.cwd(), sessionId: opts.sessionId, resume: opts.resume, model: opts.model, runId: run.id,
+      onSessionId: (sid) => {
+        if (this.store.run(run.id)?.session_id !== sid) this.store.updateRun(run.id, { session_id: sid });
+      },
       onEvent, onTurn: (t) => this.onTurn(task.id, run.id, t),
     });
     this.live.set(run.id, live);
@@ -724,7 +727,7 @@ export class Runner extends EventEmitter {
     if (mode === 'ask') {
       this.event(taskId, target?.id ?? null, 'you', { mode: 'ask', ...said });
       if (!target?.session_id) return this.event(taskId, null, 'aside', { text: 'There is no agent session to ask yet.' });
-      const answer = await this.exec.ask(target.session_id, task.worktree ?? process.cwd(), body);
+      const answer = await this.exec.ask(target.session_id, task.worktree ?? process.cwd(), body, (target.agent as 'claude-code' | 'codex' | null) ?? 'claude-code');
       return this.event(taskId, target.id, 'aside', { text: answer });
     }
 
