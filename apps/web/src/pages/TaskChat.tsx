@@ -1,14 +1,17 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { GitView, RunView, TaskDetail } from '../api';
 import { ChatBox } from '../components/ChatBox';
 import { useAutoScroll } from '../lib/autoScroll';
-import { GitPanel } from '../components/GitPanel';
 import { PanelIcon } from '../components/Icons';
 import { Transcript } from '../components/Transcript';
+import { Viewer } from '../components/viewer/Viewer';
+import { openInViewer, useViewer } from '../components/viewer/useViewer';
+import { IC } from '../components/viewer/tabs';
+import { refTab, type Ref } from '../lib/refs';
 import { agentOf, humanize } from '../lib/format';
 import type { Resource } from '../lib/live';
 import { remember, store } from '../lib/remember';
-import { href } from '../lib/router';
+import { href, navigate } from '../lib/router';
 import { taskState } from '../lib/taskState';
 import { clock, duration } from '../lib/time';
 
@@ -26,9 +29,14 @@ export function defaultSession(task: TaskDetail): RunView | undefined {
   return all.find((r) => r.id === task.workingRunId) ?? all.find((r) => r.id === task.awaiting?.runId) ?? all[0];
 }
 
+/** The viewer's shortcuts: ⇧⌘D, ⇧⌘B, ⇧⌘F, then ⌘J and ⌘; (no Shift). */
+const SHIFT_KEYS: Record<string, string> = { d: 'changes', b: 'browser', f: 'files' };
+const PLAIN_KEYS: Record<string, string> = { j: 'terminal', ';': 'side' };
+
 /**
  * The agent view of a task: its sessions on the left (you can collapse them), the chat with the
- * selected one in the middle, and the worktree (branch, PR, changes, checks, commits) on the right.
+ * selected one in the middle, and the side viewer on the right: Changes, files, links, artifacts,
+ * a browser, a terminal and a side chat, in tabs.
  */
 export function TaskChat({ task, runId, git, openPath, onOpenPath, embedded }: { task: TaskDetail; runId?: string; git: Resource<GitView>; openPath: string | null; onOpenPath: (p: string | null) => void; embedded?: boolean }) {
   const sessions = sessionsOf(task);
@@ -37,6 +45,40 @@ export function TaskChat({ task, runId, git, openPath, onOpenPath, embedded }: {
   const [sessionsOpen, setSessionsOpen] = useState(() => remember(SESSIONS_KEY, 'open') === 'open');
   const events = run ? task.events.filter((e) => e.runId === run.id) : [];
   const scroll = useAutoScroll<HTMLDivElement>(`${run?.id}:${events.length}`);
+  const [viewer, dispatch] = useViewer(task.id);
+  const showViewer = !embedded && viewer.open;
+  const expanded = showViewer && viewer.expanded;
+
+  const onOpenRef = useCallback(
+    (r: Ref) => {
+      if (embedded) {
+        openInViewer(task.id, refTab(r));
+        navigate(href.chat(task.id, run?.id));
+      } else dispatch({ type: 'open', tab: refTab(r) });
+    },
+    [embedded, task.id, run?.id, dispatch],
+  );
+
+  useEffect(() => {
+    if (embedded) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
+      const key = e.key.toLowerCase();
+      if (key === '\\') {
+        e.preventDefault();
+        dispatch({ type: 'toggleExpand' });
+        return;
+      }
+      const el = e.target as HTMLElement | null;
+      if (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) && !el.closest('.xterm')) return;
+      const tab = e.shiftKey ? SHIFT_KEYS[key] : PLAIN_KEYS[key];
+      if (!tab) return;
+      e.preventDefault();
+      dispatch({ type: 'open', tab });
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [embedded, dispatch]);
 
   const toggleSessions = () => {
     const next = !sessionsOpen;
@@ -52,7 +94,7 @@ export function TaskChat({ task, runId, git, openPath, onOpenPath, embedded }: {
 
   return (
     <div className="ox-chatv">
-      {sessionsOpen && !embedded && (
+      {sessionsOpen && !embedded && !expanded && (
         <nav className="ox-sess" aria-label="Sessions">
           <div className="ox-sessh">
             Sessions
@@ -81,7 +123,21 @@ export function TaskChat({ task, runId, git, openPath, onOpenPath, embedded }: {
         </nav>
       )}
 
-      <section className={`ox-chat${sessionsOpen ? '' : ' ox-chatx'}`} aria-label="Chat">
+      <section className={`ox-chat${sessionsOpen ? '' : ' ox-chatx'}`} aria-label="Chat" hidden={expanded}>
+        {!embedded && (
+          <button
+            type="button"
+            className="lx-ib ox-vwt"
+            aria-pressed={viewer.open}
+            aria-label={viewer.open ? 'Hide the viewer' : 'Show the viewer'}
+            title={viewer.open ? 'Hide the viewer' : 'Show the viewer'}
+            onClick={() => dispatch({ type: 'toggleOpen' })}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d={IC.viewer} />
+            </svg>
+          </button>
+        )}
         {!sessionsOpen && (
           <button className="lx-ib ox-sessx" aria-expanded={false} aria-label="Expand the sessions" title="Sessions" onClick={toggleSessions}>
             <PanelIcon size={15} />
@@ -99,7 +155,7 @@ export function TaskChat({ task, runId, git, openPath, onOpenPath, embedded }: {
                     <div className="ox-sline">
                       {a.name} · {runName(task, run)} · started {run.startedAt ? clock(run.startedAt) : 'not yet'} · session {run.sessionId?.slice(0, 8)}
                     </div>
-                    <Transcript run={run} events={events} working={s.working} agentName={a.name} />
+                    <Transcript run={run} events={events} working={s.working} agentName={a.name} onOpenRef={onOpenRef} hideAsides={!embedded} worktree={task.worktree} />
                   </div>
                 </div>
                 <div className="ox-compwrap">
@@ -142,7 +198,7 @@ export function TaskChat({ task, runId, git, openPath, onOpenPath, embedded }: {
         )}
       </section>
 
-      {!embedded && <GitPanel task={task} git={git} openPath={openPath} onOpenPath={onOpenPath} />}
+      {showViewer && <Viewer task={task} git={git} state={viewer} dispatch={dispatch} runId={run?.id} openPath={openPath} onOpenPath={onOpenPath} />}
     </div>
   );
 }

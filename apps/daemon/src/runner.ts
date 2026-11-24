@@ -641,6 +641,7 @@ export class Runner extends EventEmitter {
           cwd, input: step.with ?? {},
           task: { title: task.title, ref: task.ref, description: task.description },
           progress: this.progressText(task, wf),
+          beforeRemove: () => this.emit('cleanup', task.id),
         });
         this.store.updateRun(run.id, { output: res.text });
         if (res.prUrl) this.store.updateTask(task.id, { pr_url: res.prUrl });
@@ -825,7 +826,8 @@ export class Runner extends EventEmitter {
     const task = this.store.task(taskId);
     if (!task) throw new Error('No such task.');
     if (task.status === 'running' || task.status === 'needs_you') throw new Error('Stop the task or let it finish before you clean it up.');
-    const res = cleanupWorktree(task.worktree, opts);
+    // The side viewer's shells and dev server work in the worktree: they stop just before it goes (server.ts listens).
+    const res = cleanupWorktree(task.worktree, { ...opts, beforeRemove: () => this.emit('cleanup', taskId) });
     if (res.outcome === 'refused') throw new Error(res.text);
     this.store.updateTask(taskId, { archived_at: Date.now() });
     this.event(taskId, null, 'system', { text: `${res.text} Archived the task.` });

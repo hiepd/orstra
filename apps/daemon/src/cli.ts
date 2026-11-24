@@ -68,7 +68,15 @@ async function main() {
       // Triggers: Linear issues with a label, and schedules. Checked every ORSTRA_TRIGGER_INTERVAL_S (60) seconds.
       const { Triggers, linearClient } = await import('./triggers.ts');
       const triggers = new Triggers(store, runner, { linear: process.env.LINEAR_API_KEY ? linearClient(process.env.LINEAR_API_KEY) : null });
-      startServer(store, runner, PORT, cos, triggers);
+      // The side viewer's shells and dev servers. They end with the daemon: nothing outlives what started it.
+      const { Terminals } = await import('./terminals.ts');
+      const { DevServers } = await import('./devServers.ts');
+      const terminals = new Terminals();
+      const devServers = new DevServers();
+      const stopChildren = () => (terminals.closeAll(), devServers.stopAll());
+      process.on('exit', stopChildren);
+      for (const sig of ['SIGINT', 'SIGTERM'] as const) process.on(sig, () => { stopChildren(); process.exit(0); });
+      startServer(store, runner, PORT, cos, triggers, { terminals, devServers });
       triggers.start(Number(process.env.ORSTRA_TRIGGER_INTERVAL_S ?? 60) * 1000);
       cos.start();
       console.log(`Orstra is running at http://localhost:${PORT}  (data: ${DB_PATH})`);

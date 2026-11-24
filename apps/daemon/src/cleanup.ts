@@ -16,10 +16,14 @@ export interface CleanupResult {
  *   commits (`git branch -d`). Otherwise the branch stays, so its commits stay.
  * - A scratch repository (a task with no repo) holds the only copy of the work, so it needs `force`.
  */
-export function cleanupWorktree(worktree: string | null, opts: { force?: boolean } = {}): CleanupResult {
+export function cleanupWorktree(worktree: string | null, opts: { force?: boolean; beforeRemove?: () => void } = {}): CleanupResult {
+  // The side viewer's shells and dev server work in the worktree. They stop here, after every check
+  // that can refuse, so a refused cleanup leaves them running.
+  const goes = () => opts.beforeRemove?.();
   if (!worktree || !existsSync(worktree)) return { outcome: 'removed', text: 'The worktree is already gone.' };
   if (!git(worktree, ['rev-parse', '--git-dir']).ok) {
     if (!opts.force) return { outcome: 'refused', text: `${worktree} is not a git repository. Clean up with force to delete the folder.` };
+    goes();
     rmSync(worktree, { recursive: true, force: true });
     return { outcome: 'removed', text: `Deleted ${worktree}.` };
   }
@@ -36,6 +40,7 @@ export function cleanupWorktree(worktree: string | null, opts: { force?: boolean
     if (hasWork && !opts.force) {
       return { outcome: 'refused', text: `This task has its own scratch repository at ${worktree}. It holds the only copy of the work. Clean up with force to delete it.` };
     }
+    goes();
     rmSync(worktree, { recursive: true, force: true });
     return { outcome: 'removed', text: `Deleted the scratch repository at ${worktree}.` };
   }
@@ -44,6 +49,7 @@ export function cleanupWorktree(worktree: string | null, opts: { force?: boolean
     return { outcome: 'refused', text: `The worktree has ${dirty} uncommitted ${dirty === 1 ? 'change' : 'changes'}. Commit them, or clean up with force to throw them away.` };
   }
   const branch = git(worktree, ['symbolic-ref', '--short', '-q', 'HEAD']);
+  goes();
   const removed = git(main.path!, ['worktree', 'remove', ...(opts.force ? ['--force'] : []), worktree]);
   if (!removed.ok) return { outcome: 'refused', text: `git did not remove the worktree. Nothing changed.\n${removed.out.split('\n').slice(0, 4).join('\n')}` };
 

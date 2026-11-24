@@ -12,6 +12,8 @@ export interface ActionContext {
   task?: { title: string; ref: string | null; description: string };
   /** The task's progress entries, one line per run. */
   progress?: string;
+  /** Called just before git.cleanup removes the worktree (the runner stops the task's shells there). */
+  beforeRemove?: () => void;
 }
 
 export interface ActionResult {
@@ -69,8 +71,8 @@ export const ACTIONS: Record<ActionName, (ctx: ActionContext) => ActionResult> =
    * Remove the task's worktree, and its branch when it is merged. Put it last: steps after it have no
    * worktree. `with: { force: true }` also throws away uncommitted work. Outcomes: ok, refused.
    */
-  'git.cleanup': ({ cwd, input }) => {
-    const res = cleanupWorktree(cwd, { force: input.force === true });
+  'git.cleanup': ({ cwd, input, beforeRemove }) => {
+    const res = cleanupWorktree(cwd, { force: input.force === true, beforeRemove });
     return { outcome: res.outcome === 'removed' ? 'ok' : 'refused', text: res.text };
   },
 };

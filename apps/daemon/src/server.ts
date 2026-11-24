@@ -9,6 +9,19 @@ import type { Runner } from './runner.ts';
 import type { ChiefOfStaff } from './cos.ts';
 import type { Triggers } from './triggers.ts';
 import { gitDiff, gitInfo } from './git.ts';
+import { listFiles, readWorktreeFile } from './files.ts';
+import { linkInfo } from './linkInfo.ts';
+import { Terminals } from './terminals.ts';
+import { DevServers } from './devServers.ts';
+
+/** The shells and dev servers the side viewer runs. Tests pass their own. */
+export interface ServerExtras {
+  terminals?: Terminals;
+  devServers?: DevServers;
+}
+
+/** The largest body of keys the terminal takes in one POST. */
+const MAX_INPUT_BODY = 64 * 1024;
 import { listWorkflows, resolveWorkflow } from './workflows.ts';
 export { listWorkflows, resolveWorkflow };
 import { AGENT_IDS, EFFORTS, PERMISSION_MODES, loadAgentConfig, saveAgentSettings, type AgentId } from './agentConfig.ts';
@@ -28,10 +41,15 @@ function send(res: ServerResponse, code: number, body: unknown) {
 function sendAttachment(res: ServerResponse, store: AttachStore | null, path: string): boolean {
   const hit = store ? readAttachment(store, path) : null;
   if (!hit) return send(res, 404, { error: 'No such file' }), true;
+  return sendBytes(res, hit);
+}
+
+/** Bytes from outside Orstra (an attachment, a worktree file), sent so that they can never run. */
+function sendBytes(res: ServerResponse, hit: { body: Buffer; mime: string; name: string }, cache = 'private, max-age=86400'): boolean {
   res.writeHead(200, {
     'content-type': hit.mime, 'content-length': hit.body.length,
-    'content-disposition': `inline; filename="${hit.name}"`,
-    'cache-control': 'private, max-age=86400',
+    'content-disposition': `inline; filename*=UTF-8''${encodeURIComponent(hit.name)}`,
+    'cache-control': cache,
     // The bytes came from outside Orstra: never sniff them, never let an SVG run anything.
     'x-content-type-options': 'nosniff', 'content-security-policy': "default-src 'none'; sandbox",
   });
@@ -197,7 +215,9 @@ const path = taskPath(wf, runs.map((r) => r.stepId), t.current_step);
 
 export type Views = ReturnType<typeof makeViews>;
 
-export function buildApi(store: Store, runner: Runner, cos?: ChiefOfStaff, triggers?: Triggers) {
+export function buildApi(store: Store, runner: Runner, cos?: ChiefOfStaff, triggers?: Triggers, extras: ServerExtras = {}) {
+  const terminals = extras.terminals ?? new Terminals();
+  const devServers = extras.devServers ?? new DevServers();
   const { runView, taskSummary, taskDetail, gitView } = makeViews(store, runner);
   const sessions = () => {
     const since = Date.now() - 24 * 3600_000;
@@ -313,6 +333,57 @@ export function buildApi(store: Store, runner: Runner, cos?: ChiefOfStaff, trigg
         const d = t?.worktree ? gitDiff(t.worktree, url.searchParams.get('path') ?? '') : null;
         return send(res, d ? 200 : 404, d ?? { error: 'No diff for that file' }), true;
       }
+      // The side viewer: the worktree's files, and one file's bytes.
+      if ((mm = m(/^\/api\/tasks\/([\w-]+)\/files$/)) && req.method === 'GET') {
+        const t = store.task(mm[1]);
+        if (!t?.worktree || !existsSync(t.worktree)) return send(res, 404, { error: 'This task has no worktree now.' }), true;
+        return send(res, 200, listFiles(t.worktree)), true;
+      }
+      if ((mm = m(/^\/api\/tasks\/([\w-]+)\/file$/)) && req.method === 'GET') {
+        const t = store.task(mm[1]);
+        const hit = t?.worktree ? readWorktreeFile(t.worktree, url.searchParams.get('path') ?? '') : null;
+        if (!hit) return send(res, 404, { error: 'No such file in the worktree' }), true;
+        // The agent may change the file at any time, so the browser asks again each time.
+        return sendBytes(res, hit, 'no-store');
+      }
+      // Terminals: a shell in the task's worktree. Output streams from /stream (in startServer).
+      if ((mm = m(/^\/api\/tasks\/([\w-]+)\/terminals$/))) {
+        const t = store.task(mm[1]);
+        if (!t) return send(res, 404, { error: 'No such task' }), true;
+        if (req.method === 'GET') return send(res, 200, terminals.list(t.id)), true;
+        if (req.method === 'POST') {
+          if (!t.worktree || !existsSync(t.worktree)) return send(res, 400, { error: 'This task has no worktree yet.' }), true;
+          try {
+            return send(res, 201, await terminals.open(t.id, t.worktree)), true;
+          } catch (err: any) {
+            return send(res, 503, { error: err?.message ?? String(err) }), true;
+          }
+        }
+      }
+      if ((mm = m(/^\/api\/terminals\/([\w-]+)\/(input|resize|close)$/)) && req.method === 'POST') {
+        if (!terminals.get(mm[1])) return req.resume(), send(res, 404, { error: 'No such terminal' }), true;
+        if (Number(req.headers['content-length'] ?? 0) > MAX_INPUT_BODY) return req.resume(), send(res, 413, { error: 'Too much input at once.' }), true;
+        const b = await readJson(req);
+        if (mm[2] === 'input' && typeof b.data === 'string') terminals.write(mm[1], b.data);
+        if (mm[2] === 'resize') terminals.resize(mm[1], Number(b.cols), Number(b.rows));
+        if (mm[2] === 'close') terminals.close(mm[1]);
+        return send(res, 200, { ok: true }), true;
+      }
+      // The task's dev server, for the Browser panel.
+      if ((mm = m(/^\/api\/tasks\/([\w-]+)\/devserver(?:\/(start|stop))?$/))) {
+        const t = store.task(mm[1]);
+        if (!t) return send(res, 404, { error: 'No such task' }), true;
+        if (req.method === 'GET' && !mm[2]) return send(res, 200, devServers.status(t.id, t.worktree)), true;
+        if (req.method === 'POST' && mm[2] === 'stop') return await devServers.stop(t.id), send(res, 200, devServers.status(t.id, t.worktree)), true;
+        if (req.method === 'POST' && mm[2] === 'start') {
+          if (!t.worktree || !existsSync(t.worktree)) return send(res, 400, { error: 'This task has no worktree yet.' }), true;
+          const b = await readJson(req);
+          const command = (typeof b.command === 'string' && b.command.trim()) || devServers.status(t.id, t.worktree).suggested;
+          if (!command) return send(res, 400, { error: 'Say which command starts the dev server. The worktree has no dev or start script.' }), true;
+          return send(res, 200, await devServers.start(t.id, t.worktree, command)), true;
+        }
+      }
+      if (req.method === 'GET' && p === '/api/link-info') return send(res, 200, await linkInfo(url.searchParams.get('url') ?? '')), true;
       if ((mm = m(/^\/api\/workflows\/([^/]+)$/)) && req.method === 'PUT') {
         const file = decodeURIComponent(mm[1]);
         const hit = listWorkflows().find((w) => w.file === file);
@@ -390,8 +461,10 @@ export function buildApi(store: Store, runner: Runner, cos?: ChiefOfStaff, trigg
   };
 }
 
-export function startServer(store: Store, runner: Runner, port: number, cos?: ChiefOfStaff, triggers?: Triggers) {
-  const api = buildApi(store, runner, cos, triggers);
+export function startServer(store: Store, runner: Runner, port: number, cos?: ChiefOfStaff, triggers?: Triggers, extras: ServerExtras = {}) {
+  const terminals = extras.terminals ?? new Terminals();
+  const devServers = extras.devServers ?? new DevServers();
+  const api = buildApi(store, runner, cos, triggers, { ...extras, terminals, devServers });
   const clients = new Set<ServerResponse>();
   const broadcast = (e: unknown) => {
     const line = `data: ${JSON.stringify(e)}\n\n`;
@@ -412,6 +485,12 @@ export function startServer(store: Store, runner: Runner, port: number, cos?: Ch
     }, 100);
   });
   cos?.on('change', broadcast);
+  devServers.on('change', (taskId: string) => broadcast({ taskId }));
+  runner.on('cleanup', (taskId: string) => {
+    terminals.closeTask(taskId);
+    // The worktree goes right after this: no grace period, so nothing writes into it again.
+    devServers.kill(taskId);
+  });
 
   // The port the server really has (port 0 in tests means "any free one").
   let guard = guardOptionsFromEnv(port);
@@ -429,6 +508,24 @@ export function startServer(store: Store, runner: Runner, port: number, cos?: Ch
       res.write(': connected\n\n');
       clients.add(res);
       req.on('close', () => clients.delete(res));
+      return;
+    }
+    // One terminal's output: what it kept, then each new chunk, as JSON events.
+    const tm = req.method === 'GET' ? /^\/api\/terminals\/([\w-]+)\/stream$/.exec(req.url ?? '') : null;
+    if (tm) {
+      const term = terminals.get(tm[1]);
+      if (!term) return send(res, 404, { error: 'No such terminal' });
+      res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
+      const out = (e: unknown) => res.write(`data: ${JSON.stringify(e)}\n\n`);
+      out({ type: 'data', data: term.scrollback });
+      const onData = (id: string, data: string) => id === term.id && out({ type: 'data', data });
+      const onExit = (id: string, code: number) => id === term.id && (out({ type: 'exit', code }), res.end());
+      terminals.on('data', onData);
+      terminals.on('exit', onExit);
+      req.on('close', () => {
+        terminals.off('data', onData);
+        terminals.off('exit', onExit);
+      });
       return;
     }
     if (await api(req, res)) return;
