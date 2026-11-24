@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Store } from '../src/db.ts';
 import { NUDGE, Runner } from '../src/runner.ts';
 import type { Executors, LiveSession, SessionOptions, TurnUsage } from '../src/executors.ts';
@@ -475,5 +476,21 @@ steps:
     const task = runner.startTask({ workflowPath: wfPath, title: 'x' });
     await runner.idle();
     expect(store.runsForTask(task.id)[0].outcome).toBe('cant_do');
+  });
+
+  it('runs the Simple workflow Orstra ships: waits in Todo, works, then waits in Done', async () => {
+    const simple = readFileSync(fileURLToPath(new URL('../../../workflows/simple.yaml', import.meta.url)), 'utf8');
+    const { store, runner, wfPath, prompts } = setup(simple, () => done('did it'));
+    const task = runner.startTask({ workflowPath: wfPath, title: 'Rename the menu' });
+    await runner.idle();
+    expect(store.task(task.id)).toMatchObject({ status: 'needs_you', inbox_reason: 'decision', current_step: 'todo' });
+    expect(prompts()).toHaveLength(0);
+    runner.decide(store.runsForTask(task.id)[0].id, 'start');
+    await runner.idle();
+    expect(prompts()[0]).toContain('Rename the menu');
+    expect(store.task(task.id)).toMatchObject({ status: 'needs_you', current_step: 'done' });
+    const doneRun = store.runsForTask(task.id).find((r) => r.step_id === 'done')!;
+    runner.decide(doneRun.id, 'close');
+    expect(store.task(task.id)!.status).toBe('done');
   });
 });

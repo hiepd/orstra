@@ -104,7 +104,7 @@ Your answer at a `human` step. You see what you're deciding (e.g. the spec, the 
 The task's own working copy: `git worktree` on branch `orstra/<task>`. All of a task's runs work in it, one after another.
 
 ### Merge
-The `git.merge` action. In the Simple workflow it runs as soon as you approve the work: it merges the task's branch into the branch the repository has checked out.
+The `git.merge` action. Put it in a workflow where the work should land: it merges the task's branch into the branch the repository has checked out. The Simple workflow merges nothing; its work stays on the task's branch.
 
 - Local only. It never pushes, and it never forces a merge.
 - It does nothing when the task branch has no new commit, or when the task has its own scratch repository (a task started without a repo).

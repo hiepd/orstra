@@ -14,7 +14,7 @@ Mock (all screens): https://claude.ai/artifact/6ekxsGvdsWrBfEEoyyv3Ce
 ## Non-goals (for now)
 
 - Running in the cloud or for a whole team.
-- Merging without a human. A merge or a pull request comes only after a `human` step that you answer. The Simple workflow merges locally as soon as you approve; a workflow can open a draft pull request (`github.pr`) instead.
+- Merging without a human. A merge or a pull request comes only after a `human` step that you answer. The Simple workflow (Todo, In progress, Done) merges nothing; a workflow can merge locally (`git.merge`) or open a draft pull request (`github.pr`) after your decision.
 - Its own coding agent. Orstra orchestrates existing CLIs.
 
 ## Concepts
