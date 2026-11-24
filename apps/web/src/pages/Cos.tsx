@@ -423,7 +423,8 @@ function Side({ view }: { view: CosView }) {
 /** One ongoing conversation with an agent that sees every task and acts on them through Orstra. */
 export function CosPage() {
   const res = useLiveResource('cos', api.cos, (id) => id === 'cos');
-  const tasks = useLiveResource('cos:tasks', api.tasks);
+  // The side list of tasks. It needs no more than a refetch a second, even while an agent streams.
+  const tasks = useLiveResource('cos:tasks', api.tasks, undefined, 1000);
   const view = res.data;
   const scroll = useAutoScroll<HTMLDivElement>(`${view?.events.length ?? 0}:${view?.working}`);
   return (

@@ -43,7 +43,8 @@ function StatusText({ t }: { t: TaskSummary }) {
 export function TasksPage({ onNewTask, inbox, sel, selView }: { onNewTask: () => void; inbox: boolean; sel?: string; selView?: TaskViewName }) {
   useNow(30_000);
   const [archived, setArchived] = useState(false);
-  const res = useLiveResource(archived ? 'tasks:archived' : 'tasks', archived ? api.archivedTasks : api.tasks);
+  // A list of cards: one refetch a second is plenty, whatever the open agent streams.
+  const res = useLiveResource(archived ? 'tasks:archived' : 'tasks', archived ? api.archivedTasks : api.tasks, undefined, 1000);
   const [view, setView] = useState<View>(() => remember<View>('orstra.tasks.view', 'board'));
   const [filter, setFilter] = useState<Filter>('all');
   const [wfFile, setWfFile] = useState<string | null>(null);

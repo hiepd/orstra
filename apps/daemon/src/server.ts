@@ -19,6 +19,8 @@ import { DevServers } from './devServers.ts';
 export interface ServerExtras {
   terminals?: Terminals;
   devServers?: DevServers;
+  /** How often the event stream beats. A test shortens it; see HEARTBEAT_MS. */
+  heartbeatMs?: number;
 }
 
 /** The largest body of keys the terminal takes in one POST. */
@@ -477,15 +479,34 @@ export function buildApi(store: Store, runner: Runner, cos?: ChiefOfStaff, trigg
   };
 }
 
+/** How often the event stream sends a beat when nothing changes. */
+export const HEARTBEAT_MS = 15_000;
+
 export function startServer(store: Store, runner: Runner, port: number, cos?: ChiefOfStaff, triggers?: Triggers, extras: ServerExtras = {}) {
   const terminals = extras.terminals ?? new Terminals();
   const devServers = extras.devServers ?? new DevServers();
   const api = buildApi(store, runner, cos, triggers, { ...extras, terminals, devServers });
   const clients = new Set<ServerResponse>();
-  const broadcast = (e: unknown) => {
-    const line = `data: ${JSON.stringify(e)}\n\n`;
-    for (const c of clients) c.write(line);
+  /** Writes one block to every open stream and drops the streams that went away. */
+  const write = (block: string) => {
+    for (const c of clients) {
+      if (c.writableEnded || c.destroyed) {
+        clients.delete(c);
+        continue;
+      }
+      try {
+        c.write(block);
+      } catch {
+        clients.delete(c);
+      }
+    }
   };
+  const broadcast = (e: unknown) => write(`data: ${JSON.stringify(e)}\n\n`);
+  // A named event, so the browser does not hand it to onmessage: a beat means "the stream is alive",
+  // not "refetch". Without it a stream that died quietly looks the same as one with nothing to say,
+  // and the UI stops updating until you reload the page.
+  const beat = setInterval(() => write('event: ping\ndata: {"ping":true}\n\n'), extras.heartbeatMs ?? HEARTBEAT_MS);
+  beat.unref();
   // An agent can stream many events a second. Send each task's change at most once per 100 ms,
   // so the UI refetches once for a burst and not once per line.
   const pending = new Set<string>();
@@ -520,10 +541,16 @@ export function startServer(store: Store, runner: Runner, port: number, cos?: Ch
       }
     }
     if (req.url === '/api/events') {
-      res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
+      res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive', 'x-accel-buffering': 'no' });
+      // Send each small block as it is written; an agent's lines are worth nothing once they are late.
+      res.socket?.setNoDelay(true);
+      res.flushHeaders();
       res.write(': connected\n\n');
       clients.add(res);
-      req.on('close', () => clients.delete(res));
+      const drop = () => clients.delete(res);
+      req.on('close', drop);
+      res.on('close', drop);
+      res.on('error', drop);
       return;
     }
     // One terminal's output: what it kept, then each new chunk, as JSON events.
@@ -531,17 +558,38 @@ export function startServer(store: Store, runner: Runner, port: number, cos?: Ch
     if (tm) {
       const term = terminals.get(tm[1]);
       if (!term) return send(res, 404, { error: 'No such terminal' });
-      res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
-      const out = (e: unknown) => res.write(`data: ${JSON.stringify(e)}\n\n`);
+      res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive', 'x-accel-buffering': 'no' });
+      // A terminal's output is worth nothing once it is late, and a reader that went away must not
+      // take the daemon down. The same 2 rules as /api/events above.
+      res.socket?.setNoDelay(true);
+      res.flushHeaders();
+      const put = (block: string) => {
+        if (res.writableEnded || res.destroyed) return false;
+        try {
+          res.write(block);
+          return true;
+        } catch {
+          return false;
+        }
+      };
+      const out = (e: unknown) => put(`data: ${JSON.stringify(e)}\n\n`);
       out({ type: 'data', data: term.scrollback });
       const onData = (id: string, data: string) => id === term.id && out({ type: 'data', data });
       const onExit = (id: string, code: number) => id === term.id && (out({ type: 'exit', code }), res.end());
       terminals.on('data', onData);
       terminals.on('exit', onExit);
-      req.on('close', () => {
+      // A shell can sit idle for hours. The beat keeps the connection from dying quietly; it is a
+      // named event, so the browser never hands it to onmessage.
+      const idle = setInterval(() => put('event: ping\ndata: {"ping":true}\n\n'), extras.heartbeatMs ?? HEARTBEAT_MS);
+      idle.unref();
+      const done = () => {
+        clearInterval(idle);
         terminals.off('data', onData);
         terminals.off('exit', onExit);
-      });
+      };
+      req.on('close', done);
+      res.on('close', done);
+      res.on('error', done);
       return;
     }
     if (await api(req, res)) return;
@@ -561,6 +609,10 @@ export function startServer(store: Store, runner: Runner, port: number, cos?: Ch
   server.on('listening', () => {
     const addr = server.address();
     if (addr && typeof addr === 'object') guard = guardOptionsFromEnv(addr.port);
+  });
+  server.on('close', () => {
+    clearInterval(beat);
+    if (flush) clearTimeout(flush);
   });
   server.listen(port, '127.0.0.1');
   return server;

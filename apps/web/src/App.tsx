@@ -25,7 +25,9 @@ function Shell() {
   const route = useRoute();
   const connected = useLiveConnected();
   const [newTask, setNewTask] = useState(false);
-  const tasks = useLiveResource('nav:tasks', api.tasks);
+  // Counts and the running list, for the sidebar. A working agent changes its task many times a
+  // second; the sidebar reads none of that, so it refetches far less often than the chat does.
+  const tasks = useLiveResource('nav:tasks', api.tasks, undefined, 1000);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
