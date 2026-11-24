@@ -186,6 +186,33 @@ export interface GitView {
   pr: null | { url: string };
 }
 
+/** One shell in the task's worktree (the side viewer's Terminal panel). */
+export interface TerminalInfo {
+  id: string;
+  taskId: string;
+  title: string;
+  cwd: string;
+  alive: boolean;
+  createdAt: number;
+}
+
+/** The task's dev server (the side viewer's Browser panel). */
+export interface DevServerView {
+  state: 'stopped' | 'starting' | 'running' | 'exited';
+  command: string | null;
+  suggested: string | null;
+  url: string | null;
+  port: number | null;
+  log: string;
+  exitCode: number | null;
+}
+
+export interface LinkInfo {
+  url: string;
+  frameable: boolean;
+  title: string | null;
+}
+
 export interface FileDiff {
   path: string;
   diff: string;
@@ -390,6 +417,17 @@ export const api = {
   cosPermission: (key: CosPermission, value: boolean) => request<{ ok: true }>('POST', '/api/cos/permissions', { key, value }),
   git: (taskId: string) => request<GitView>('GET', `/api/tasks/${encodeURIComponent(taskId)}/git`),
   diff: (taskId: string, path: string) => request<FileDiff>('GET', `/api/tasks/${encodeURIComponent(taskId)}/diff?path=${encodeURIComponent(path)}`),
+  // The side viewer.
+  files: (taskId: string) => request<{ paths: string[]; truncated: boolean }>('GET', `/api/tasks/${encodeURIComponent(taskId)}/files`),
+  linkInfo: (url: string) => request<LinkInfo>('GET', `/api/link-info?url=${encodeURIComponent(url)}`),
+  terminals: (taskId: string) => request<TerminalInfo[]>('GET', `/api/tasks/${encodeURIComponent(taskId)}/terminals`),
+  openTerminal: (taskId: string) => request<TerminalInfo>('POST', `/api/tasks/${encodeURIComponent(taskId)}/terminals`, {}),
+  terminalInput: (tid: string, data: string) => request<{ ok: true }>('POST', `/api/terminals/${encodeURIComponent(tid)}/input`, { data }),
+  terminalResize: (tid: string, cols: number, rows: number) => request<{ ok: true }>('POST', `/api/terminals/${encodeURIComponent(tid)}/resize`, { cols, rows }),
+  closeTerminal: (tid: string) => request<{ ok: true }>('POST', `/api/terminals/${encodeURIComponent(tid)}/close`, {}),
+  devServer: (taskId: string) => request<DevServerView>('GET', `/api/tasks/${encodeURIComponent(taskId)}/devserver`),
+  startDevServer: (taskId: string, command?: string) => request<DevServerView>('POST', `/api/tasks/${encodeURIComponent(taskId)}/devserver/start`, { command }),
+  stopDevServer: (taskId: string) => request<DevServerView>('POST', `/api/tasks/${encodeURIComponent(taskId)}/devserver/stop`, {}),
   saveWorkflow: (file: string, graph: WorkflowGraphInput) => request<WorkflowDetail>('PUT', `/api/workflows/${encodeURIComponent(file)}`, graph),
   createTask: (input: NewTaskInput) => request<TaskSummary>('POST', '/api/tasks', input),
   message: (taskId: string, body: { text: string; mode: MessageMode; runId?: string; stepId?: string; files?: ChatFile[] }) =>
@@ -431,5 +469,8 @@ export function taskLoader(id: string): () => Promise<TaskDetail> {
 export const errorMessage = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
 /** Where the browser reads an attachment's bytes (a thumbnail, or a click to open it). */
+/** Where the browser reads one file of the task's worktree. */
+export const worktreeFileUrl = (taskId: string, path: string) => `/api/tasks/${encodeURIComponent(taskId)}/file?path=${encodeURIComponent(path)}`;
+export const terminalStreamUrl = (tid: string) => `/api/terminals/${encodeURIComponent(tid)}/stream`;
 export const fileUrl = (taskId: string, path: string) => `/api/tasks/${encodeURIComponent(taskId)}/attachment?path=${encodeURIComponent(path)}`;
 export const cosFileUrl = (path: string) => `/api/cos/attachment?path=${encodeURIComponent(path)}`;
