@@ -2182,3 +2182,67 @@ a:hover {
 .lx .ox-composer :is(textarea, input):focus-visible,
 .lx .lx-box :is(textarea, input):focus-visible{box-shadow:none;outline:none}
 .ox-composer:focus-within{border-color:var(--accent);box-shadow:var(--ring),var(--shadow)}
+
+/* ---- Side viewer: 1 or 2 panes of tabs beside the chat (components/viewer/) ---- */
+.ox-chat[hidden]{display:none}
+.ox-vwt{position:absolute;top:10px;right:10px;z-index:2}
+.vw{flex:0 1 50%;max-width:760px;min-width:400px;display:flex;min-height:0;background:var(--surface);border-left:1px solid var(--line);position:relative}
+.vw-split{flex-basis:64%;max-width:980px}
+.vw-col{flex-direction:column;flex-basis:50%;max-width:760px}
+.vw-full{flex:1;max-width:none}
+.vw-pane{flex:1 1 0;min-width:320px;min-height:0;display:flex;flex-direction:column}
+.vw-col .vw-pane{min-width:0;min-height:220px}
+.vw-split:not(.vw-col) .vw-pane{min-width:240px}
+.ox-chatv{min-width:0;overflow:hidden}
+.vw-pane + .vw-pane{border-left:1px solid var(--line)}
+.vw-col .vw-pane + .vw-pane{border-left:0;border-top:1px solid var(--line)}
+.vw-focus{box-shadow:inset 0 2px 0 var(--accent)}
+.vw-strip{height:42px;flex:none;display:flex;align-items:stretch;border-bottom:1px solid var(--line);position:relative}
+.vw-tabs{flex:1;min-width:0;display:flex;align-items:stretch;gap:2px;padding:0 6px;overflow-x:auto;scrollbar-width:none}
+.vw-tab{display:flex;align-items:center;flex:none;border-bottom:2px solid transparent;color:var(--muted)}
+.vw-tab.vw-on{border-bottom-color:var(--accent);color:var(--ink)}
+.vw-tabb{display:flex;align-items:center;gap:7px;height:100%;padding:0 4px 0 10px;border:0;background:transparent;font-size:13px;color:inherit;white-space:nowrap;cursor:pointer}
+.vw-on .vw-tabb{font-weight:600}
+.vw-tabl{max-width:200px;overflow:hidden;text-overflow:ellipsis}
+.vw-tabx{width:22px;height:22px;margin-right:4px;border:0;border-radius:6px;background:transparent;color:var(--faint);display:grid;place-items:center;cursor:pointer;opacity:0}
+.vw-tab:hover .vw-tabx,.vw-on .vw-tabx,.vw-tabx:focus-visible{opacity:1}
+.vw-tabx:hover{background:var(--fill);color:var(--ink)}
+.vw-acts{flex:none;display:flex;align-items:center;gap:2px;padding:0 6px;border-left:1px solid var(--line)}
+.vw-ib{width:28px;height:28px;border-radius:7px}
+.vw-ib[aria-pressed="true"]{background:var(--fill);color:var(--ink)}
+.vw-scrim{position:fixed;inset:0;z-index:30}
+.vw-menu{z-index:31;padding:6px;border-radius:14px;background:var(--surface);box-shadow:var(--shadow-pop);display:flex;flex-direction:column}
+.vw-plus{position:absolute;right:8px;top:40px;width:300px}
+.vw-ctx{position:fixed;width:240px;padding:5px;border-radius:12px}
+.vw-menu button{display:flex;align-items:center;gap:12px;height:36px;padding:0 10px;border:0;border-radius:8px;background:transparent;text-align:left;font-size:14px;color:var(--ink);cursor:pointer}
+.vw-ctx button{height:32px;gap:10px;font-size:13px}
+.vw-menu button:hover,.vw-menu button:focus-visible{background:var(--fill)}
+.vw-menu button svg{color:var(--muted);flex:none}
+.vw-menu .vw-sep{margin-top:6px;position:relative}
+.vw-menu .vw-sep::before{content:"";position:absolute;left:8px;right:8px;top:-4px;height:1px;background:var(--line)}
+.vw-meta{font-size:13px;color:var(--green-fg)}
+.vw-kbd{margin-left:auto;font-size:12px;color:var(--faint);letter-spacing:.04em}
+.vw-panel{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
+.vw-empty{flex:1;display:grid;place-items:center;padding:24px;text-align:center;color:var(--muted);font-size:13px}
+.vw-git{flex:1;min-height:0;display:flex;flex-direction:column}
+@media (max-width: 1180px){.vw{min-width:340px}.vw-pane{min-width:280px}}
+
+/* ---- References under an agent message ---- */
+.ox-refs{display:flex;flex-direction:column;align-items:flex-start;gap:8px;margin-top:8px}
+.ox-refrow{display:flex;flex-wrap:wrap;gap:8px}
+.ox-ref{display:inline-flex;align-items:center;gap:8px;height:30px;max-width:100%;padding:0 10px 0 8px;border:0;border-radius:9px;background:var(--surface);box-shadow:0 1px 2px rgba(0,0,0,.06),0 0 0 1px var(--line);font-size:13px;color:var(--ink);cursor:pointer}
+.ox-ref:hover{box-shadow:0 1px 2px rgba(0,0,0,.08),0 0 0 1px color-mix(in srgb,var(--accent) 45%,transparent)}
+.ox-refi{width:18px;height:18px;border-radius:5px;background:var(--fill-2);display:grid;place-items:center;flex:none;color:var(--muted)}
+.ox-refmd{background:color-mix(in srgb,var(--accent) 16%,transparent);color:var(--accent-fg);font-size:9px;font-weight:800}
+.ox-refimg{color:var(--green-fg);font-size:8px;font-weight:800}
+.ox-refn{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ox-refm{font-size:12px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ox-refshot{width:280px;padding:0;border:0;border-radius:12px;overflow:hidden;background:var(--surface);box-shadow:var(--shadow-card);text-align:left;cursor:pointer}
+.ox-refpic{display:block;height:150px;background:repeating-conic-gradient(var(--fill) 0% 25%,transparent 0% 50%) 50%/16px 16px}
+.ox-refpic img{width:100%;height:100%;object-fit:contain;display:block}
+.ox-refcap{display:block;padding:8px 10px;font-size:12px;font-weight:500}
+.ox-refart{align-self:stretch;max-width:460px;display:flex;align-items:center;gap:12px;padding:12px 14px;border:0;border-radius:12px;background:var(--surface);box-shadow:var(--shadow-card);text-align:left;cursor:pointer;color:var(--ink)}
+.ox-refarti{width:36px;height:36px;border-radius:9px;background:linear-gradient(160deg,#d97757,#b6532f);color:#fff;display:grid;place-items:center;flex:none}
+.ox-refartt{flex:1;min-width:0;display:flex;flex-direction:column;font-size:14px}
+.ox-refartt span{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ox-refopen{font-size:12px;font-weight:500;color:var(--accent-fg)}

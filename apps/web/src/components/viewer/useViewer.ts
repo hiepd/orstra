@@ -34,6 +34,8 @@ export function useViewer(taskId: string): [ViewerState, (a: ViewerAction) => vo
       if (tab) {
         window.localStorage.removeItem(pendingKey(taskId));
         s = reduce(s, { type: 'open', tab });
+        // Save at once: the pending tab is gone now, and a second run of this effect must still see it.
+        save(taskId, s);
       }
     } catch {
       /* nothing pending */
