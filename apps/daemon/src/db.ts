@@ -22,6 +22,8 @@ export interface TaskRow {
   worktree: string | null;
   created_at: number;
   updated_at: number;
+  /** Set when you stopped the task. The 1 stored fact that outranks every run. */
+  stopped_at: number | null;
 }
 
 export interface RunRow {
@@ -39,6 +41,12 @@ export interface RunRow {
   created_at: number;
   started_at: number | null;
   ended_at: number | null;
+  /** When an agent's turn last ended on this run. Answers "last turn 27 h ago". */
+  last_turn_at: number | null;
+  /** Why an open agent run waits on you: question, reply or paused. */
+  wait_reason: string | null;
+  /** What the router decided when this run ended: `goto:<stepId>`, `end` or `block:<reason>`. */
+  routed: string | null;
 }
 
 export interface EventRow {
@@ -55,12 +63,13 @@ CREATE TABLE IF NOT EXISTS tasks (
   id TEXT PRIMARY KEY, ref TEXT, title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
   workflow_path TEXT NOT NULL, workflow_name TEXT NOT NULL, status TEXT NOT NULL,
   current_step TEXT, inbox_reason TEXT, edge_counts TEXT NOT NULL DEFAULT '{}', worktree TEXT,
-  created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, stopped_at INTEGER
 );
 CREATE TABLE IF NOT EXISTS runs (
   id TEXT PRIMARY KEY, task_id TEXT NOT NULL, step_id TEXT NOT NULL, kind TEXT NOT NULL,
   attempt INTEGER NOT NULL, status TEXT NOT NULL, outcome TEXT, agent TEXT, session_id TEXT,
-  progress TEXT, output TEXT, created_at INTEGER NOT NULL, started_at INTEGER, ended_at INTEGER
+  progress TEXT, output TEXT, created_at INTEGER NOT NULL, started_at INTEGER, ended_at INTEGER,
+  last_turn_at INTEGER, wait_reason TEXT, routed TEXT
 );
 CREATE INDEX IF NOT EXISTS runs_task ON runs(task_id);
 CREATE INDEX IF NOT EXISTS runs_status ON runs(status);
@@ -110,15 +119,62 @@ export class Store {
     this.db = new DatabaseSync(path);
     this.db.exec('PRAGMA journal_mode = WAL;');
     this.db.exec(SCHEMA);
+    const added = this.ensureColumns();
+    if (added.includes('runs.routed')) this.backfill();
+    // The index cannot be made over rows that already break it, and a daemon that cannot start helps
+    // nobody. Keep the newest open run of each task and close the rest.
+    this.closeDuplicateOpenRuns();
+    this.db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS runs_one_open ON runs(task_id) WHERE status IN ('queued','running','waiting');`);
+  }
+
+  /** Add the columns a database written by an older version has not got. Returns what it added. */
+  private ensureColumns(): string[] {
+    const want: Record<string, Record<string, string>> = {
+      tasks: { stopped_at: 'INTEGER' },
+      runs: { last_turn_at: 'INTEGER', wait_reason: 'TEXT', routed: 'TEXT' },
+    };
+    const added: string[] = [];
+    for (const [table, columns] of Object.entries(want)) {
+      const have = new Set((this.db.prepare(`PRAGMA table_info(${table})`).all() as unknown as { name: string }[]).map((c) => c.name));
+      for (const [name, type] of Object.entries(columns)) {
+        if (have.has(name)) continue;
+        this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
+        added.push(`${table}.${name}`);
+      }
+    }
+    return added;
+  }
+
+  /**
+   * Teach the old rows the facts the new ones write. Without this every finished task would read as
+   * "nothing holds this task", because no run of theirs ever recorded what the router decided.
+   */
+  private backfill() {
+    for (const t of this.tasks()) {
+      if (t.status === 'stopped') this.db.prepare('UPDATE tasks SET stopped_at = ? WHERE id = ?').run(t.updated_at, t.id);
+      if (this.openRun(t.id)) continue;
+      const last = this.lastEndedRun(t.id);
+      if (!last || last.routed) continue;
+      const routed = t.status === 'done' ? 'end' : t.status === 'needs_you' ? `block:${t.inbox_reason ?? 'unknown'}` : null;
+      if (routed) this.db.prepare('UPDATE runs SET routed = ? WHERE id = ?').run(routed, last.id);
+    }
+  }
+
+  private closeDuplicateOpenRuns() {
+    const byTask = new Map<string, RunRow[]>();
+    for (const r of this.openRuns()) byTask.set(r.task_id, [...(byTask.get(r.task_id) ?? []), r]);
+    for (const runs of byTask.values()) {
+      for (const r of runs.slice(0, -1)) this.updateRun(r.id, { status: 'stopped', ended_at: Date.now() });
+    }
   }
 
   insertTask(t: TaskRow) {
     this.db
       .prepare(
-        `INSERT INTO tasks (id, ref, title, description, workflow_path, workflow_name, status, current_step, inbox_reason, edge_counts, worktree, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO tasks (id, ref, title, description, workflow_path, workflow_name, status, current_step, inbox_reason, edge_counts, worktree, created_at, updated_at, stopped_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(t.id, t.ref, t.title, t.description, t.workflow_path, t.workflow_name, t.status, t.current_step, t.inbox_reason, t.edge_counts, t.worktree, t.created_at, t.updated_at);
+      .run(t.id, t.ref, t.title, t.description, t.workflow_path, t.workflow_name, t.status, t.current_step, t.inbox_reason, t.edge_counts, t.worktree, t.created_at, t.updated_at, t.stopped_at);
   }
 
   updateTask(id: string, patch: Partial<TaskRow>) {
@@ -140,10 +196,10 @@ export class Store {
   insertRun(r: RunRow) {
     this.db
       .prepare(
-        `INSERT INTO runs (id, task_id, step_id, kind, attempt, status, outcome, agent, session_id, progress, output, created_at, started_at, ended_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO runs (id, task_id, step_id, kind, attempt, status, outcome, agent, session_id, progress, output, created_at, started_at, ended_at, last_turn_at, wait_reason, routed)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(r.id, r.task_id, r.step_id, r.kind, r.attempt, r.status, r.outcome, r.agent, r.session_id, r.progress, r.output, r.created_at, r.started_at, r.ended_at);
+      .run(r.id, r.task_id, r.step_id, r.kind, r.attempt, r.status, r.outcome, r.agent, r.session_id, r.progress, r.output, r.created_at, r.started_at, r.ended_at, r.last_turn_at, r.wait_reason, r.routed);
   }
 
   updateRun(id: string, patch: Partial<RunRow>) {
@@ -160,6 +216,24 @@ export class Store {
 
   runsForTask(taskId: string): RunRow[] {
     return this.db.prepare('SELECT * FROM runs WHERE task_id = ? ORDER BY created_at, rowid').all(taskId) as unknown as RunRow[];
+  }
+
+  /** Every run that still holds its task. The index keeps this to 1 per task. */
+  openRuns(): RunRow[] {
+    return this.runsByStatus('queued', 'running', 'waiting');
+  }
+
+  openRun(taskId: string): RunRow | undefined {
+    return this.db
+      .prepare(`SELECT * FROM runs WHERE task_id = ? AND status IN ('queued','running','waiting') ORDER BY created_at, rowid`)
+      .get(taskId) as RunRow | undefined;
+  }
+
+  /** The newest run that ended with an outcome. A run that was stopped routed nowhere, so it is skipped. */
+  lastEndedRun(taskId: string): RunRow | undefined {
+    return this.db
+      .prepare(`SELECT * FROM runs WHERE task_id = ? AND status IN ('done','failed') AND outcome IS NOT NULL ORDER BY created_at DESC, rowid DESC`)
+      .get(taskId) as RunRow | undefined;
   }
 
   runsByStatus(...statuses: RunStatus[]): RunRow[] {

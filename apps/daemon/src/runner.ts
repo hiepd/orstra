@@ -119,7 +119,7 @@ export class Runner extends EventEmitter {
     const task: TaskRow = {
       id: taskId, ref: input.ref ?? null, title: input.title, description: input.description ?? '',
       workflow_path: input.workflowPath, workflow_name: wf.name, status: 'running', current_step: wf.start,
-      inbox_reason: null, edge_counts: '{}', worktree, created_at: now, updated_at: now,
+      inbox_reason: null, edge_counts: '{}', worktree, created_at: now, updated_at: now, stopped_at: null,
     };
     this.store.insertTask(task);
     this.event(taskId, null, 'system', { text: `Started ${wf.name}${byCos(input.via)}` });
@@ -134,7 +134,7 @@ export class Runner extends EventEmitter {
     const run: RunRow = {
       id: id('r'), task_id: task.id, step_id: stepId, kind: step.use, attempt, status: 'queued', outcome: null,
       agent: step.use === 'agent' ? step.agent ?? 'claude-code' : null, session_id: null, progress: null, output: null,
-      created_at: Date.now(), started_at: null, ended_at: null,
+      created_at: Date.now(), started_at: null, ended_at: null, last_turn_at: null, wait_reason: null, routed: null,
     };
     this.store.insertRun(run);
     this.store.updateTask(task.id, { current_step: stepId, status: 'running', inbox_reason: null });
@@ -440,6 +440,7 @@ export class Runner extends EventEmitter {
     const run: RunRow = {
       id: id('r'), task_id: task.id, step_id: target.step_id, kind: target.kind, attempt, status: 'running', outcome: null,
       agent: target.agent, session_id: target.session_id, progress: null, output: null, created_at: now, started_at: now, ended_at: null,
+      last_turn_at: null, wait_reason: null, routed: null,
     };
     this.store.insertRun(run);
     this.store.updateTask(task.id, { status: 'running', inbox_reason: null, current_step: target.step_id });

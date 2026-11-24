@@ -400,21 +400,22 @@ steps:
     await runner.idle();
   });
 
-  it('refuses a decision while an agent run works, so approval cannot merge a diff in flight', async () => {
-    const { store, runner, wfPath } = setup(REVIEW, () => done('first pass'));
+  it('cannot hold a waiting decision while an agent run works, so approval cannot merge a diff in flight', async () => {
+    const { store, runner, wfPath } = setup(REVIEW, (_t, n) => (n === 1 ? done('first pass') : null));
     const task = runner.startTask({ workflowPath: wfPath, title: 'guard' });
     await runner.idle();
-    const work = store.runsForTask(task.id)[0];
     const review = store.runsForTask(task.id).find((r) => r.kind === 'human')!;
 
-    // The state a stale page can send: the decision still waits, and the agent works again.
-    store.updateRun(work.id, { status: 'running', outcome: null, ended_at: null });
-    expect(() => runner.decide(review.id, 'close')).toThrow(/working/);
+    // The state a stale page would need is one the database refuses to hold.
+    expect(() => store.insertRun({ ...store.runsForTask(task.id)[0], id: 'r-fake', status: 'running' })).toThrow();
 
-    store.updateRun(work.id, { status: 'done', outcome: 'done' });
-    runner.decide(review.id, 'close');
+    // Your chat closes that decision and sends the step back, so there is nothing left to approve.
+    await runner.message(task.id, 'change the API name', 'chat');
+    expect(() => runner.decide(review.id, 'close')).toThrow(/no longer waiting/);
+    expect(store.openRuns().filter((r) => r.task_id === task.id)).toHaveLength(1);
+
+    runner.interrupt(task.id);
     await runner.idle();
-    expect(store.task(task.id)!.status).toBe('done');
   });
 
   it('keeps one run when you chat to an agent that is still working', async () => {
