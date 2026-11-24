@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { api, type TaskDetail } from '../api';
 import { InboxIcon, StuckCircle, WaitCircle } from '../components/Icons';
 import { AGENTS, reasonText, taskLabel } from '../lib/format';
@@ -7,6 +7,7 @@ import { href, type TaskViewName } from '../lib/router';
 import { TaskPage } from './TaskPage';
 import { STATE, stepLabel, taskState, type TaskState } from '../lib/taskState';
 import { ago } from '../lib/time';
+import { pickInboxTask, type InboxPick } from '../lib/inboxPick';
 
 const GROUPS: { state: TaskState; name: string; icon: ReactNode }[] = [
   { state: 'decision', name: 'Decide', icon: <WaitCircle label="Decision" /> },
@@ -37,9 +38,13 @@ export function InboxView({ sel, selView }: { sel?: string; selView?: TaskViewNa
   const count = (group: string) => tasks.data?.filter((t) => STATE[taskState(t)].group === group).length ?? 0;
   const running = count('running');
   const queued = count('queued');
-  // The open task: the one in the URL while it still needs you, else the first in the list.
-  const picked = ordered.find((t) => t.id === sel) ?? ordered[0];
-  const pickedView: TaskViewName = picked && picked.id === sel ? selView ?? 'overview' : picked && taskState(picked) === 'question' ? 'chat' : 'overview';
+  // The open task stays open after it leaves the list (you answered it, so it runs now), until you pick another.
+  const [kept, setKept] = useState<InboxPick | null>(null);
+  const picked = pickInboxTask({ sel, selView, kept, list: ordered.map((t) => ({ id: t.id, state: taskState(t) })) });
+  useEffect(() => {
+    if (picked && (picked.id !== kept?.id || picked.view !== kept?.view)) setKept(picked);
+  }, [picked?.id, picked?.view]); // eslint-disable-line react-hooks/exhaustive-deps
+  const left = picked && res.data && !ordered.some((t) => t.id === picked.id) ? tasks.data?.find((t) => t.id === picked.id) : undefined;
 
   return (
     <div className="ox-isplit">
@@ -100,6 +105,27 @@ export function InboxView({ sel, selView }: { sel?: string; selView?: TaskViewNa
             </div>
           </section>
         ))}
+        {left && (
+          <section>
+            <h2 className="ox-gh">No longer needs you</h2>
+            <div className="ox-card">
+              <a className="ox-irow" aria-current="true" href={href.inboxTask(left.id, picked!.view)}>
+                <span className="ox-iic" style={{ background: STATE[taskState(left)].bg }}>
+                  <span className={`ox-sd${taskState(left) === 'running' ? ' ox-live' : ''}`} style={{ background: 'var(--accent)' }} />
+                </span>
+                <span className="ox-imain">
+                  <span className="ox-iline">
+                    <span className="ox-id">{taskLabel(left)}</span>
+                    <span className="ox-iname">{left.title}</span>
+                  </span>
+                  <span className="ox-iwhat">
+                    {STATE[taskState(left)].label} · {stepLabel(left)}
+                  </span>
+                </span>
+              </a>
+            </div>
+          </section>
+        )}
         {tasks.data && (running > 0 || queued > 0) && (
           <div className="ox-calm">
             <span className="ox-sd ox-live" style={{ background: 'var(--accent)' }} />
@@ -111,7 +137,7 @@ export function InboxView({ sel, selView }: { sel?: string; selView?: TaskViewNa
       </section>
       <div className="ox-ipane">
         {picked ? (
-          <TaskPage key={picked.id} id={picked.id} view={pickedView} embedded />
+          <TaskPage key={picked.id} id={picked.id} view={picked.view} embedded />
         ) : (
           <div className="lx-empty">
             <b>{res.data ? 'Nothing needs you' : 'Loading…'}</b>

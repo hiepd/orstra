@@ -84,4 +84,19 @@ describe('viewer state', () => {
     s = reduce(s, { type: 'toggleOpen' });
     expect(s).toMatchObject({ open: false, expanded: false });
   });
+
+  it('keeps the width you drag to, within limits, and forgets it on reset', () => {
+    let s = reduce(initialViewer(), { type: 'resize', width: 640 });
+    expect(s.width).toBe(640);
+    expect(reduce(s, { type: 'resize', width: 100 }).width).toBe(320);
+    expect(reduce(s, { type: 'resize', width: null }).width).toBeUndefined();
+  });
+
+  it('keeps the share of the first pane between 20% and 80%', () => {
+    let s = reduce(initialViewer(), { type: 'ratio', ratio: 0.3 });
+    expect(s.ratio).toBe(0.3);
+    expect(reduce(s, { type: 'ratio', ratio: 0.95 }).ratio).toBe(0.8);
+    expect(reduce(s, { type: 'ratio', ratio: 0.01 }).ratio).toBe(0.2);
+    expect(reduce(s, { type: 'ratio', ratio: null }).ratio).toBeUndefined();
+  });
 });

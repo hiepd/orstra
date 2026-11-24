@@ -9,7 +9,20 @@
 export type TabId = string;
 export type Pane = { tabs: TabId[]; active: TabId | null };
 export type SplitDir = 'row' | 'column';
-export type ViewerState = { panes: Pane[]; focus: number; dir: SplitDir; expanded: boolean; open: boolean };
+export type ViewerState = {
+  panes: Pane[];
+  focus: number;
+  dir: SplitDir;
+  expanded: boolean;
+  open: boolean;
+  /** The viewer's width in px, when you dragged its edge. None: half the window. */
+  width?: number;
+  /** The first pane's share of a split, 0.2 to 0.8. None: half each. */
+  ratio?: number;
+};
+
+/** The narrowest viewer a drag gives. The chat keeps its own 380 px in CSS. */
+export const MIN_VIEWER_WIDTH = 320;
 
 export type ViewerAction =
   | { type: 'open'; tab: TabId }
@@ -21,7 +34,10 @@ export type ViewerAction =
   | { type: 'unsplit' }
   | { type: 'setDir'; dir: SplitDir }
   | { type: 'toggleExpand' }
-  | { type: 'toggleOpen' };
+  | { type: 'toggleOpen' }
+  /** null resets to the default size. */
+  | { type: 'resize'; width: number | null }
+  | { type: 'ratio'; ratio: number | null };
 
 export const initialViewer = (): ViewerState => ({ panes: [{ tabs: ['changes'], active: 'changes' }], focus: 0, dir: 'row', expanded: false, open: true });
 
@@ -93,5 +109,13 @@ export function reduce(s: ViewerState, a: ViewerAction): ViewerState {
       return { ...s, expanded: !s.expanded || !s.open, open: true };
     case 'toggleOpen':
       return { ...s, open: !s.open, expanded: false };
+    case 'resize': {
+      const { width: _w, ...rest } = s;
+      return a.width === null ? rest : { ...s, width: Math.max(MIN_VIEWER_WIDTH, Math.round(a.width)) };
+    }
+    case 'ratio': {
+      const { ratio: _r, ...rest } = s;
+      return a.ratio === null ? rest : { ...s, ratio: Math.min(0.8, Math.max(0.2, a.ratio)) };
+    }
   }
 }

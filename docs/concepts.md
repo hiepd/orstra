@@ -99,11 +99,11 @@ Its limits:
 - A republish of the same file path keeps the same URL, so the agent can correct a page without a second link.
 
 ### Viewer
-The panel on the right of a task's Chat view. It shows what the agent's messages name, and the tools around the worktree, in tabs:
+The panel on the right of a task's Chat view, in the Inbox pane too. It shows what the agent's messages name, and the tools around the worktree, in tabs:
 
 - **References.** Orstra finds web links, Claude artifacts, a local dev server URL, and paths to `.md` and image files in each agent message. Each one shows as a chip under the message. A click opens it in a tab. A site that refuses frames (most do, claude.ai too) shows as a card with an Open button.
 - **Panels**, from the + menu: Changes (branch, files with diffs, checks, commits), Browser (Orstra starts the worktree's dev server and shows its page), Files (the worktree as a tree, read-only), Terminal (a real shell in the worktree), Side chat, and Artifacts (what the task's agents made).
-- **Layout.** 2 panes at most, side by side or stacked. Right-click a tab to split, move or close it. Expand (⌘\\, or a double-click on a tab) puts the viewer over the chat. Otherwise the chat keeps 380 px or more.
+- **Layout.** 2 panes at most, side by side or stacked. Right-click a tab to split, move or close it. Expand (⌘\\, or a double-click on a tab) puts the viewer over the chat. Drag the viewer's left edge to change its width, and the line between 2 panes to change their share; a double-click resets either. Otherwise the chat keeps 380 px or more.
 
 Shells and dev servers end when the daemon stops, and before a cleanup removes the worktree.
 

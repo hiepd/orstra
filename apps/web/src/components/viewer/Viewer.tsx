@@ -1,8 +1,8 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent, type ReactNode } from 'react';
 import type { GitView, TaskDetail } from '../../api';
 import type { Resource } from '../../lib/live';
 import { GitBody } from '../GitPanel';
-import type { Pane, TabId, ViewerAction, ViewerState } from './state';
+import { MIN_VIEWER_WIDTH, type Pane, type TabId, type ViewerAction, type ViewerState } from './state';
 import { IC, PANELS, tabMeta } from './tabs';
 import { ArtifactsPanel } from './ArtifactsPanel';
 import { FilePanel } from './FilePanel';
@@ -44,6 +44,73 @@ function Panel(p: PanelProps): ReactNode {
 type Ctx = { pane: number; tab: TabId; x: number; y: number };
 
 /**
+ * A drag handle (role separator). Drag it, move it with the arrow keys, or double-click it to reset.
+ * `vertical` handles move left and right.
+ */
+function Grip({
+  className,
+  vertical,
+  label,
+  value,
+  onMove,
+  onStep,
+  onDone,
+  onReset,
+  onDragging,
+}: {
+  className: string;
+  vertical: boolean;
+  label: string;
+  value?: number;
+  onMove: (pos: number) => void;
+  onStep: (delta: number) => void;
+  onDone: () => void;
+  onReset: () => void;
+  onDragging: (on: boolean) => void;
+}) {
+  const down = (e: PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    onDragging(true);
+  };
+  const move = (e: PointerEvent<HTMLDivElement>) => {
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) onMove(vertical ? e.clientX : e.clientY);
+  };
+  const up = (e: PointerEvent<HTMLDivElement>) => {
+    if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
+    e.currentTarget.releasePointerCapture(e.pointerId);
+    onDragging(false);
+    onDone();
+  };
+  const key = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    const step = e.shiftKey ? 64 : 16;
+    const k = e.key;
+    const d = vertical ? (k === 'ArrowLeft' ? -step : k === 'ArrowRight' ? step : 0) : k === 'ArrowUp' ? -step : k === 'ArrowDown' ? step : 0;
+    if (!d) return;
+    e.preventDefault();
+    onStep(d);
+  };
+  return (
+    <div
+      className={className}
+      role="separator"
+      aria-orientation={vertical ? 'vertical' : 'horizontal'}
+      aria-label={label}
+      aria-valuenow={value}
+      title={`${label}. Double-click to reset.`}
+      tabIndex={0}
+      onPointerDown={down}
+      onPointerMove={move}
+      onPointerUp={up}
+      onPointerCancel={up}
+      onKeyDown={key}
+      onDoubleClick={onReset}
+    />
+  );
+}
+
+/**
  * The side viewer: 1 or 2 panes of tabs beside the chat. Each pane has a + menu of panels and a split
  * button. Right-click a tab to split, move or close it. The pane at the top right can expand the
  * viewer over the chat.
@@ -52,6 +119,11 @@ export function Viewer(props: Omit<PanelProps, 'tab'> & { state: ViewerState }) 
   const { state, dispatch, git } = props;
   const [plus, setPlus] = useState(-1);
   const [ctx, setCtx] = useState<Ctx | null>(null);
+  const aside = useRef<HTMLElement>(null);
+  // While you drag, the size lives here; it goes into the viewer state (and storage) when you let go.
+  const [liveWidth, setLiveWidth] = useState<number | null>(null);
+  const [liveRatio, setLiveRatio] = useState<number | null>(null);
+  const [dragging, setDragging] = useState(false);
   const split = state.panes.length > 1;
   const col = split && state.dir === 'column';
   const sideNames = state.dir === 'row' ? ['left', 'right'] : ['top', 'bottom'];
@@ -98,11 +170,25 @@ export function Viewer(props: Omit<PanelProps, 'tab'> & { state: ViewerState }) 
     return items;
   })();
 
+  const width = liveWidth ?? state.width;
+  const ratio = liveRatio ?? state.ratio ?? 0.5;
+  const widthNow = () => aside.current?.getBoundingClientRect().width ?? MIN_VIEWER_WIDTH;
+  const ratioAt = (pos: number) => {
+    const r = aside.current?.getBoundingClientRect();
+    if (!r) return 0.5;
+    return Math.min(0.8, Math.max(0.2, col ? (pos - r.top) / r.height : (pos - r.left) / r.width));
+  };
+
   const renderPane = (pane: Pane, pi: number) => {
     const showExpand = col ? pi === 0 : pi === state.panes.length - 1;
     const label = split ? `${sideNames[pi][0].toUpperCase()}${sideNames[pi].slice(1)} pane` : 'Viewer pane';
     return (
-      <section key={pi} className={`vw-pane${split && state.focus === pi ? ' vw-focus' : ''}`} aria-label={label} onMouseDown={() => state.focus !== pi && pane.active && dispatch({ type: 'pick', pane: pi, tab: pane.active })}>
+      <section
+        key={pi}
+        className={`vw-pane${split && state.focus === pi ? ' vw-focus' : ''}`}
+        style={split ? { flex: `${pi === 0 ? ratio : 1 - ratio} 1 0` } : undefined}
+        aria-label={label}
+        onMouseDown={() => state.focus !== pi && pane.active && dispatch({ type: 'pick', pane: pi, tab: pane.active })}>
         <div className="vw-strip">
           <div className="vw-tabs" role="tablist" aria-label="Open tabs">
             {pane.tabs.map((id) => {
@@ -184,8 +270,48 @@ export function Viewer(props: Omit<PanelProps, 'tab'> & { state: ViewerState }) 
   };
 
   return (
-    <aside className={`vw${split ? ' vw-split' : ''}${col ? ' vw-col' : ''}${state.expanded ? ' vw-full' : ''}`} aria-label="Viewer">
-      {state.panes.map(renderPane)}
+    <aside
+      ref={aside}
+      className={`vw${split ? ' vw-split' : ''}${col ? ' vw-col' : ''}${state.expanded ? ' vw-full' : ''}${dragging ? ' vw-dragging' : ''}`}
+      style={width && !state.expanded ? { flexBasis: width, maxWidth: 'none', minWidth: MIN_VIEWER_WIDTH } : undefined}
+      aria-label="Viewer"
+    >
+      {!state.expanded && (
+        <Grip
+          className="vw-grip"
+          vertical
+          label="Resize the viewer"
+          value={Math.round(width ?? widthNow())}
+          onDragging={setDragging}
+          onMove={(x) => setLiveWidth(Math.max(MIN_VIEWER_WIDTH, (aside.current?.getBoundingClientRect().right ?? x) - x))}
+          onStep={(d) => dispatch({ type: 'resize', width: widthNow() - d })}
+          onDone={() => {
+            if (liveWidth !== null) dispatch({ type: 'resize', width: liveWidth });
+            setLiveWidth(null);
+          }}
+          onReset={() => dispatch({ type: 'resize', width: null })}
+        />
+      )}
+      {state.panes.map((p, i) => [
+        i > 0 && (
+          <Grip
+            key="pgrip"
+            className="vw-pgrip"
+            vertical={!col}
+            label="Resize the panes"
+            value={Math.round(ratio * 100)}
+            onDragging={setDragging}
+            onMove={(pos) => setLiveRatio(ratioAt(pos))}
+            onStep={(d) => dispatch({ type: 'ratio', ratio: ratio + d / ((col ? aside.current?.clientHeight : aside.current?.clientWidth) || 800) })}
+            onDone={() => {
+              if (liveRatio !== null) dispatch({ type: 'ratio', ratio: liveRatio });
+              setLiveRatio(null);
+            }}
+            onReset={() => dispatch({ type: 'ratio', ratio: null })}
+          />
+        ),
+        renderPane(p, i),
+      ])}
       {ctx && (
         <>
           <div className="vw-scrim" onMouseDown={() => setCtx(null)} onContextMenu={(e) => (e.preventDefault(), setCtx(null))} />
