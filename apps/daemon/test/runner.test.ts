@@ -4,14 +4,15 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from '../src/db.ts';
-import { Runner } from '../src/runner.ts';
-import type { Executors, LiveSession, SessionOptions } from '../src/executors.ts';
+import { NUDGE, Runner } from '../src/runner.ts';
+import type { Executors, LiveSession, SessionOptions, TurnUsage } from '../src/executors.ts';
 
 interface Sent { sessionId: string; resume: boolean; text: string }
 
 /** A fake streaming agent: every message it receives produces one turn, scripted by `reply`. */
 /** `reply` returning null means the agent is still working on that turn (nothing comes back until interrupted). */
-function fakeExecutors(reply: (text: string, n: number, opts: SessionOptions) => string | null, gate: (n: number) => boolean) {
+type Reply = string | null | { text: string; usage: TurnUsage };
+function fakeExecutors(reply: (text: string, n: number, opts: SessionOptions) => Reply, gate: (n: number) => boolean) {
   const sent: Sent[] = [];
   const sessions: SessionOptions[] = [];
   let n = 0;
@@ -30,7 +31,7 @@ function fakeExecutors(reply: (text: string, n: number, opts: SessionOptions) =>
             if (ended) return;
             opts.onEvent({ kind: 'message', text: 'working' });
             const r = reply(text, k, opts);
-            if (r !== null) opts.onTurn({ text: r, interrupted: false, isError: false });
+            if (r !== null) opts.onTurn(typeof r === 'string' ? { text: r, interrupted: false, isError: false } : { text: r.text, usage: r.usage, interrupted: false, isError: false });
           }, 1);
         },
         interrupt() {
@@ -52,7 +53,7 @@ function fakeExecutors(reply: (text: string, n: number, opts: SessionOptions) =>
   return { exec, sent, sessions };
 }
 
-function setup(yaml: string, reply: (text: string, n: number, opts: SessionOptions) => string | null, gate: (n: number) => boolean = () => true, worktree?: string) {
+function setup(yaml: string, reply: (text: string, n: number, opts: SessionOptions) => Reply, gate: (n: number) => boolean = () => true, worktree?: string) {
   const dir = mkdtempSync(join(tmpdir(), 'orstra-test-'));
   const wfPath = join(dir, 'wf.yaml');
   writeFileSync(wfPath, yaml);
@@ -98,6 +99,14 @@ steps:
     action: git.merge
     next: end
 `;
+
+async function waitFor(ok: () => boolean, ms = 2000) {
+  const end = Date.now() + ms;
+  while (!ok()) {
+    if (Date.now() > end) throw new Error('waitFor timed out');
+    await new Promise((r) => setTimeout(r, 5));
+  }
+}
 
 const done = (did: string) => `## Progress\nDid: ${did}\nDecided: nothing\nLeft: nothing\nAvoid: nothing\n\nOUTCOME: done`;
 
@@ -329,5 +338,142 @@ steps:
     await runner.idle();
     expect(prompts()[1]).toContain('Use the shared EmptyState from ui/');
     expect(store.events(task.id).some((e) => e.kind === 'you')).toBe(true);
+  });
+
+  it('asks once for a missing OUTCOME line, and reads the answer', async () => {
+    const { store, runner, wfPath, fake } = setup(LOOP, (text, n) => (n === 1 ? 'I changed the file.' : done('changed the file')));
+    const task = runner.startTask({ workflowPath: wfPath, title: 'x' });
+    await runner.idle();
+    expect(fake.sent[1].text).toBe(NUDGE);
+    expect(store.task(task.id)!.status).toBe('done');
+  });
+
+  it('never reads a reply without an OUTCOME line as done', async () => {
+    const { store, runner, wfPath } = setup(LOOP, () => 'I changed the fi');
+    const task = runner.startTask({ workflowPath: wfPath, title: 'x' });
+    await waitFor(() => store.task(task.id)!.status === 'needs_you');
+    expect(store.task(task.id)!.inbox_reason).toBe('no_outcome');
+    expect(store.runsForTask(task.id).filter((r) => r.step_id === 'verify')).toHaveLength(0);
+  });
+
+  it('stops an agent step that works longer than its timeout and sends the task to the inbox', async () => {
+    const { store, runner, wfPath } = setup(LOOP.replace('next: verify', 'next: verify\n    timeout: 0.0005'), () => null);
+    const task = runner.startTask({ workflowPath: wfPath, title: 'x' });
+    await waitFor(() => store.task(task.id)!.status === 'needs_you');
+    const t = store.task(task.id)!;
+    expect(t.inbox_reason).toBe('timeout');
+    expect(store.runsForTask(task.id)[0].outcome).toBe('timeout');
+  });
+
+  it('stops a gate that hangs, using the default gate timeout', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'orstra-test-'));
+    const wfPath = join(dir, 'wf.yaml');
+    writeFileSync(wfPath, 'name: G\nsteps:\n  check:\n    use: gate\n    run: [sleep 100]\n    on: { pass: end }\n');
+    const exec = {
+      gate: ({ signal }: { signal: AbortSignal }) => new Promise((r) => signal.addEventListener('abort', () => r({ pass: false, output: 'killed' }))),
+    } as unknown as Executors;
+    const store = new Store(':memory:');
+    const runner = new Runner(store, exec, { slots: 1, createWorktree: () => dir, defaultTimeoutMs: { gate: 20 } });
+    const task = runner.startTask({ workflowPath: wfPath, title: 'x' });
+    await waitFor(() => store.task(task.id)!.status === 'needs_you');
+    expect(store.task(task.id)!.inbox_reason).toBe('timeout');
+  });
+
+  it('keeps a running task on the workflow it started with, until you move it to the new version', async () => {
+    const { store, runner, wfPath, prompts } = setup(LOOP, () => done('ok'), () => false);
+    const task = runner.startTask({ workflowPath: wfPath, title: 'x' });
+    await runner.idle();
+    writeFileSync(wfPath, LOOP.replace('Fix {{ trigger.title }}', 'Repair {{ trigger.title }}'));
+    runner.forgetWorkflow(wfPath);
+    expect(runner.workflowChanged(store.task(task.id)!)).toBe(true);
+    runner.retry(task.id, 'impl');
+    await runner.idle();
+    expect(prompts().at(-1)).toContain('Fix x');
+    runner.refreshWorkflow(task.id);
+    runner.retry(task.id, 'impl');
+    await runner.idle();
+    expect(prompts().at(-1)).toContain('Repair x');
+  });
+
+  it('refuses the new version when it has no step where the task is', async () => {
+    const { runner, wfPath } = setup(LOOP, () => done('ok'), () => false);
+    const task = runner.startTask({ workflowPath: wfPath, title: 'x' });
+    await runner.idle();
+    writeFileSync(wfPath, 'name: Fix\nsteps:\n  other:\n    use: human\n    question: q\n    on: { approved: end }\n');
+    expect(() => runner.refreshWorkflow(task.id)).toThrow(/has no step "verify"/);
+  });
+
+  it('holds your message to a waiting agent until a slot is free', async () => {
+    const { store, runner, wfPath, fake } = setup(LOOP, (text, n, opts) => (text.includes('go on') ? done('ok') : text.startsWith('Fix busy') ? null : 'Which one?\n\nOUTCOME: needs_you'));
+    const waiting = runner.startTask({ workflowPath: wfPath, title: 'a' });
+    await waitFor(() => store.task(waiting.id)!.status === 'needs_you');
+    const b1 = runner.startTask({ workflowPath: wfPath, title: 'busy 1' });
+    const b2 = runner.startTask({ workflowPath: wfPath, title: 'busy 2' });
+    await waitFor(() => store.runsByStatus('running').length === 2);
+    await runner.message(waiting.id, 'go on', 'chat');
+    expect(fake.sent.some((s) => s.text === 'go on')).toBe(false);
+    expect(store.events(waiting.id).some((e) => e.payload.includes('slots are busy'))).toBe(true);
+    runner.stop(b1.id);
+    await waitFor(() => fake.sent.some((s) => s.text === 'go on'));
+    runner.stop(b2.id);
+  });
+
+  it('runs no more tasks of one workflow at a time than its concurrency', async () => {
+    const { store, runner, wfPath } = setup('concurrency: 1\n' + LOOP, () => null);
+    runner.startTask({ workflowPath: wfPath, title: 'a' });
+    runner.startTask({ workflowPath: wfPath, title: 'b' });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(store.runsByStatus('running')).toHaveLength(1);
+    expect(store.runsByStatus('queued')).toHaveLength(1);
+  });
+
+  it('records what each run cost, across a resumed session', async () => {
+    // Claude Code reports a running total for each process. The second turn is in the same process.
+    const { store, runner, wfPath } = setup(LOOP, (text, n) =>
+      n === 1 ? { text: 'Which?\n\nOUTCOME: needs_you', usage: { totalCostUsd: 0.4, tokensIn: 100, tokensOut: 10 } }
+        : n === 2 ? { text: done('ok'), usage: { totalCostUsd: 0.5, tokensIn: 50, tokensOut: 5 } }
+          : { text: 'Because.', usage: { totalCostUsd: 0.2, tokensIn: 20, tokensOut: 2 } });
+    const task = runner.startTask({ workflowPath: wfPath, title: 'x' });
+    await waitFor(() => store.task(task.id)!.status === 'needs_you');
+    await runner.message(task.id, 'the first', 'chat');
+    await runner.idle();
+    const run = store.runsForTask(task.id)[0];
+    expect(run.tokens_in).toBe(150);
+    expect(run.cost_usd).toBeCloseTo(0.5);
+    // A chat with the finished run resumes it in a new process, which counts from zero again.
+    await runner.message(task.id, 'why?', 'chat', { runId: run.id });
+    await waitFor(() => (store.run(run.id)!.tokens_out ?? 0) > 15);
+    expect(store.run(run.id)!.cost_usd).toBeCloseTo(0.7);
+    expect(store.run(run.id)!.tokens_out).toBe(17);
+  });
+
+  it('stops agent work when the task reaches its budget', async () => {
+    const { store, runner, wfPath } = setup('budget_usd: 1\n' + LOOP, () => ({ text: done('tried'), usage: { totalCostUsd: 0.6, tokensIn: 1, tokensOut: 1 } }), () => false);
+    const task = runner.startTask({ workflowPath: wfPath, title: 'x' });
+    await runner.idle();
+    const t = store.task(task.id)!;
+    expect(t.status).toBe('needs_you');
+    expect(t.inbox_reason).toBe('over_budget');
+    const impl = store.runsForTask(task.id).filter((r) => r.step_id === 'impl');
+    expect(impl).toHaveLength(3);
+    expect(impl[2].outcome).toBe('over_budget');
+  });
+
+  it('archives a finished task and refuses to retry it', async () => {
+    const { store, runner, wfPath } = setup(LOOP, () => done('ok'));
+    const task = runner.startTask({ workflowPath: wfPath, title: 'x' });
+    await runner.idle();
+    expect(() => runner.archive(task.id)).not.toThrow();
+    expect(store.task(task.id)!.archived_at).not.toBeNull();
+    expect(() => runner.retry(task.id, 'impl')).toThrow(/archived/);
+    runner.archive(task.id, false);
+    expect(store.task(task.id)!.archived_at).toBeNull();
+  });
+
+  it('runs no agent in another folder when the worktree is gone', async () => {
+    const { store, runner, wfPath } = setup(LOOP, () => done('ok'), () => true, join(tmpdir(), 'orstra-gone-' + Date.now()));
+    const task = runner.startTask({ workflowPath: wfPath, title: 'x' });
+    await runner.idle();
+    expect(store.runsForTask(task.id)[0].outcome).toBe('cant_do');
   });
 });

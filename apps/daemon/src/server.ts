@@ -7,11 +7,13 @@ import { MAX_FILE_BYTES, checkAttachments, cosFiles, mb, readAttachment, saveAtt
 import type { EventRow, RunRow, Store, TaskRow } from './db.ts';
 import type { Runner } from './runner.ts';
 import type { ChiefOfStaff } from './cos.ts';
+import type { Triggers } from './triggers.ts';
 import { gitDiff, gitInfo } from './git.ts';
 import { listWorkflows, resolveWorkflow } from './workflows.ts';
 export { listWorkflows, resolveWorkflow };
 import { AGENT_IDS, EFFORTS, PERMISSION_MODES, loadAgentConfig, saveAgentSettings, type AgentId } from './agentConfig.ts';
 import { COS_DIR, DB_PATH, HOME, PORT, SLOTS, WEB_DIST, WORKFLOW_DIRS, WORKTREES } from './paths.ts';
+import { guardOptionsFromEnv, refuseReason } from './guard.ts';
 
 const MIME: Record<string, string> = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.json': 'application/json', '.png': 'image/png' };
 /** An upload body: base64 of a file at the cap, plus the JSON around it. */
@@ -87,7 +89,7 @@ function parseEvent(e: EventRow) {
 /** How tasks, runs and worktrees look to the UI and to the chief of staff. */
 export function makeViews(store: Store, runner: Runner) {
   const stepTitle = (task: TaskRow, stepId: string) => {
-    try { return runner.workflow(task.workflow_path).steps[stepId]?.title ?? stepId; } catch { return stepId; }
+    try { return runner.workflowFor(task).steps[stepId]?.title ?? stepId; } catch { return stepId; }
   };
 
   const runView = (task: TaskRow, r: RunRow) => ({
@@ -95,8 +97,9 @@ export function makeViews(store: Store, runner: Runner) {
     status: r.status, outcome: r.outcome, agent: r.agent, sessionId: r.session_id,
     progress: r.progress ? (JSON.parse(r.progress) as Progress) : null, output: r.output,
     createdAt: r.created_at, startedAt: r.started_at, endedAt: r.ended_at,
-    openCommand: r.session_id && task.worktree ? `cd ${task.worktree} && claude --resume ${r.session_id}` : null,
-    forkCommand: r.session_id && task.worktree ? `cd ${task.worktree} && claude --resume ${r.session_id} --fork-session` : null,
+    costUsd: r.cost_usd, tokensIn: r.tokens_in, tokensOut: r.tokens_out,
+    openCommand: r.session_id && task.worktree ? (r.agent === 'codex' ? `cd ${task.worktree} && codex resume ${r.session_id}` : `cd ${task.worktree} && claude --resume ${r.session_id}`) : null,
+    forkCommand: r.session_id && task.worktree ? (r.agent === 'codex' ? `cd ${task.worktree} && codex fork ${r.session_id}` : `cd ${task.worktree} && claude --resume ${r.session_id} --fork-session`) : null,
     live: runner.isLive(r.id),
   });
 
@@ -110,16 +113,29 @@ export function makeViews(store: Store, runner: Runner) {
       currentStepTitle: t.current_step ? stepTitle(t, t.current_step) : null, inboxReason: t.inbox_reason,
       run: cur ? { status: cur.status, attempt: cur.attempt, kind: cur.kind } : null, agent: lastAgent?.agent ?? null,
       createdAt: t.created_at, updatedAt: t.updated_at,
+      cost: store.taskCost(t.id), prUrl: t.pr_url, source: t.source, archivedAt: t.archived_at,
     };
   };
 
-  const taskDetail = (t: TaskRow) => {
+  /** The permission question open for a task: which tool, and what it wants to do. */
+  const permissionView = (taskId: string) => {
+    const p = runner.pendingPermission(taskId);
+    if (!p) return null;
+    const input = JSON.stringify(p.input, null, 2);
+    return { id: p.id, runId: p.runId, tool: p.tool, summary: p.summary, input: input.length > 4000 ? input.slice(0, 4000) + '\n…' : input, ts: p.ts };
+  };
+
+  /**
+   * One task in full. `after` sends only the events after that event id (the UI keeps the rest), and
+   * `events: false` sends none (the Inbox shows no transcript).
+   */
+  const taskDetail = (t: TaskRow, opts: { after?: number; events?: boolean } = {}) => {
     const runs = store.runsForTask(t.id).map((r) => runView(t, r));
     let steps: { id: string; title: string; kind: string; agent: string | null; on: Record<string, string> }[] = [];
     let human: unknown = null;
     let track: { id: string; title: string; kind: string; state: 'done' | 'current' | 'todo' }[] = [];
     try {
-      const wf = runner.workflow(t.workflow_path);
+      const wf = runner.workflowFor(t);
       steps = Object.values(wf.steps).map((s) => ({
         id: s.id, title: s.title ?? s.id, kind: s.use, agent: s.agent ?? null,
         on: Object.fromEntries(Object.entries(s.on).map(([k, v]) => [k, v.goto === 'end' ? 'end' : wf.steps[v.goto]?.title ?? v.goto])),
@@ -140,21 +156,27 @@ const path = taskPath(wf, runs.map((r) => r.stepId), t.current_step);
     } catch (err) {
       steps = [];
     }
-    const events = store.events(t.id).map(parseEvent);
+    const events = opts.events === false ? [] : (opts.after !== undefined ? store.eventsAfter(t.id, opts.after) : store.events(t.id)).map(parseEvent);
     // An agent run that is waiting on you: it asked a question, answered you, or you stopped it.
     const agentWaiting = runs.find((r) => r.status === 'waiting' && r.kind === 'agent');
-    const lastMsg = agentWaiting ? [...events].reverse().find((e) => e.runId === agentWaiting.id && e.kind === 'message') : null;
+    const lastRow = agentWaiting ? store.lastRunEvent(agentWaiting.id, 'message') : undefined;
+    const lastMsg = lastRow ? parseEvent(lastRow) : null;
     const awaiting = agentWaiting ? { runId: agentWaiting.id, reason: t.inbox_reason, text: lastMsg?.text ?? null } : null;
     const working = runs.find((r) => r.kind === 'agent' && r.status === 'running' && r.live) ?? null;
     // Notes waiting for a step: written since that step last started, so its next run will read them.
     const notes: Record<string, { text: string; ts: number }[]> = {};
-    for (const e of events) {
-      if (e.kind !== 'note' || !e.step) continue;
+    for (const e of store.eventsOfKind(t.id, 'note').map(parseEvent)) {
+      if (!e.step) continue;
       const lastRun = [...runs].reverse().find((r) => r.stepId === e.step);
       if (lastRun && e.ts < lastRun.createdAt) continue;
       (notes[e.step] ??= []).push({ text: e.text, ts: e.ts });
     }
-    return { ...taskSummary(t), description: t.description, worktree: t.worktree, steps, track, notes, runs, human, awaiting, workingRunId: working?.id ?? null, events };
+    return {
+      ...taskSummary(t), description: t.description, worktree: t.worktree, steps, track, notes, runs, human, awaiting, workingRunId: working?.id ?? null,
+      worktreeGone: !!t.worktree && !existsSync(t.worktree),
+      events, eventsAfter: opts.after ?? null, workflowChanged: runner.workflowChanged(t), permission: permissionView(t.id),
+      lastSystem: (() => { const e = store.lastTaskEvent(t.id, 'system'); return e ? (JSON.parse(e.payload).text as string) : null; })(),
+    };
   };
 
   /** The task's worktree as a coding tool would show it: branch, changes, commits, and the checks that ran. */
@@ -166,7 +188,7 @@ const path = taskPath(wf, runs.map((r) => r.stepId), t.current_step);
       detail: (r.output ?? '').trim().split('\n').slice(-8).join('\n'), endedAt: r.ended_at,
     }));
     return { worktree: t.worktree, branch: info?.branch ?? null, base: info?.base ?? null, ahead: info?.ahead ?? 0, uncommitted: info?.uncommitted ?? 0,
-      files: info?.files ?? [], commits: info?.commits ?? [], checks, pr: null as null | { number: number; url: string; state: string } };
+      files: info?.files ?? [], commits: info?.commits ?? [], checks, pr: t.pr_url ? { url: t.pr_url } : null };
   };
 
   return { stepTitle, runView, taskSummary, taskDetail, gitView };
@@ -174,7 +196,7 @@ const path = taskPath(wf, runs.map((r) => r.stepId), t.current_step);
 
 export type Views = ReturnType<typeof makeViews>;
 
-export function buildApi(store: Store, runner: Runner, cos?: ChiefOfStaff) {
+export function buildApi(store: Store, runner: Runner, cos?: ChiefOfStaff, triggers?: Triggers) {
   const { runView, taskSummary, taskDetail, gitView } = makeViews(store, runner);
   const sessions = () => {
     const since = Date.now() - 24 * 3600_000;
@@ -183,8 +205,8 @@ export function buildApi(store: Store, runner: Runner, cos?: ChiefOfStaff) {
     const seen = new Set<string>();
     return rows.filter((r) => !seen.has(r.id) && seen.add(r.id)).map((r) => {
       const task = store.task(r.task_id)!;
-      const evs = store.events(r.task_id).filter((e) => e.run_id === r.id && ['message', 'tool', 'output'].includes(e.kind));
-      const last = evs.length ? parseEvent(evs[evs.length - 1]) : null;
+      const lastRow = store.lastRunEvent(r.id, 'message', 'tool', 'output');
+      const last = lastRow ? parseEvent(lastRow) : null;
       const firstLine = (s: string) => { const l = s.split('\n').find((x) => x.trim()) ?? ''; return l.length > 120 ? l.slice(0, 117) + '…' : l; };
       const progress = r.progress ? (JSON.parse(r.progress) as Progress) : null;
       const now = progress?.did ? firstLine(progress.did) : last ? firstLine(last.text ?? `${last.name} ${last.summary}`) : null;
@@ -197,7 +219,10 @@ export function buildApi(store: Store, runner: Runner, cos?: ChiefOfStaff) {
     const p = url.pathname;
     const m = (re: RegExp) => p.match(re);
     try {
-      if (req.method === 'GET' && p === '/api/tasks') return send(res, 200, store.tasks().map(taskSummary)), true;
+      if (req.method === 'GET' && p === '/api/tasks') {
+        const archived = url.searchParams.get('archived') === '1';
+        return send(res, 200, store.tasks().filter((t) => !!t.archived_at === archived).map(taskSummary)), true;
+      }
       if (req.method === 'POST' && p === '/api/tasks') {
         const b = await readJson(req);
         const task = runner.startTask({ workflowPath: resolveWorkflow(b.workflow), title: b.title, description: b.description, ref: b.ref, repo: b.repo });
@@ -206,7 +231,16 @@ export function buildApi(store: Store, runner: Runner, cos?: ChiefOfStaff) {
       let mm = m(/^\/api\/tasks\/([\w-]+)$/);
       if (req.method === 'GET' && mm) {
         const t = store.task(mm[1]);
-        return send(res, t ? 200 : 404, t ? taskDetail(t) : { error: 'No such task' }), true;
+        const after = url.searchParams.get('after');
+        return send(res, t ? 200 : 404, t ? taskDetail(t, { after: after !== null && after !== '' ? Number(after) : undefined }) : { error: 'No such task' }), true;
+      }
+      if ((mm = m(/^\/api\/tasks\/([\w-]+)\/(archive|unarchive)$/)) && req.method === 'POST') {
+        runner.archive(mm[1], mm[2] === 'archive');
+        return send(res, 200, { ok: true }), true;
+      }
+      if ((mm = m(/^\/api\/tasks\/([\w-]+)\/cleanup$/)) && req.method === 'POST') {
+        const b = await readJson(req);
+        return send(res, 200, { ok: true, text: runner.cleanup(mm[1], { force: b.force === true }) }), true;
       }
       if ((mm = m(/^\/api\/tasks\/([\w-]+)\/messages$/)) && req.method === 'POST') {
         const b = await readJson(req);
@@ -239,12 +273,29 @@ export function buildApi(store: Store, runner: Runner, cos?: ChiefOfStaff) {
         runner.retry(mm[1], b.stepId, b.note);
         return send(res, 200, { ok: true }), true;
       }
+      if ((mm = m(/^\/api\/tasks\/([\w-]+)\/workflow\/refresh$/)) && req.method === 'POST') {
+        runner.refreshWorkflow(mm[1]);
+        return send(res, 200, { ok: true }), true;
+      }
       if ((mm = m(/^\/api\/tasks\/([\w-]+)\/interrupt$/)) && req.method === 'POST') {
         runner.interrupt(mm[1]);
         return send(res, 200, { ok: true }), true;
       }
       if ((mm = m(/^\/api\/tasks\/([\w-]+)\/stop$/)) && req.method === 'POST') {
         runner.stop(mm[1]);
+        return send(res, 200, { ok: true }), true;
+      }
+      // Permission questions from task agents (perm-mcp.ts asks; you answer in the UI).
+      if (req.method === 'POST' && p === '/api/permissions') {
+        const b = await readJson(req);
+        return send(res, 200, runner.requestPermission(String(b.runId ?? ''), String(b.tool ?? 'unknown'), b.input && typeof b.input === 'object' ? b.input : {})), true;
+      }
+      if ((mm = m(/^\/api\/permissions\/([\w-]+)\/wait$/)) && req.method === 'POST') {
+        return send(res, 200, { decision: await runner.waitPermission(mm[1]) }), true;
+      }
+      if ((mm = m(/^\/api\/permissions\/([\w-]+)\/answer$/)) && req.method === 'POST') {
+        const b = await readJson(req);
+        runner.answerPermission(mm[1], b.allow === true, { always: b.always === true, message: typeof b.message === 'string' ? b.message : undefined });
         return send(res, 200, { ok: true }), true;
       }
       if ((mm = m(/^\/api\/runs\/([\w-]+)\/decide$/)) && req.method === 'POST') {
@@ -320,14 +371,16 @@ export function buildApi(store: Store, runner: Runner, cos?: ChiefOfStaff) {
         if ((mm = m(/^\/api\/cos\/watches\/([\w-]+)\/remove$/)) && req.method === 'POST') return cos.removeWatch(mm[1]), send(res, 200, { ok: true }), true;
       }
       if (req.method === 'GET' && p === '/api/settings') {
-        return send(res, 200, { home: HOME, database: DB_PATH, worktrees: WORKTREES, workflowDirs: WORKFLOW_DIRS, port: PORT, slots: SLOTS, agents: agents(), agentConfig: loadAgentConfig(), efforts: EFFORTS, permissionModes: PERMISSION_MODES, envPermissionMode: process.env.ORSTRA_CLAUDE_PERMISSION ?? null }), true;
+        return send(res, 200, { home: HOME, database: DB_PATH, worktrees: WORKTREES, workflowDirs: WORKFLOW_DIRS, port: PORT, slots: SLOTS, agents: agents(), agentConfig: loadAgentConfig(), efforts: EFFORTS,
+          triggers: triggers?.view() ?? [], linear: !!process.env.LINEAR_API_KEY,
+          cost: { today: store.costSince(new Date().setHours(0, 0, 0, 0)), week: store.costSince(Date.now() - 7 * 86400_000) }, permissionModes: PERMISSION_MODES, envPermissionMode: process.env.ORSTRA_CLAUDE_PERMISSION ?? null }), true;
       }
       if ((mm = m(/^\/api\/settings\/agents\/([\w-]+)$/)) && req.method === 'PUT') {
         if (!AGENT_IDS.includes(mm[1] as AgentId)) return send(res, 404, { error: 'No such agent' }), true;
         return send(res, 200, saveAgentSettings(mm[1] as AgentId, await readJson(req))), true;
       }
       if (req.method === 'GET' && p === '/api/sessions') return send(res, 200, sessions()), true;
-      if (req.method === 'GET' && p === '/api/inbox') return send(res, 200, store.tasks().filter((t) => t.status === 'needs_you').map(taskDetail)), true;
+      if (req.method === 'GET' && p === '/api/inbox') return send(res, 200, store.tasks().filter((t) => t.status === 'needs_you' && !t.archived_at).map((t) => taskDetail(t, { events: false }))), true;
       if (req.method === 'GET' && p === '/api/workflows') return send(res, 200, listWorkflows()), true;
     } catch (err: any) {
       return send(res, 400, { error: err?.message ?? String(err) }), true;
@@ -336,20 +389,40 @@ export function buildApi(store: Store, runner: Runner, cos?: ChiefOfStaff) {
   };
 }
 
-export function startServer(store: Store, runner: Runner, port: number, cos?: ChiefOfStaff) {
-  const api = buildApi(store, runner, cos);
+export function startServer(store: Store, runner: Runner, port: number, cos?: ChiefOfStaff, triggers?: Triggers) {
+  const api = buildApi(store, runner, cos, triggers);
   const clients = new Set<ServerResponse>();
   const broadcast = (e: unknown) => {
     const line = `data: ${JSON.stringify(e)}\n\n`;
     for (const c of clients) c.write(line);
   };
+  // An agent can stream many events a second. Send each task's change at most once per 100 ms,
+  // so the UI refetches once for a burst and not once per line.
+  const pending = new Set<string>();
+  let flush: NodeJS.Timeout | null = null;
   runner.on('change', (e: { taskId: string }) => {
-    broadcast(e);
     cos?.onTaskChange(e.taskId);
+    pending.add(e.taskId);
+    flush ??= setTimeout(() => {
+      flush = null;
+      const ids = [...pending];
+      pending.clear();
+      for (const taskId of ids) broadcast({ taskId });
+    }, 100);
   });
   cos?.on('change', broadcast);
 
+  // The port the server really has (port 0 in tests means "any free one").
+  let guard = guardOptionsFromEnv(port);
   const server = createServer(async (req, res) => {
+    if (req.url?.startsWith('/api/')) {
+      const why = refuseReason(req.method, req.headers, guard);
+      // why is null for a request from Orstra's UI, the CLI or an MCP server.
+      if (why) {
+        req.resume();
+        return send(res, 403, { error: `Refused: ${why}` });
+      }
+    }
     if (req.url === '/api/events') {
       res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
       res.write(': connected\n\n');
@@ -370,6 +443,10 @@ export function startServer(store: Store, runner: Runner, port: number, cos?: Ch
     if (!file.startsWith(WEB_DIST) || !existsSync(file) || statSync(file).isDirectory()) file = join(WEB_DIST, 'index.html');
     res.writeHead(200, { 'content-type': MIME[extname(file)] ?? 'application/octet-stream' });
     res.end(readFileSync(file));
+  });
+  server.on('listening', () => {
+    const addr = server.address();
+    if (addr && typeof addr === 'object') guard = guardOptionsFromEnv(addr.port);
   });
   server.listen(port, '127.0.0.1');
   return server;

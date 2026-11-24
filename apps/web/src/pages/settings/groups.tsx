@@ -5,6 +5,7 @@ import { AgentGroup } from './Agent';
 import { AppearanceGroup } from './Appearance';
 import { FilesGroup } from './Files';
 import { RunnerGroup } from './Runner';
+import { TriggersGroup, UsageGroup } from './Triggers';
 
 /**
  * The registry: every group Settings can show. This is the only file that changes when a
@@ -39,6 +40,22 @@ const STATIC_GROUPS: SettingsGroup[] = [
     render: () => <AppearanceGroup />,
   },
   {
+    id: 'triggers',
+    label: 'Triggers',
+    category: 'general',
+    blurb: 'What starts tasks on its own: Linear issues and schedules.',
+    keywords: ['linear', 'schedule', 'cron', 'ticket', 'label', 'LINEAR_API_KEY', 'automatic'],
+    render: ({ settings }) => <TriggersGroup s={settings} />,
+  },
+  {
+    id: 'usage',
+    label: 'Usage',
+    category: 'general',
+    blurb: 'What agent runs cost today and this week.',
+    keywords: ['cost', 'money', 'tokens', 'budget', 'spend', 'dollars'],
+    render: ({ settings }) => <UsageGroup s={settings} />,
+  },
+  {
     id: 'runner',
     label: 'Runner',
     category: 'machine',
@@ -68,7 +85,7 @@ function agentGroups(settings: Settings | undefined): SettingsGroup[] {
     blurb: `Whether this machine can run ${agent.name}, and the defaults its steps use.`,
     // Only the fields this agent really shows, so a search never offers a group that
     // doesn't hold what was searched for. Effort and permission mode are Claude's alone.
-    keywords: ['agent', 'model', agent.id, agent.command, ...(agent.id === 'claude-code' ? ['effort', 'permission mode'] : [])],
+    keywords: ['agent', 'model', agent.id, agent.command, ...(agent.id === 'claude-code' ? ['effort', 'permission mode', 'ask for permission'] : [])],
     render: ({ settings: s, reload }) => <AgentGroup s={s} agent={agent} onSaved={reload} />,
   }));
 }

@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import { api, errorMessage, type TaskDetail } from '../api';
-import { humanize, reasonText, taskLabel } from '../lib/format';
+import { agentOf, humanize, reasonText, taskLabel } from '../lib/format';
 import { StopIcon, StuckCircle, WaitCircle } from './Icons';
 import { Modal, useToast } from './Overlay';
 import { ProgressList } from './ProgressList';
@@ -144,7 +144,76 @@ const AWAITING_TITLE: Record<string, string> = {
   reply: 'Claude Code replied',
   paused: 'You stopped Claude Code',
   restarted: 'Orstra restarted mid-run',
+  no_outcome: 'Claude Code ended without an outcome',
 };
+
+/**
+ * A tool call that waits for your OK. Allow runs it once; "Allow for this task" lets every later call
+ * of that tool in this task pass without a question. Refuse sends your reason to the agent.
+ */
+export function PermissionCard({ task }: { task: TaskDetail }) {
+  const toast = useToast();
+  const p = task.permission;
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  if (!p) return null;
+  const run = task.runs.find((r) => r.id === p.runId);
+  const answer = async (allow: boolean, always = false) => {
+    setBusy(true);
+    try {
+      await api.answerPermission(p.id, { allow, always, message: allow ? undefined : reason.trim() || undefined });
+      toast(allow ? `Allowed ${p.tool}` : `Refused ${p.tool}`);
+    } catch (err) {
+      toast(errorMessage(err), { error: true });
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <section className="lx-card lx-await" aria-label="Permission question">
+      <div className="lx-card-h">
+        <WaitCircle />
+        <span style={{ color: 'var(--ink)', fontWeight: 500 }}>
+          {run ? agentOf(run).name : 'The agent'} wants to use {p.tool}
+        </span>
+        {run && (
+          <span>
+            · {run.stepTitle}
+            {run.attempt > 1 ? ` · attempt ${run.attempt}` : ''}
+          </span>
+        )}
+      </div>
+      {p.summary && <p className="lx-awaittext lx-mono">{p.summary}</p>}
+      <details>
+        <summary className="lx-hint" style={{ cursor: 'pointer' }}>
+          Full input
+        </summary>
+        <pre className="ox-pre">{p.input}</pre>
+      </details>
+      <input
+        className="lx-input"
+        aria-label="Reason to refuse (optional)"
+        placeholder="If you refuse: what should it do instead? (optional)"
+        value={reason}
+        onChange={(e) => setReason(e.target.value)}
+      />
+      <div className="lx-card-f">
+        <span className="lx-hint">The permission mode does not allow this tool, so Orstra asks you.</span>
+        <div className="lx-push">
+          <button className="lx-btn lx-dan" disabled={busy} onClick={() => void answer(false)}>
+            Refuse
+          </button>
+          <button className="lx-btn" disabled={busy} onClick={() => void answer(true, true)}>
+            Allow for this task
+          </button>
+          <button className="lx-btn lx-pri" disabled={busy} onClick={() => void answer(true)}>
+            Allow once
+          </button>
+        </div>
+      </div>
+    </section>
+  );
+}
 
 /** An agent run waiting on you. Answer it with the chat composer. */
 export function AwaitingCard({ task, children }: { task: TaskDetail; children?: ReactNode }) {
@@ -174,7 +243,8 @@ export function AwaitingCard({ task, children }: { task: TaskDetail; children?: 
 /** Shown when a task needs you but there's no decision to make: retry or stop. */
 export function StuckBanner({ task, onDone }: { task: TaskDetail; onDone?: () => void }) {
   const [modal, setModal] = useState<'retry' | 'stop' | null>(null);
-  const lastSystem = [...task.events].reverse().find((e) => e.kind === 'system');
+  const fromEvents = [...task.events].reverse().find((e) => e.kind === 'system');
+  const lastText = fromEvents && fromEvents.kind === 'system' ? fromEvents.text : task.lastSystem ?? null;
   const lastRun = [...task.runs].reverse().find((r) => r.stepId === task.currentStep) ?? task.runs[task.runs.length - 1];
   return (
     <section className="lx-card lx-stuck" aria-label="Needs you">
@@ -182,7 +252,7 @@ export function StuckBanner({ task, onDone }: { task: TaskDetail; onDone?: () =>
         <StuckCircle />
         <span style={{ color: 'var(--red-fg)', fontWeight: 500 }}>{reasonText(task.inboxReason)}</span>
       </div>
-      {lastSystem && lastSystem.kind === 'system' && <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.55 }}>{lastSystem.text}</p>}
+      {lastText && <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.55 }}>{lastText}</p>}
       {lastRun?.progress && (
         <div>
           <div className="lx-hint" style={{ marginBottom: 6 }}>

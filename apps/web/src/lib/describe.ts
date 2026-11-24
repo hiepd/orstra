@@ -44,7 +44,12 @@ export function describeTask(task: TaskDetail): { now: string; next: string } {
             ? `${agent} answered you during ${step}${attempt} and is waiting for your reply.`
             : r === 'paused'
               ? `You stopped ${agent} during ${step}${attempt}. It is waiting for you to say what to do next.`
-              : `Orstra restarted while ${step} was running. Message ${agent} in Chat to pick the session back up, or re-run the step.`;
+              : r === 'permission'
+                ? `${agent} wants to use a tool during ${step}${attempt} that needs your OK.`
+                : r === 'no_outcome'
+                  ? `${agent} ended its turn during ${step}${attempt} without saying whether the step is done.`
+                  : `Orstra restarted while ${step} was running. Message ${agent} in Chat to pick the session back up, or re-run the step.`;
+      if (r === 'permission') return { now, next: `When you allow or refuse it, the same session continues. Then ${todo.length ? joinSteps(todo) : 'the task finishes'}.` };
       return { now, next: `When you reply in Chat, the same session continues. Then ${todo.length ? joinSteps(todo) : 'the task finishes'}.` };
     }
     case 'stuck':

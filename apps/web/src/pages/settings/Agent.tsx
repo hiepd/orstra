@@ -12,6 +12,7 @@ function clean(a: AgentSettings): AgentSettings {
   if (a.model?.trim()) out.model = a.model.trim();
   if (a.effort) out.effort = a.effort;
   if (a.permissionMode) out.permissionMode = a.permissionMode;
+  if (a.askPermission === false) out.askPermission = false;
   return out;
 }
 
@@ -45,15 +46,15 @@ export function AgentGroup({ s, agent, onSaved }: { s: Settings; agent: Settings
       note={
         <>
           Agents run with your own setup: your skills, hooks and MCP servers. A model set on a workflow step wins over the default here. Saved in ~/.orstra/agents.json.
-          {!isClaude && ' Codex steps aren’t supported yet, so these settings take effect once they are.'}
+          {!isClaude && ' Codex steps run with codex exec in a workspace-write sandbox (ORSTRA_CODEX_SANDBOX).'}
         </>
       }
     >
       <SettingsValue
         label="Status"
         help={agent.path ? shortPath(agent.path) : `The “${agent.command}” command isn’t on the daemon’s PATH`}
-        value={agent.path ? (isClaude ? 'Ready' : 'Installed · not wired up yet') : 'Not found'}
-        ok={isClaude ? !!agent.path : undefined}
+        value={agent.path ? 'Ready' : 'Not found'}
+        ok={!!agent.path}
       />
       <SettingsRow label="Default model" help="Used when a step doesn’t set a model. Empty means the agent’s own default.">
         <input
@@ -93,6 +94,14 @@ export function AgentGroup({ s, agent, onSaved }: { s: Settings; agent: Settings
                 </option>
               ))}
             </select>
+          </SettingsRow>
+          <SettingsRow label="Ask for permission" help="On: a tool the permission mode does not allow comes to your Inbox as a question. Off: Claude Code refuses it.">
+            <input
+              type="checkbox"
+              aria-label="Ask for permission in the Inbox"
+              checked={draft.askPermission !== false}
+              onChange={(e) => setDraft({ ...draft, askPermission: e.target.checked ? undefined : false })}
+            />
           </SettingsRow>
         </>
       )}

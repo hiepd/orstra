@@ -1,12 +1,13 @@
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import { FINISH_INSTRUCTIONS, parseAgentResult, parseWorkflow, renderTemplate, route, stripProgressBlock, type Progress, type Step, type Workflow } from '@orstra/core';
+import { existsSync, readFileSync } from 'node:fs';
+import { FINISH_INSTRUCTIONS, parseAgentResult, parseWorkflow, renderTemplate, route, stripProgressBlock, switchCase, type Progress, type Step, type Workflow } from '@orstra/core';
 import { withFiles, type Attachment } from './attachments.ts';
-import type { Executors, LiveSession, StreamEvent, TurnEnd } from './executors.ts';
+import { summarizeTool, type Executors, type LiveSession, type StreamEvent, type TurnEnd, type TurnUsage } from './executors.ts';
 import type { RunRow, Store, TaskRow } from './db.ts';
 import { locateWorkflow } from './workflows.ts';
 import { runAction } from './actions.ts';
+import { cleanupWorktree } from './cleanup.ts';
 
 export interface StartTaskInput {
   workflowPath: string;
@@ -16,6 +17,8 @@ export interface StartTaskInput {
   repo?: string;
   /** Who asked: 'cos' when the chief of staff started it. */
   via?: Via;
+  /** Where it came from, e.g. `linear:<issue id>` for a task a trigger started. */
+  source?: string;
 }
 
 /** chat = talk to the agent's session; note = hand to a step's next run; ask = a forked copy answers. */
@@ -30,7 +33,34 @@ export interface RunnerOptions {
   createWorktree: (taskId: string, repo?: string) => string;
   /** After an agent finishes a turn with an outcome, wait this long for a follow-up message before closing it. */
   turnGraceMs?: number;
+  /** How long a step may work when it sets no `timeout:`. 0 = no limit. */
+  defaultTimeoutMs?: { agent?: number; gate?: number };
 }
+
+/** The limits when a step sets no `timeout:`: ORSTRA_AGENT_TIMEOUT_MIN (120) and ORSTRA_GATE_TIMEOUT_MIN (30). */
+export function defaultTimeoutsFromEnv(): { agent: number; gate: number } {
+  const min = (v: string | undefined, d: number) => (v === undefined || v === '' ? d : Number(v)) * 60_000;
+  return { agent: min(process.env.ORSTRA_AGENT_TIMEOUT_MIN, 120), gate: min(process.env.ORSTRA_GATE_TIMEOUT_MIN, 30) };
+}
+
+/** Claude Code's answer to a permission question: run the tool (maybe with changed input), or not. */
+export type PermissionDecision = { behavior: 'allow'; updatedInput: Record<string, unknown> } | { behavior: 'deny'; message: string };
+
+/** A tool call that waits for your OK. */
+export interface PendingPermission {
+  id: string;
+  taskId: string;
+  runId: string;
+  tool: string;
+  input: Record<string, unknown>;
+  summary: string;
+  ts: number;
+  decision?: PermissionDecision;
+  waiters: ((d: PermissionDecision) => void)[];
+}
+
+/** Sent once when an agent ends a turn with no OUTCOME line, before the task goes to the Inbox. */
+export const NUDGE = 'Your last message had no OUTCOME line, so Orstra cannot tell if the step is finished. If you are finished, reply with only the "## Progress" block and the OUTCOME line. If you are not finished, continue the work and end with them.';
 
 interface Live {
   session: LiveSession;
@@ -39,6 +69,10 @@ interface Live {
   humanSpoke: boolean;
   sendSeq: number;
   finished: boolean;
+  /** Orstra already asked for the missing OUTCOME line once. */
+  nudged: boolean;
+  /** The run's cost before this process started; Claude Code counts each process from zero. */
+  baseCost: number;
 }
 
 const id = (p: string) => `${p}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
@@ -46,9 +80,19 @@ const SLOT_KINDS = new Set(['agent', 'gate']);
 
 export class Runner extends EventEmitter {
   private workflows = new Map<string, Workflow>();
+  /** Task id -> the parse of the workflow copy the task started with. */
+  private snapshots = new Map<string, Workflow>();
+  /** Run id -> chat messages that wait for a free slot before they go in. */
+  private held = new Map<string, { taskId: string; body: string }[]>();
   private controllers = new Map<string, AbortController>();
   private live = new Map<string, Live>();
   private timers = 0;
+  /** Run id -> the timer that stops it when it works longer than its timeout. */
+  private deadlines = new Map<string, NodeJS.Timeout>();
+  /** Runs that hit their timeout, so the gate's abort reads as a timeout and not as a stop. */
+  private timedOut = new Set<string>();
+  /** Permission questions by id, open or answered in the last minute. */
+  private permissions = new Map<string, PendingPermission>();
 
   constructor(private store: Store, private exec: Executors, private opts: RunnerOptions) {
     super();
@@ -64,9 +108,47 @@ export class Runner extends EventEmitter {
     return wf;
   }
 
-  /** Drop the cached parse of a workflow file after it was edited, so the next step reads the new version. */
+  /** Drop the cached parse of a workflow file after it was edited, so the next task reads the new version. */
   forgetWorkflow(path: string) {
     this.workflows.delete(path);
+  }
+
+  /** The workflow a task follows: the copy it started with, or the file for a task from before copies. */
+  workflowFor(task: TaskRow): Workflow {
+    if (!task.workflow_yaml) return this.workflow(task.workflow_path);
+    let wf = this.snapshots.get(task.id);
+    if (!wf) {
+      wf = parseWorkflow(task.workflow_yaml);
+      this.snapshots.set(task.id, wf);
+    }
+    return wf;
+  }
+
+  /** true when the workflow file changed after the task started, so "use the new version" has an effect. */
+  workflowChanged(task: TaskRow): boolean {
+    if (!task.workflow_yaml) return false;
+    try {
+      return readFileSync(locateWorkflow(task.workflow_path), 'utf8') !== task.workflow_yaml;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Move a task to the current version of its workflow file. It refuses when the step the task is at
+   * is gone from the new version, because the task would then have nowhere to be.
+   */
+  refreshWorkflow(taskId: string, via?: Via) {
+    const task = this.store.task(taskId);
+    if (!task) throw new Error('No such task.');
+    const yaml = readFileSync(locateWorkflow(task.workflow_path), 'utf8');
+    const wf = parseWorkflow(yaml);
+    if (task.current_step && !wf.steps[task.current_step]) {
+      throw new Error(`The new version has no step "${task.current_step}", where this task is now. Add it back, or retry another step first.`);
+    }
+    this.store.updateTask(taskId, { workflow_yaml: yaml, workflow_name: wf.name });
+    this.snapshots.delete(taskId);
+    this.event(taskId, null, 'system', { text: `Now follows the current version of ${wf.name}${byCos(via)}` });
   }
 
   isLive(runId: string): boolean {
@@ -102,7 +184,8 @@ export class Runner extends EventEmitter {
   }
 
   startTask(input: StartTaskInput): TaskRow {
-    const wf = this.workflow(input.workflowPath);
+    const yaml = readFileSync(locateWorkflow(input.workflowPath), 'utf8');
+    const wf = parseWorkflow(yaml);
     const taskId = id('t');
     const worktree = this.opts.createWorktree(taskId, input.repo ?? wf.repo);
     const now = Date.now();
@@ -110,6 +193,7 @@ export class Runner extends EventEmitter {
       id: taskId, ref: input.ref ?? null, title: input.title, description: input.description ?? '',
       workflow_path: input.workflowPath, workflow_name: wf.name, status: 'running', current_step: wf.start,
       inbox_reason: null, edge_counts: '{}', worktree, created_at: now, updated_at: now,
+      workflow_yaml: yaml, pr_url: null, source: input.source ?? null, archived_at: null,
     };
     this.store.insertTask(task);
     this.event(taskId, null, 'system', { text: `Started ${wf.name}${byCos(input.via)}` });
@@ -119,26 +203,55 @@ export class Runner extends EventEmitter {
   }
 
   private queueStep(task: TaskRow, stepId: string) {
-    const step = this.workflow(task.workflow_path).steps[stepId];
+    const step = this.workflowFor(task).steps[stepId];
     const attempt = this.store.runsForTask(task.id).filter((r) => r.step_id === stepId).length + 1;
     const run: RunRow = {
       id: id('r'), task_id: task.id, step_id: stepId, kind: step.use, attempt, status: 'queued', outcome: null,
       agent: step.use === 'agent' ? step.agent ?? 'claude-code' : null, session_id: null, progress: null, output: null,
-      created_at: Date.now(), started_at: null, ended_at: null,
+      created_at: Date.now(), started_at: null, ended_at: null, cost_usd: null, tokens_in: null, tokens_out: null,
     };
     this.store.insertRun(run);
     this.store.updateTask(task.id, { current_step: stepId, status: 'running', inbox_reason: null });
     this.changed(task.id);
   }
 
-  /** Start queued runs while there are free slots. Human, switch and action steps don't take a slot. */
+  /** Agent and gate runs that work now: each one takes a slot. */
+  private busySlots(): RunRow[] {
+    return this.store.runsByStatus('running').filter((r) => SLOT_KINDS.has(r.kind));
+  }
+
+  /**
+   * Start queued runs while there are free slots. Human, switch and action steps don't take a slot.
+   * Chat messages that wait for a slot go first: you sent them before the queued runs could start.
+   * A workflow's `concurrency` caps how many of its tasks work at the same time.
+   */
   pump() {
-    let busy = this.store.runsByStatus('running').filter((r) => SLOT_KINDS.has(r.kind)).length;
+    const running = this.busySlots();
+    let busy = running.length;
+    for (const [runId, msgs] of [...this.held]) {
+      if (busy >= this.opts.slots) break;
+      const run = this.store.run(runId);
+      const task = run && this.store.task(run.task_id);
+      this.held.delete(runId);
+      if (!run || !task || task.status === 'stopped' || run.status !== 'waiting') continue;
+      busy++;
+      for (const m of msgs) this.deliver(task, run, m.body);
+    }
+    const perWorkflow = new Map<string, number>();
+    for (const r of running) {
+      const t = this.store.task(r.task_id);
+      if (t) perWorkflow.set(t.workflow_path, (perWorkflow.get(t.workflow_path) ?? 0) + 1);
+    }
     for (const run of this.store.runsByStatus('queued')) {
       const task = this.store.task(run.task_id);
       if (!task || task.status === 'stopped') continue;
       if (SLOT_KINDS.has(run.kind)) {
         if (busy >= this.opts.slots) continue;
+        let cap = Infinity;
+        try { cap = this.workflowFor(task).concurrency; } catch { /* a broken workflow fails in execute() */ }
+        const n = perWorkflow.get(task.workflow_path) ?? 0;
+        if (n >= cap) continue;
+        perWorkflow.set(task.workflow_path, n + 1);
         busy++;
       }
       this.store.updateRun(run.id, { status: 'running', started_at: Date.now() });
@@ -224,9 +337,12 @@ export class Runner extends EventEmitter {
       }
       this.event(task.id, run.id, e.kind, e);
     };
-    const live: Live = { session: null as unknown as LiveSession, routes: opts.routes, humanSpoke: false, sendSeq: 0, finished: false };
+    const live: Live = { session: null as unknown as LiveSession, routes: opts.routes, humanSpoke: false, sendSeq: 0, finished: false, nudged: false, baseCost: this.store.run(run.id)?.cost_usd ?? 0 };
     live.session = this.exec.session((run.agent as 'claude-code' | 'codex') ?? 'claude-code', {
-      cwd: task.worktree ?? process.cwd(), sessionId: opts.sessionId, resume: opts.resume, model: opts.model,
+      cwd: task.worktree ?? process.cwd(), sessionId: opts.sessionId, resume: opts.resume, model: opts.model, runId: run.id,
+      onSessionId: (sid) => {
+        if (this.store.run(run.id)?.session_id !== sid) this.store.updateRun(run.id, { session_id: sid });
+      },
       onEvent, onTurn: (t) => this.onTurn(task.id, run.id, t),
     });
     this.live.set(run.id, live);
@@ -239,6 +355,7 @@ export class Runner extends EventEmitter {
   private onTurn(taskId: string, runId: string, t: TurnEnd) {
     const live = this.live.get(runId);
     if (!live || live.finished) return;
+    if (t.usage) this.recordUsage(runId, live, t.usage);
 
     if (t.interrupted) {
       this.event(taskId, runId, 'system', { text: 'Stopped. Tell Claude Code what to do next.' });
@@ -258,16 +375,56 @@ export class Runner extends EventEmitter {
     }
 
     const parsed = parseAgentResult(t.text);
+    const ends = parsed.hasOutcome && parsed.outcome !== 'needs_you';
+    if (!ends && this.overBudget(taskId)) {
+      live.finished = true;
+      live.session.end();
+      return this.finish(taskId, runId, 'over_budget');
+    }
     if (!parsed.hasOutcome && live.humanSpoke) {
       // It answered you mid-conversation without finishing the step: wait for your reply.
       return this.markWaiting(taskId, runId, 'reply');
+    }
+    if (!parsed.hasOutcome) {
+      // No OUTCOME line: a cut-off reply or a forgotten block. Never read that as done.
+      if (!live.nudged) {
+        live.nudged = true;
+        this.event(taskId, runId, 'system', { text: 'Claude Code ended its turn with no OUTCOME line. Orstra asked it to finish the step.' });
+        live.session.send(NUDGE);
+        return;
+      }
+      this.event(taskId, runId, 'system', { text: 'Still no OUTCOME line. Tell Claude Code what to do next, or retry the step.' });
+      return this.markWaiting(taskId, runId, 'no_outcome');
     }
     // A question isn't progress: record the entry only when the step actually ends.
     if (parsed.outcome === 'needs_you') return this.markWaiting(taskId, runId, 'question');
     this.store.updateRun(runId, { progress: JSON.stringify(parsed.progress) });
     this.event(taskId, runId, 'progress', parsed.progress);
+    this.emit('progress', { taskId, runId, outcome: parsed.outcome });
 
     this.closeAfterGrace(live, () => this.finish(taskId, runId, parsed.outcome));
+  }
+
+  /** Add one turn's cost and tokens to the run. */
+  private recordUsage(runId: string, live: Live, u: TurnUsage) {
+    const run = this.store.run(runId);
+    if (!run) return;
+    const patch: Partial<RunRow> = { tokens_in: (run.tokens_in ?? 0) + u.tokensIn, tokens_out: (run.tokens_out ?? 0) + u.tokensOut };
+    if (u.totalCostUsd !== undefined) patch.cost_usd = live.baseCost + u.totalCostUsd;
+    this.store.updateRun(runId, patch);
+  }
+
+  /** true when the task's runs cost as much as its workflow's `budget_usd`, or more. Says so on the task. */
+  private overBudget(taskId: string): boolean {
+    const task = this.store.task(taskId);
+    if (!task) return false;
+    const cap = this.workflowFor(task).budgetUsd;
+    if (cap === undefined) return false;
+    const usd = this.store.taskCost(taskId).usd;
+    if (usd < cap) return false;
+    const money = (v: number) => '$' + v.toFixed(2);
+    this.event(taskId, null, 'system', { text: `This task cost ${money(usd)}, which reaches its budget of ${money(cap)}. Orstra stopped the agent work. Raise budget_usd in the workflow, or retry to continue.` });
+    return true;
   }
 
   /** Close the session unless you send another message within the grace period. */
@@ -283,15 +440,107 @@ export class Runner extends EventEmitter {
     }, this.opts.turnGraceMs ?? 1500);
   }
 
-  private markWaiting(taskId: string, runId: string, reason: 'question' | 'reply' | 'paused') {
+  private markWaiting(taskId: string, runId: string, reason: 'question' | 'reply' | 'paused' | 'no_outcome' | 'permission') {
+    this.disarm(runId);
     this.store.updateRun(runId, { status: 'waiting' });
     this.store.updateTask(taskId, { status: 'needs_you', inbox_reason: reason });
     this.changed(taskId);
     this.pump();
   }
 
+  /** The tools you allowed for every later call in this task. */
+  private allowedTools(taskId: string): string[] {
+    try { return JSON.parse(this.store.get(`perm-allow:${taskId}`) ?? '[]') as string[]; } catch { return []; }
+  }
+
+  /** The permission question open for a task, if any. */
+  pendingPermission(taskId: string): PendingPermission | undefined {
+    return [...this.permissions.values()].find((p) => p.taskId === taskId && !p.decision);
+  }
+
+  /**
+   * An agent wants to run a tool that its permission mode does not allow. The run waits on you, and
+   * the question goes to the Inbox. A tool you allowed for the whole task passes at once.
+   */
+  requestPermission(runId: string, tool: string, input: Record<string, unknown>): { id: string; decision?: PermissionDecision } {
+    const run = this.store.run(runId);
+    const task = run && this.store.task(run.task_id);
+    const id = `p-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    if (!run || !task || task.status === 'stopped' || (run.status !== 'running' && run.status !== 'waiting')) {
+      return { id, decision: { behavior: 'deny', message: 'This run is no longer active in Orstra.' } };
+    }
+    const summary = summarizeTool(tool, input);
+    if (this.allowedTools(task.id).includes(tool)) {
+      this.event(task.id, runId, 'system', { text: `Allowed ${tool}: ${summary} (you allowed ${tool} for this task).` });
+      return { id, decision: { behavior: 'allow', updatedInput: input } };
+    }
+    this.permissions.set(id, { id, taskId: task.id, runId, tool, input, summary, ts: Date.now(), waiters: [] });
+    this.event(task.id, runId, 'permission', { id, tool, summary });
+    this.markWaiting(task.id, runId, 'permission');
+    return { id };
+  }
+
+  /** Wait up to `ms` for the answer; null means "still open, ask again". */
+  waitPermission(id: string, ms = 25_000): Promise<PermissionDecision | null> {
+    const p = this.permissions.get(id);
+    if (!p) return Promise.resolve({ behavior: 'deny', message: 'Orstra lost this question (it restarted). Ask again in your reply.' });
+    if (p.decision) return Promise.resolve(p.decision);
+    return new Promise((resolve) => {
+      const t = setTimeout(() => {
+        p.waiters = p.waiters.filter((w) => w !== done);
+        resolve(null);
+      }, ms);
+      t.unref?.();
+      const done = (d: PermissionDecision) => {
+        clearTimeout(t);
+        resolve(d);
+      };
+      p.waiters.push(done);
+    });
+  }
+
+  /** Your answer to a permission question. `always` allows that tool for the rest of the task. */
+  answerPermission(id: string, allow: boolean, opts: { always?: boolean; message?: string; via?: Via } = {}) {
+    const p = this.permissions.get(id);
+    if (!p || p.decision) throw new Error('That permission question is no longer open.');
+    const decision: PermissionDecision = allow
+      ? { behavior: 'allow', updatedInput: p.input }
+      : { behavior: 'deny', message: opts.message?.trim() || 'The user said no. Do not try this again; find another way or explain what you need.' };
+    this.settle(p, decision);
+    if (allow && opts.always) {
+      const list = this.allowedTools(p.taskId);
+      if (!list.includes(p.tool)) this.store.set(`perm-allow:${p.taskId}`, JSON.stringify([...list, p.tool]));
+    }
+    this.event(p.taskId, p.runId, 'you', { mode: 'permission', text: opts.message ?? '', allow, always: !!opts.always, tool: p.tool, via: opts.via });
+    const run = this.store.run(p.runId);
+    const task = this.store.task(p.taskId);
+    if (run && task && run.status === 'waiting' && task.status !== 'stopped' && this.live.has(p.runId)) {
+      this.store.updateRun(p.runId, { status: 'running' });
+      this.store.updateTask(p.taskId, { status: 'running', inbox_reason: null, current_step: run.step_id });
+      const step = this.workflowFor(task).steps[run.step_id];
+      if (step) this.arm(p.taskId, p.runId, step);
+      this.changed(p.taskId);
+    }
+  }
+
+  private settle(p: PendingPermission, d: PermissionDecision) {
+    p.decision = d;
+    for (const w of p.waiters) w(d);
+    p.waiters = [];
+    const t = setTimeout(() => this.permissions.delete(p.id), 60_000);
+    t.unref?.();
+  }
+
+  /** Close every open question of a run: its session is gone, so no one waits for the answer. */
+  private dropPermissions(runId: string) {
+    for (const p of this.permissions.values()) {
+      if (p.runId === runId && !p.decision) this.settle(p, { behavior: 'deny', message: 'The run ended.' });
+    }
+  }
+
   private onClosed(taskId: string, runId: string, live: Live, res: { ok: boolean; error?: string }) {
     if (this.live.get(runId) === live) this.live.delete(runId);
+    this.dropPermissions(runId);
     this.changed(taskId);
     if (live.finished || !live.routes) return;
     const run = this.store.run(runId);
@@ -302,15 +551,56 @@ export class Runner extends EventEmitter {
     this.finish(taskId, runId, 'cant_do');
   }
 
+  /** Start the clock on a run. It stops the run and sends the task to the Inbox (`timeout`) when it runs out. */
+  private arm(taskId: string, runId: string, step: Step) {
+    this.disarm(runId);
+    const fallback = step.use === 'gate' ? this.opts.defaultTimeoutMs?.gate : this.opts.defaultTimeoutMs?.agent;
+    const ms = step.timeoutMinutes !== undefined ? step.timeoutMinutes * 60_000 : fallback ?? 0;
+    if (!ms) return;
+    const t = setTimeout(() => this.onTimeout(taskId, runId, ms), ms);
+    t.unref?.();
+    this.deadlines.set(runId, t);
+  }
+
+  private disarm(runId: string) {
+    const t = this.deadlines.get(runId);
+    if (t) clearTimeout(t);
+    this.deadlines.delete(runId);
+  }
+
+  private onTimeout(taskId: string, runId: string, ms: number) {
+    this.deadlines.delete(runId);
+    const run = this.store.run(runId);
+    if (!run || run.status !== 'running') return;
+    const mins = Math.round(ms / 60_000);
+    this.timedOut.add(runId);
+    this.event(taskId, runId, 'system', { text: `This step worked longer than its timeout (${mins ? `${mins} min` : `${ms} ms`}), so Orstra stopped it.` });
+    const live = this.live.get(runId);
+    if (live) {
+      live.finished = true;
+      live.session.kill();
+      return this.finish(taskId, runId, 'timeout');
+    }
+    // A gate: abort its command; execute() sees the timeout and finishes the run.
+    this.controllers.get(runId)?.abort();
+  }
+
   private async execute(task: TaskRow, run: RunRow) {
-    const wf = this.workflow(task.workflow_path);
+    const wf = this.workflowFor(task);
     const step = wf.steps[run.step_id];
     const cwd = task.worktree ?? process.cwd();
+    if ((step.use === 'agent' || step.use === 'gate') && task.worktree && !existsSync(task.worktree)) {
+      // A git.cleanup step or a cleanup removed it. Never run an agent in some other folder.
+      this.event(task.id, run.id, 'system', { text: `The task's worktree at ${task.worktree} is gone, so this step cannot run.` });
+      return this.finish(task.id, run.id, 'cant_do');
+    }
 
     if (step.use === 'agent') {
+      if (this.overBudget(task.id)) return this.finish(task.id, run.id, 'over_budget');
       const sessionId = randomUUID();
       this.store.updateRun(run.id, { session_id: sessionId });
       const live = this.openSession(task, { ...run, session_id: sessionId }, { sessionId, resume: false, routes: true, model: step.model });
+      this.arm(task.id, run.id, step);
       live.session.send(this.buildPrompt(task, wf, step, run));
       return;
     }
@@ -320,7 +610,13 @@ export class Runner extends EventEmitter {
     const onEvent = (e: StreamEvent) => this.event(task.id, run.id, e.kind, e);
     try {
       if (step.use === 'gate') {
+        this.arm(task.id, run.id, step);
         const res = await this.exec.gate({ commands: step.run ?? [], cwd, onEvent, signal: ctrl.signal });
+        this.disarm(run.id);
+        if (this.timedOut.delete(run.id)) {
+          this.store.updateRun(run.id, { output: res.output });
+          return this.finish(task.id, run.id, 'timeout');
+        }
         if (ctrl.signal.aborted) return;
         this.store.updateRun(run.id, { output: res.output });
         return this.finish(task.id, run.id, res.pass ? 'pass' : 'fail');
@@ -334,15 +630,20 @@ export class Runner extends EventEmitter {
       }
 
       if (step.use === 'switch') {
-        const value = renderTemplate(step.value ?? '', this.context(task)).toLowerCase();
-        const match = Object.keys(step.on).find((k) => k !== 'default' && value.includes(k.toLowerCase()));
-        this.event(task.id, run.id, 'system', { text: `Took the ${match ?? 'default'} branch` });
-        return this.finish(task.id, run.id, match ?? 'default');
+        const value = renderTemplate(step.value ?? '', this.context(task));
+        const match = switchCase(Object.keys(step.on), value);
+        this.event(task.id, run.id, 'system', { text: `Took the ${match} branch` });
+        return this.finish(task.id, run.id, match);
       }
 
       if (step.use === 'action') {
-        const res = runAction(step.action, { cwd, input: step.with ?? {} });
+        const res = runAction(step.action, {
+          cwd, input: step.with ?? {},
+          task: { title: task.title, ref: task.ref, description: task.description },
+          progress: this.progressText(task, wf),
+        });
         this.store.updateRun(run.id, { output: res.text });
+        if (res.prUrl) this.store.updateTask(task.id, { pr_url: res.prUrl });
         this.event(task.id, run.id, 'system', { text: res.text });
         return this.finish(task.id, run.id, res.outcome);
       }
@@ -356,13 +657,15 @@ export class Runner extends EventEmitter {
 
   /** Record a run's outcome and follow the matching arrow. */
   private finish(taskId: string, runId: string, outcome: string) {
+    this.disarm(runId);
+    this.timedOut.delete(runId);
     const run = this.store.run(runId);
     const task = this.store.task(taskId);
     if (!run || !task || task.status === 'stopped') return;
     const okOutcomes = new Set(['done', 'pass', 'ok', 'approved', 'started']);
     this.store.updateRun(runId, { status: okOutcomes.has(outcome) || run.kind === 'switch' || run.kind === 'human' ? 'done' : 'failed', outcome, ended_at: Date.now() });
 
-    const wf = this.workflow(task.workflow_path);
+    const wf = this.workflowFor(task);
     const counts = JSON.parse(task.edge_counts) as Record<string, number>;
     const next = route(wf, run.step_id, outcome, counts);
     if (next.type === 'goto') {
@@ -407,6 +710,7 @@ export class Runner extends EventEmitter {
   async message(taskId: string, text: string, mode: MessageMode, opts: { runId?: string; stepId?: string; via?: Via; files?: Attachment[] } = {}) {
     const task = this.store.task(taskId);
     if (!task) throw new Error('No such task.');
+    this.assertActive(task);
     const files = opts.files ?? [];
     // What the agent reads. With no attachment it is your text, byte for byte.
     const body = withFiles(text, files);
@@ -423,7 +727,7 @@ export class Runner extends EventEmitter {
     if (mode === 'ask') {
       this.event(taskId, target?.id ?? null, 'you', { mode: 'ask', ...said });
       if (!target?.session_id) return this.event(taskId, null, 'aside', { text: 'There is no agent session to ask yet.' });
-      const answer = await this.exec.ask(target.session_id, task.worktree ?? process.cwd(), body);
+      const answer = await this.exec.ask(target.session_id, task.worktree ?? process.cwd(), body, (target.agent as 'claude-code' | 'codex' | null) ?? 'claude-code');
       return this.event(taskId, target.id, 'aside', { text: answer });
     }
 
@@ -435,16 +739,31 @@ export class Runner extends EventEmitter {
     }
     this.event(taskId, target.id, 'you', { mode: 'chat', ...said, via: opts.via });
 
+    // A run that waits on you takes a slot again when it works. With no free slot, the message waits.
+    if (target.status === 'waiting' && task.status !== 'stopped' && this.busySlots().length >= this.opts.slots) {
+      const list = this.held.get(target.id) ?? [];
+      list.push({ taskId, body });
+      this.held.set(target.id, list);
+      return this.event(taskId, target.id, 'system', { text: `All ${this.opts.slots} slots are busy. Your message goes in when one is free.` });
+    }
+    this.deliver(task, target, body);
+  }
+
+  /** Put a chat message into a run's session: resume the session if it is closed, and start its clock again. */
+  private deliver(task: TaskRow, target: RunRow, body: string) {
+    const taskId = task.id;
     const owns = target.status === 'running' || target.status === 'waiting';
     if (owns && task.status !== 'stopped') {
       this.store.updateRun(target.id, { status: 'running' });
       this.store.updateTask(taskId, { status: 'running', inbox_reason: null, current_step: target.step_id });
     }
     let live = this.live.get(target.id);
+    const step = this.workflowFor(task).steps[target.step_id];
     if (!live) {
-      const step = this.workflow(task.workflow_path).steps[target.step_id];
-      live = this.openSession(task, target, { sessionId: target.session_id, resume: true, routes: owns && task.status !== 'stopped', model: step?.model });
+      live = this.openSession(task, target, { sessionId: target.session_id!, resume: true, routes: owns && task.status !== 'stopped', model: step?.model });
     }
+    // The run works again, so its clock starts again.
+    if (live.routes && owns && task.status !== 'stopped' && step) this.arm(taskId, target.id, step);
     live.humanSpoke = true;
     live.sendSeq++;
     live.session.send(body);
@@ -462,6 +781,8 @@ export class Runner extends EventEmitter {
 
   private closeLive(taskId: string) {
     for (const r of this.store.runsForTask(taskId)) {
+      this.disarm(r.id);
+      this.held.delete(r.id);
       const live = this.live.get(r.id);
       if (live) {
         live.finished = true;
@@ -474,6 +795,7 @@ export class Runner extends EventEmitter {
   retry(taskId: string, stepId?: string, note?: string, via?: Via) {
     const task = this.store.task(taskId);
     if (!task) throw new Error('No such task.');
+    this.assertActive(task);
     const step = stepId ?? task.current_step;
     if (!step) throw new Error('Nothing to retry.');
     this.closeLive(taskId);
@@ -481,9 +803,37 @@ export class Runner extends EventEmitter {
       if (r.status === 'waiting' || r.status === 'running') this.store.updateRun(r.id, { status: 'stopped', ended_at: Date.now() });
     }
     if (note) this.store.addEvent(taskId, null, 'note', { text: note, step });
-    this.event(taskId, null, 'system', { text: `Retrying ${this.workflow(task.workflow_path).steps[step]?.title ?? step}${byCos(via)}` });
+    this.event(taskId, null, 'system', { text: `Retrying ${this.workflowFor(task).steps[step]?.title ?? step}${byCos(via)}` });
     this.queueStep(task, step);
     this.pump();
+  }
+
+  /** Archive a task, or bring it back. Archived tasks leave the lists; nothing else changes. */
+  archive(taskId: string, archived = true) {
+    const task = this.store.task(taskId);
+    if (!task) throw new Error('No such task.');
+    if (archived && (task.status === 'running' || task.status === 'needs_you')) throw new Error('Stop the task or let it finish before you archive it.');
+    this.store.updateTask(taskId, { archived_at: archived ? Date.now() : null });
+    this.event(taskId, null, 'system', { text: archived ? 'Archived' : 'Back from the archive' });
+  }
+
+  /**
+   * Remove a finished task's worktree (and its branch when merged), then archive it. Refuses, and
+   * changes nothing, when work would be lost and `force` is not set. See cleanup.ts.
+   */
+  cleanup(taskId: string, opts: { force?: boolean } = {}): string {
+    const task = this.store.task(taskId);
+    if (!task) throw new Error('No such task.');
+    if (task.status === 'running' || task.status === 'needs_you') throw new Error('Stop the task or let it finish before you clean it up.');
+    const res = cleanupWorktree(task.worktree, opts);
+    if (res.outcome === 'refused') throw new Error(res.text);
+    this.store.updateTask(taskId, { archived_at: Date.now() });
+    this.event(taskId, null, 'system', { text: `${res.text} Archived the task.` });
+    return res.text;
+  }
+
+  private assertActive(task: TaskRow) {
+    if (task.archived_at) throw new Error('This task is archived. Bring it back from the archive first.');
   }
 
   stop(taskId: string, via?: Via) {

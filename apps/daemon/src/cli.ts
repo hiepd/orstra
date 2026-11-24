@@ -40,7 +40,7 @@ async function main() {
     case 'serve': {
       ensureDirs();
       const { Store } = await import('./db.ts');
-      const { Runner } = await import('./runner.ts');
+      const { Runner, defaultTimeoutsFromEnv } = await import('./runner.ts');
       const { realExecutors } = await import('./executors.ts');
       const { createWorktree } = await import('./worktree.ts');
       const { startServer } = await import('./server.ts');
@@ -48,7 +48,7 @@ async function main() {
       const { migrateWorkflowPaths } = await import('./workflows.ts');
       const moved = migrateWorkflowPaths(store);
       if (moved) console.log(`Re-pointed ${moved} task(s) at their workflow in the workflow folder.`);
-      const runner = new Runner(store, realExecutors, { slots: SLOTS, createWorktree });
+      const runner = new Runner(store, realExecutors, { slots: SLOTS, createWorktree, defaultTimeoutMs: defaultTimeoutsFromEnv() });
       runner.recover();
 
       // The chief of staff: Claude Code with Orstra's tools (served by cos-mcp.ts) and every tool of its own.
@@ -65,7 +65,11 @@ async function main() {
         // The files you attach live under ~/.orstra/cos/attachments/, so they are inside it.
         toolArgs: cosToolArgs({ mcpConfig, dirs: [HOME, REPO_ROOT] }),
       });
-      startServer(store, runner, PORT, cos);
+      // Triggers: Linear issues with a label, and schedules. Checked every ORSTRA_TRIGGER_INTERVAL_S (60) seconds.
+      const { Triggers, linearClient } = await import('./triggers.ts');
+      const triggers = new Triggers(store, runner, { linear: process.env.LINEAR_API_KEY ? linearClient(process.env.LINEAR_API_KEY) : null });
+      startServer(store, runner, PORT, cos, triggers);
+      triggers.start(Number(process.env.ORSTRA_TRIGGER_INTERVAL_S ?? 60) * 1000);
       cos.start();
       console.log(`Orstra is running at http://localhost:${PORT}  (data: ${DB_PATH})`);
       return;
