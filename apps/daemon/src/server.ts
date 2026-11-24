@@ -9,7 +9,7 @@ import type { Runner } from './runner.ts';
 import type { ChiefOfStaff } from './cos.ts';
 import type { Triggers } from './triggers.ts';
 import { gitDiff, gitInfo } from './git.ts';
-import { listFiles, readWorktreeFile } from './files.ts';
+import { agentRoots, listFiles, readTaskFile } from './files.ts';
 import { linkInfo } from './linkInfo.ts';
 import { Terminals } from './terminals.ts';
 import { DevServers } from './devServers.ts';
@@ -341,8 +341,15 @@ export function buildApi(store: Store, runner: Runner, cos?: ChiefOfStaff, trigg
       }
       if ((mm = m(/^\/api\/tasks\/([\w-]+)\/file$/)) && req.method === 'GET') {
         const t = store.task(mm[1]);
-        const hit = t?.worktree ? readWorktreeFile(t.worktree, url.searchParams.get('path') ?? '') : null;
-        if (!hit) return send(res, 404, { error: 'No such file in the worktree' }), true;
+        if (!t) return send(res, 404, { error: 'No such task' }), true;
+        // The worktree first, then the repositories the task's agents read or edited files in.
+        const touched = store.eventsOfKind(t.id, 'tool').map((e) => JSON.parse(e.payload) as { name?: string; summary?: string })
+          .filter((e) => /^(read|write|edit|multiedit|notebookedit)$/i.test(e.name ?? '') && e.summary?.startsWith('/') && !e.summary.endsWith('…'))
+          .map((e) => e.summary!);
+        // Newest first: when 2 repositories have the same path, the one the agent used last wins.
+        const roots = [...(t.worktree ? [t.worktree] : []), ...agentRoots([...new Set(touched.reverse())])];
+        const hit = readTaskFile(roots, url.searchParams.get('path') ?? '');
+        if (!hit) return send(res, 404, { error: 'This file is not in the task’s worktree, or in a repository its agent worked in.' }), true;
         // The agent may change the file at any time, so the browser asks again each time.
         return sendBytes(res, hit, 'no-store');
       }

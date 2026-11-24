@@ -11,7 +11,10 @@ const MAX_LINES = 5000;
 
 async function readText(url: string): Promise<string> {
   const r = await fetch(url, { cache: 'no-store' });
-  if (r.status === 404) throw new Error('This file is not in the worktree now.');
+  if (r.status === 404) {
+    const body = (await r.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? 'This file is not in the worktree now.');
+  }
   if (!r.ok) throw new Error(`The daemon answered ${r.status}.`);
   return r.text();
 }
@@ -48,7 +51,7 @@ export function FilePanel({ task, tab }: PanelProps) {
   const body = (() => {
     if (text.error) return <div className="vw-empty">{text.error}</div>;
     // Each refetch (stamp) tries the picture again: the agent may write it later.
-    if (kind === 'image' && broken === stamp) return <div className="vw-empty">This file is not in the worktree now.</div>;
+    if (kind === 'image' && broken === stamp) return <div className="vw-empty">This file is not in the task’s worktree, or in a repository its agent worked in.</div>;
     if (kind === 'image')
       return (
         <div className="vw-img">

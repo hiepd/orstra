@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
-import { readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
-import { basename, extname, isAbsolute, resolve, sep } from 'node:path';
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 /**
  * The side viewer reads the task's worktree: the list of its files, and one file's bytes.
@@ -69,4 +70,56 @@ export function readWorktreeFile(worktree: string, rel: string): { body: Buffer;
   } catch {
     return null;
   }
+}
+
+/** The most repositories, besides the worktree, that one task's file reads may use. */
+const MAX_ROOTS = 10;
+
+/**
+ * The git repositories that hold the files an agent read or edited, from the absolute paths in its tool
+ * calls. An agent can work outside its worktree (a task with no repo gets an empty scratch folder,
+ * and the agent then works in a checkout you named). The viewer may read files there too.
+ * Your home folder and / never count, even when they are repositories.
+ */
+export function agentRoots(paths: string[]): string[] {
+  const roots: string[] = [];
+  const home = resolve(homedir());
+  for (const p of paths) {
+    if (!isAbsolute(p) || roots.length >= MAX_ROOTS) continue;
+    for (let d = dirname(p); d !== dirname(d); d = dirname(d)) {
+      if (!existsSync(join(d, '.git'))) continue;
+      if (d !== home && !roots.includes(d)) roots.push(d);
+      break;
+    }
+  }
+  return roots;
+}
+
+/**
+ * One file for the viewer: a relative path from the first root that has it (the worktree comes first),
+ * an absolute path only when it is inside one of the roots. Null otherwise.
+ */
+export function readTaskFile(roots: string[], path: string): { body: Buffer; mime: string; name: string } | null {
+  if (!isAbsolute(path)) {
+    for (const r of roots) {
+      const hit = readWorktreeFile(r, path);
+      if (hit) return hit;
+    }
+    return null;
+  }
+  let target: string;
+  try {
+    target = realpathSync(path);
+  } catch {
+    return null;
+  }
+  for (const r of roots) {
+    try {
+      const rr = realpathSync(r);
+      if (target.startsWith(rr + sep)) return readWorktreeFile(r, relative(rr, target));
+    } catch {
+      /* a root that is gone */
+    }
+  }
+  return null;
 }

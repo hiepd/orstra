@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { listFiles, mimeOf, readWorktreeFile } from '../src/files.ts';
+import { agentRoots, listFiles, mimeOf, readTaskFile, readWorktreeFile } from '../src/files.ts';
 
 let dir: string;
 const git = (...args: string[]) => execFileSync('git', args, { cwd: dir, stdio: 'ignore' });
@@ -67,5 +67,28 @@ describe('mimeOf', () => {
     expect(mimeOf('x.html')).toBe('text/plain; charset=utf-8');
     expect(mimeOf('x.bin')).toBe('application/octet-stream');
     expect(mimeOf('x.SVG')).toBe('image/svg+xml');
+  });
+});
+
+describe('files the agent worked on in another checkout', () => {
+  it('finds the git root of each path the agent touched', () => {
+    const other = mkdtempSync(join(tmpdir(), 'orstra-other-'));
+    execFileSync('git', ['init', '-q'], { cwd: other });
+    mkdirSync(join(other, 'docs/specs'), { recursive: true });
+    writeFileSync(join(other, 'docs/specs/plan.md'), '# Plan\n');
+    const roots = agentRoots([join(other, 'docs/specs/plan.md'), join(other, 'src/x.ts'), '/no/such/place/a.ts', 'relative/a.ts']);
+    expect(roots).toEqual([other]);
+  });
+
+  it('reads a relative path from the worktree first, then from those roots', () => {
+    const other = mkdtempSync(join(tmpdir(), 'orstra-other-'));
+    execFileSync('git', ['init', '-q'], { cwd: other });
+    mkdirSync(join(other, 'docs/specs'), { recursive: true });
+    writeFileSync(join(other, 'docs/specs/plan.md'), '# Plan\n');
+    expect(readTaskFile([dir, other], 'docs/a.md')?.body.toString()).toBe('# A\n');
+    expect(readTaskFile([dir, other], 'docs/specs/plan.md')?.body.toString()).toBe('# Plan\n');
+    expect(readTaskFile([dir, other], join(other, 'docs/specs/plan.md'))?.body.toString()).toBe('# Plan\n');
+    expect(readTaskFile([dir, other], '/etc/hosts')).toBeNull();
+    expect(readTaskFile([dir, other], '../orstra-outside.txt')).toBeNull();
   });
 });
