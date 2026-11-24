@@ -108,3 +108,41 @@ describe('terminals', () => {
     expect((await post('/api/terminals/nope/input', { data: 'x' })).status).toBe(404);
   });
 });
+
+describe('dev server', () => {
+  it('starts a command in the worktree and stops it', async () => {
+    expect(await get(`/api/tasks/${taskId}/devserver`)).toMatchObject({ state: 'stopped', url: null });
+    const cmd = `node -e "console.log('http://localhost:'+process.env.PORT); setInterval(()=>{},1000)"`;
+    const r = await post(`/api/tasks/${taskId}/devserver/start`, { command: cmd });
+    expect(r.status).toBe(200);
+    expect((await r.json()).state).toBe('starting');
+    let v: any;
+    for (let i = 0; i < 200 && v?.state !== 'running'; i++) {
+      v = await get(`/api/tasks/${taskId}/devserver`);
+      await new Promise((ok) => setTimeout(ok, 25));
+    }
+    expect(v.url).toMatch(/^http:\/\/localhost:\d+$/);
+    expect((await post(`/api/tasks/${taskId}/devserver/stop`)).status).toBe(200);
+    expect((await get(`/api/tasks/${taskId}/devserver`)).state).toBe('stopped');
+  });
+
+  it('refuses a start with no command and no package.json', async () => {
+    const r = await post(`/api/tasks/${taskId}/devserver/start`, {});
+    expect(r.status).toBe(400);
+  });
+});
+
+describe('cleanup', () => {
+  it('tells the server to stop the task\'s shells and dev server before the worktree goes', () => {
+    const id = runner.startTask({ workflowPath: join(dir, 'wf.yaml'), title: 'y' }).id;
+    store.updateTask(id, { status: 'done' });
+    const seen: string[] = [];
+    runner.on('cleanup', (t: string) => seen.push(t));
+    try {
+      runner.cleanup(id);
+    } catch {
+      /* the test folder is not a git worktree; the event comes first */
+    }
+    expect(seen).toEqual([id]);
+  });
+});

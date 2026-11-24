@@ -825,6 +825,8 @@ export class Runner extends EventEmitter {
     const task = this.store.task(taskId);
     if (!task) throw new Error('No such task.');
     if (task.status === 'running' || task.status === 'needs_you') throw new Error('Stop the task or let it finish before you clean it up.');
+    // The side viewer's shells and dev server work in the worktree: they stop first (server.ts listens).
+    this.emit('cleanup', taskId);
     const res = cleanupWorktree(task.worktree, opts);
     if (res.outcome === 'refused') throw new Error(res.text);
     this.store.updateTask(taskId, { archived_at: Date.now() });

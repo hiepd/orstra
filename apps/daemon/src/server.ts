@@ -12,10 +12,12 @@ import { gitDiff, gitInfo } from './git.ts';
 import { listFiles, readWorktreeFile } from './files.ts';
 import { linkInfo } from './linkInfo.ts';
 import { Terminals } from './terminals.ts';
+import { DevServers } from './devServers.ts';
 
 /** The shells and dev servers the side viewer runs. Tests pass their own. */
 export interface ServerExtras {
   terminals?: Terminals;
+  devServers?: DevServers;
 }
 
 /** The largest body of keys the terminal takes in one POST. */
@@ -215,6 +217,7 @@ export type Views = ReturnType<typeof makeViews>;
 
 export function buildApi(store: Store, runner: Runner, cos?: ChiefOfStaff, triggers?: Triggers, extras: ServerExtras = {}) {
   const terminals = extras.terminals ?? new Terminals();
+  const devServers = extras.devServers ?? new DevServers();
   const { runView, taskSummary, taskDetail, gitView } = makeViews(store, runner);
   const sessions = () => {
     const since = Date.now() - 24 * 3600_000;
@@ -366,6 +369,20 @@ export function buildApi(store: Store, runner: Runner, cos?: ChiefOfStaff, trigg
         if (mm[2] === 'close') terminals.close(mm[1]);
         return send(res, 200, { ok: true }), true;
       }
+      // The task's dev server, for the Browser panel.
+      if ((mm = m(/^\/api\/tasks\/([\w-]+)\/devserver(?:\/(start|stop))?$/))) {
+        const t = store.task(mm[1]);
+        if (!t) return send(res, 404, { error: 'No such task' }), true;
+        if (req.method === 'GET' && !mm[2]) return send(res, 200, devServers.status(t.id, t.worktree)), true;
+        if (req.method === 'POST' && mm[2] === 'stop') return await devServers.stop(t.id), send(res, 200, devServers.status(t.id, t.worktree)), true;
+        if (req.method === 'POST' && mm[2] === 'start') {
+          if (!t.worktree || !existsSync(t.worktree)) return send(res, 400, { error: 'This task has no worktree yet.' }), true;
+          const b = await readJson(req);
+          const command = (typeof b.command === 'string' && b.command.trim()) || devServers.status(t.id, t.worktree).suggested;
+          if (!command) return send(res, 400, { error: 'Say which command starts the dev server. The worktree has no dev or start script.' }), true;
+          return send(res, 200, await devServers.start(t.id, t.worktree, command)), true;
+        }
+      }
       if (req.method === 'GET' && p === '/api/link-info') return send(res, 200, await linkInfo(url.searchParams.get('url') ?? '')), true;
       if ((mm = m(/^\/api\/workflows\/([^/]+)$/)) && req.method === 'PUT') {
         const file = decodeURIComponent(mm[1]);
@@ -446,7 +463,8 @@ export function buildApi(store: Store, runner: Runner, cos?: ChiefOfStaff, trigg
 
 export function startServer(store: Store, runner: Runner, port: number, cos?: ChiefOfStaff, triggers?: Triggers, extras: ServerExtras = {}) {
   const terminals = extras.terminals ?? new Terminals();
-  const api = buildApi(store, runner, cos, triggers, { ...extras, terminals });
+  const devServers = extras.devServers ?? new DevServers();
+  const api = buildApi(store, runner, cos, triggers, { ...extras, terminals, devServers });
   const clients = new Set<ServerResponse>();
   const broadcast = (e: unknown) => {
     const line = `data: ${JSON.stringify(e)}\n\n`;
@@ -467,6 +485,11 @@ export function startServer(store: Store, runner: Runner, port: number, cos?: Ch
     }, 100);
   });
   cos?.on('change', broadcast);
+  devServers.on('change', (taskId: string) => broadcast({ taskId }));
+  runner.on('cleanup', (taskId: string) => {
+    terminals.closeTask(taskId);
+    void devServers.stop(taskId);
+  });
 
   // The port the server really has (port 0 in tests means "any free one").
   let guard = guardOptionsFromEnv(port);
