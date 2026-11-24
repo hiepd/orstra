@@ -38,7 +38,8 @@ function StatusText({ t }: { t: TaskSummary }) {
 /** All tasks. Board groups them by the step they're at; list groups by status. Both only open the task. */
 export function TasksPage({ onNewTask }: { onNewTask: () => void }) {
   useNow(30_000);
-  const res = useLiveResource('tasks', api.tasks);
+  const [archived, setArchived] = useState(false);
+  const res = useLiveResource(archived ? 'tasks:archived' : 'tasks', archived ? api.archivedTasks : api.tasks);
   const [view, setView] = useState<View>(() => remember<View>('orstra.tasks.view', 'board'));
   const [filter, setFilter] = useState<Filter>('all');
   const [wfFile, setWfFile] = useState<string | null>(null);
@@ -75,6 +76,9 @@ export function TasksPage({ onNewTask }: { onNewTask: () => void }) {
           </button>
         </div>
         <div className="lx-acts">
+          <button className="lx-btn" aria-pressed={archived} onClick={() => setArchived((a) => !a)}>
+            {archived ? 'Back to tasks' : 'Archived'}
+          </button>
           <button className="lx-btn lx-pri" onClick={onNewTask}>
             <PlusIcon />
             New task

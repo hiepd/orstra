@@ -1,24 +1,26 @@
-import { useCallback, useState } from 'react';
-import { api, errorMessage, type GitView, type RunView, type TaskDetail } from '../api';
+import { useCallback, useMemo, useState } from 'react';
+import { api, errorMessage, taskLoader, type GitView, type RunView, type TaskDetail } from '../api';
 import { ClaudeCodeModal } from '../components/ClaudeCodeModal';
-import { AwaitingCard, DecisionCard, RetryModal, StopModal, StuckBanner } from '../components/Decision';
-import { shortPath, useGit } from '../components/GitPanel';
+import { AwaitingCard, DecisionCard, PermissionCard, RetryModal, StopModal, StuckBanner } from '../components/Decision';
+import { prName, shortPath, useGit } from '../components/GitPanel';
 import { ChevronRight, TerminalIcon } from '../components/Icons';
 import { Menu, Modal, useToast } from '../components/Overlay';
 import { ProgressList } from '../components/ProgressList';
 import { AgentAvatar, RunStatusIcon } from '../components/Status';
 import { currentRun, describeTask } from '../lib/describe';
-import { agentOf, humanize, taskLabel } from '../lib/format';
+import { agentOf, humanize, money, taskLabel, tokens } from '../lib/format';
 import { useLiveResource, useNow, type Resource } from '../lib/live';
 import { href, type TaskViewName } from '../lib/router';
 import { STATE, stepLabel, taskState } from '../lib/taskState';
 import { ago, clock, duration } from '../lib/time';
 import { defaultSession, runName, TaskChat } from './TaskChat';
 
-type ModalState = { kind: 'retry'; stepId?: string } | { kind: 'stop' } | { kind: 'cc'; run: RunView } | { kind: 'note'; stepId: string; title: string } | null;
+type ModalState = { kind: 'retry'; stepId?: string } | { kind: 'stop' } | { kind: 'cc'; run: RunView } | { kind: 'note'; stepId: string; title: string } | { kind: 'cleanup' } | null;
 
 export function TaskPage({ id, view, runId }: { id: string; view: TaskViewName; runId?: string }) {
-  const res = useLiveResource(`task:${id}`, useCallback(() => api.task(id), [id]), (taskId) => taskId === id);
+  // Each refetch asks only for the events the page has not seen yet.
+  const load = useMemo(() => taskLoader(id), [id]);
+  const res = useLiveResource(`task:${id}`, load, (taskId) => taskId === id);
   const task = res.data;
   if (!task) {
     return (
@@ -138,6 +140,7 @@ function TaskView({ task, view, runId }: { task: TaskDetail; view: TaskViewName;
       {modal?.kind === 'stop' && <StopModal task={task} onClose={() => setModal(null)} />}
       {modal?.kind === 'cc' && <ClaudeCodeModal run={modal.run} crumb={taskLabel(task)} onClose={() => setModal(null)} />}
       {modal?.kind === 'note' && <NoteModal task={task} stepId={modal.stepId} title={modal.title} onClose={() => setModal(null)} />}
+      {modal?.kind === 'cleanup' && <CleanupModal task={task} onClose={() => setModal(null)} />}
     </>
   );
 }
@@ -244,7 +247,16 @@ function Overview({ task, git, onModal }: { task: TaskDetail; git: Resource<GitV
               )}
             </div>
           )}
-          {!task.human && task.awaiting && (
+          {task.archivedAt && (
+            <div className="ox-calm">
+              Archived {ago(task.archivedAt)}. It is out of the lists, and nothing runs for it.{' '}
+              <button className="ox-link" onClick={() => void api.archive(task.id, false)}>
+                Bring it back
+              </button>
+            </div>
+          )}
+          {task.permission && <PermissionCard task={task} />}
+          {!task.human && !task.permission && task.awaiting && (
             <AwaitingCard task={task}>
               <div>
                 <a className="lx-btn lx-pri" href={href.chat(task.id, task.awaiting.runId)}>
@@ -283,8 +295,9 @@ function Overview({ task, git, onModal }: { task: TaskDetail; git: Resource<GitV
                           {r.kind === 'agent' || r.kind === 'gate' ? <AgentAvatar run={r} /> : null}
                           {who}
                         </span>
-                        <span className="ox-rdur" title={r.startedAt ? `Started ${clock(r.startedAt)}` : undefined}>
+                        <span className="ox-rdur" title={r.startedAt ? `Started ${clock(r.startedAt)}${r.tokensIn ? ` · ${tokens(r.tokensIn)} tokens in, ${tokens(r.tokensOut)} out` : ''}` : undefined}>
                           {r.startedAt ? duration(r.startedAt, r.endedAt ?? Date.now()) : '—'}
+                          {r.costUsd ? ` · ${money(r.costUsd)}` : ''}
                         </span>
                         <span className="ox-oc" style={{ background: TONE[badge.tone].bg, color: TONE[badge.tone].fg }}>
                           {badge.text}
@@ -375,7 +388,21 @@ function Overview({ task, git, onModal }: { task: TaskDetail; git: Resource<GitV
         <Prop k="Branch" v={g?.branch ? g.branch + (g.base ? ` → ${g.base}` : '') : task.worktree ? '…' : 'None'} mono />
         <Prop k="Worktree" v={task.worktree ? shortPath(task.worktree) : 'None'} mono />
         <Prop k="Changes" v={g ? (g.files.length ? `${g.files.length} ${g.files.length === 1 ? 'file' : 'files'} · ${g.commits.length} ${g.commits.length === 1 ? 'commit' : 'commits'}` : 'None yet') : '…'} />
-        <Prop k="PR" v={g?.pr ? `#${g.pr.number} · ${g.pr.state}` : 'Not opened yet'} />
+        {task.prUrl ? (
+          <div className="ox-prop">
+            <span className="ox-pk">PR</span>
+            <a className="ox-pv" href={task.prUrl} target="_blank" rel="noreferrer">
+              {prName(task.prUrl)}
+            </a>
+          </div>
+        ) : (
+          <Prop k="PR" v="Not opened yet" />
+        )}
+        <Prop
+          k="Cost"
+          v={task.cost.usd || task.cost.tokensIn ? `${money(task.cost.usd)} · ${tokens(task.cost.tokensIn + task.cost.tokensOut)} tokens` : 'Nothing yet'}
+          title="Claude Code's own estimate. Codex reports tokens only."
+        />
         <Prop k="Started" v={ago(task.createdAt)} title={new Date(task.createdAt).toLocaleString()} />
         <Prop k="Updated" v={ago(task.updatedAt)} title={new Date(task.updatedAt).toLocaleString()} />
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 14 }}>
@@ -392,7 +419,25 @@ function Overview({ task, git, onModal }: { task: TaskDetail; git: Resource<GitV
               Stop task…
             </button>
           )}
+          {!active && !task.archivedAt && (
+            <>
+              <button className="lx-btn" style={{ justifyContent: 'center' }} onClick={() => void api.archive(task.id, true)}>
+                Archive
+              </button>
+              {task.worktree && (
+                <button className="lx-btn" style={{ justifyContent: 'center' }} onClick={() => onModal({ kind: 'cleanup' })}>
+                  Clean up worktree…
+                </button>
+              )}
+            </>
+          )}
         </div>
+        {task.workflowChanged && (
+          <div className="lx-hint" style={{ marginTop: 14 }}>
+            The workflow file changed after this task started. The task still follows the version it started with.{' '}
+            <WorkflowRefresh task={task} />
+          </div>
+        )}
       </aside>
     </div>
   );
@@ -456,6 +501,79 @@ function NoteModal({ task, stepId, title, onClose }: { task: TaskDetail; stepId:
           if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) void save();
         }}
       />
+    </Modal>
+  );
+}
+
+/** Move the task to the current version of its workflow file. */
+function WorkflowRefresh({ task }: { task: TaskDetail }) {
+  const toast = useToast();
+  return (
+    <button
+      className="ox-link"
+      onClick={async () => {
+        try {
+          await api.refreshWorkflow(task.id);
+          toast('The task now follows the new version');
+        } catch (err) {
+          toast(errorMessage(err), { error: true });
+        }
+      }}
+    >
+      Use the new version
+    </button>
+  );
+}
+
+/**
+ * Remove a finished task's worktree, and its branch when it is merged, then archive the task. When
+ * Orstra refuses (uncommitted work, or a scratch repository), the reason shows here, with the choice to
+ * throw that work away.
+ */
+function CleanupModal({ task, onClose }: { task: TaskDetail; onClose: () => void }) {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const [refused, setRefused] = useState<string | null>(null);
+  const submit = async (force: boolean) => {
+    setBusy(true);
+    try {
+      const res = await api.cleanup(task.id, force);
+      toast(res.text);
+      onClose();
+    } catch (err) {
+      setRefused(errorMessage(err));
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal
+      crumb={<span>{taskLabel(task)} › Clean up</span>}
+      title="Clean up this task?"
+      onClose={onClose}
+      footer={
+        <>
+          <button className="lx-btn" onClick={onClose}>
+            Cancel
+          </button>
+          {refused ? (
+            <button className="lx-btn lx-danfill" onClick={() => void submit(true)} disabled={busy}>
+              {busy && <span className="lx-spin" aria-hidden="true" />}
+              Throw the work away and clean up
+            </button>
+          ) : (
+            <button className="lx-btn lx-pri" onClick={() => void submit(false)} disabled={busy}>
+              {busy && <span className="lx-spin" aria-hidden="true" />}
+              Clean up
+            </button>
+          )}
+        </>
+      }
+    >
+      <p>
+        Orstra removes the worktree at {task.worktree ? shortPath(task.worktree) : 'its folder'}. It deletes the branch only when your checked-out branch already has
+        all its commits. Then it archives the task.
+      </p>
+      {refused && <p className="lx-error">{refused}</p>}
     </Modal>
   );
 }

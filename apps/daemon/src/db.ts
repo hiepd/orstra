@@ -275,6 +275,11 @@ export class Store {
       .all(taskId, ...kinds) as unknown as EventRow[];
   }
 
+  /** The latest event of a task of one kind (the last system line, for the Inbox). */
+  lastTaskEvent(taskId: string, kind: string): EventRow | undefined {
+    return this.db.prepare('SELECT * FROM events WHERE task_id = ? AND kind = ? ORDER BY id DESC LIMIT 1').get(taskId, kind) as EventRow | undefined;
+  }
+
   /** The latest event of a run among these kinds: what its session is doing now. */
   lastRunEvent(runId: string, ...kinds: string[]): EventRow | undefined {
     return this.db

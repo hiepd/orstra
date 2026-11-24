@@ -4,7 +4,7 @@ import { AGENTS } from './format';
 /** Where a task stands, as the UI names it. One word per situation, used on every screen. */
 export type TaskState = 'running' | 'queued' | 'decision' | 'question' | 'stuck' | 'done' | 'stopped';
 
-const WAITING_ON_REPLY = new Set(['question', 'reply', 'paused', 'restarted']);
+const WAITING_ON_REPLY = new Set(['question', 'reply', 'paused', 'restarted', 'no_outcome', 'permission']);
 
 export function taskState(t: Pick<TaskSummary, 'status' | 'inboxReason' | 'run'>): TaskState {
   if (t.status === 'done') return 'done';

@@ -28,7 +28,24 @@ const REASONS: Record<string, string> = {
   timeout: 'The step timed out',
   fail: 'The step failed with nowhere to go',
   unknown_step: 'The workflow points at a step that doesn’t exist',
+  no_outcome: 'The agent ended without an outcome',
+  over_budget: 'The task reached its budget',
+  permission: 'An agent asks for permission',
+  refused: 'The cleanup was refused; nothing changed',
+  nothing: 'There was nothing to do',
 };
+
+/** "$0.42", or "<$0.01" for a cost above zero that rounds to nothing. */
+export function money(usd: number | null | undefined): string {
+  if (!usd) return '$0.00';
+  return usd < 0.01 ? '<$0.01' : `$${usd.toFixed(2)}`;
+}
+
+/** "12.4k tokens" */
+export function tokens(n: number | null | undefined): string {
+  const v = n ?? 0;
+  return v >= 1_000_000 ? `${(v / 1_000_000).toFixed(1)}M` : v >= 1000 ? `${(v / 1000).toFixed(1)}k` : String(v);
+}
 
 export function reasonText(reason: string | null | undefined): string {
   if (!reason) return 'Needs you';
