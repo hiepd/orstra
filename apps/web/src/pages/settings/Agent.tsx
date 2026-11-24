@@ -13,6 +13,7 @@ function clean(a: AgentSettings): AgentSettings {
   if (a.effort) out.effort = a.effort;
   if (a.permissionMode) out.permissionMode = a.permissionMode;
   if (a.askPermission === false) out.askPermission = false;
+  if (a.artifact === false) out.artifact = false;
   return out;
 }
 
@@ -101,6 +102,14 @@ export function AgentGroup({ s, agent, onSaved }: { s: Settings; agent: Settings
               aria-label="Ask for permission in the Inbox"
               checked={draft.askPermission !== false}
               onChange={(e) => setDraft({ ...draft, askPermission: e.target.checked ? undefined : false })}
+            />
+          </SettingsRow>
+          <SettingsRow label="Publish artifacts" help="On: a step's agent can publish a Claude artifact, a page on your claude.ai account. Off (or ORSTRA_CLAUDE_ARTIFACT=0): the Artifact tool stays off.">
+            <input
+              type="checkbox"
+              aria-label="Let a step's agent publish a Claude artifact"
+              checked={draft.artifact !== false}
+              onChange={(e) => setDraft({ ...draft, artifact: e.target.checked ? undefined : false })}
             />
           </SettingsRow>
         </>

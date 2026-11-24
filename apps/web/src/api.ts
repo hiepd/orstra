@@ -278,6 +278,8 @@ export interface AgentSettings {
   permissionMode?: string;
   /** false: a tool the permission mode does not allow is refused, not asked about. */
   askPermission?: boolean;
+  /** false: a step's agent cannot publish a Claude artifact. */
+  artifact?: boolean;
 }
 
 /** One entry in the chief of staff conversation. */
