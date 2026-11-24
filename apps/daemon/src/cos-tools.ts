@@ -42,7 +42,7 @@ export const COS_TOOLS: CosTool[] = [
   // ---- act ----
   {
     name: 'message_agent',
-    description: 'Send a message into the task’s agent session (the one running or waiting, else the latest). It reads it after its current action; if it was waiting for an answer, it continues.',
+    description: 'Send a message into the task’s agent session (the one running or waiting, else the latest). It reads it after its current action; if it was waiting for an answer, it continues. If its run had ended while the task waited on the user, that step takes the task back and any open decision closes.',
     properties: { task, text: { type: 'string', description: 'The message, written as the user would say it.' } },
     required: ['task', 'text'],
   },

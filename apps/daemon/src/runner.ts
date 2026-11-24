@@ -44,6 +44,16 @@ interface Live {
 const id = (p: string) => `${p}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 const SLOT_KINDS = new Set(['agent', 'gate']);
 
+/**
+ * Why a chat to an ended session leaves the task where it is. A closed task reopens through a re-run
+ * only, so one message can never restart work you called finished.
+ */
+function chatOnlyText(task: TaskRow): string {
+  if (task.status === 'done') return 'This task is finished, so your message does not move it. Re-run a step to start work again.';
+  if (task.status === 'stopped') return 'This task is stopped, so your message does not move it. Re-run a step to start work again.';
+  return 'Another step runs right now, so your message does not move the task. The session still answers you.';
+}
+
 export class Runner extends EventEmitter {
   private workflows = new Map<string, Workflow>();
   private controllers = new Map<string, AbortController>();
@@ -380,10 +390,21 @@ export class Runner extends EventEmitter {
     this.pump();
   }
 
+  /** The agent run that works on a task right now: its row says running, or its session is still open. */
+  private working(taskId: string): RunRow | undefined {
+    return this.store.runsForTask(taskId).find((r) => {
+      if (r.kind !== 'agent') return false;
+      const live = this.live.get(r.id);
+      return r.status === 'running' || (!!live && !live.finished);
+    });
+  }
+
   /** A human step's decision. Each choice is an outgoing arrow; the comment goes to whichever step runs next. */
   decide(runId: string, choice: string, comment?: string, via?: Via) {
     const run = this.store.run(runId);
     if (!run || run.status !== 'waiting' || run.kind !== 'human') throw new Error('That decision is no longer waiting.');
+    // A decision never stands while the agent works: approval merges the branch, and the diff still moves.
+    if (this.working(run.task_id)) throw new Error('The agent is working on this task again. Wait for it to finish, then decide.');
     const task = this.store.task(run.task_id)!;
     this.event(task.id, runId, 'you', { mode: 'decision', choice, text: comment ?? '', via });
     if (comment) this.store.addEvent(task.id, runId, 'note', { text: comment });
@@ -395,6 +416,61 @@ export class Runner extends EventEmitter {
     const runs = this.store.runsForTask(taskId).filter((r) => r.kind === 'agent' && r.session_id);
     if (runId) return runs.find((r) => r.id === runId);
     return runs.find((r) => r.status === 'running' || r.status === 'waiting') ?? runs[runs.length - 1];
+  }
+
+  /**
+   * You chatted to an agent whose run had ended while the task waited on you: its step takes the task
+   * back. The same session continues in a new run row, so this round of work gets its own progress
+   * entry and its outcome moves the workflow again.
+   *
+   * Nothing else may wait while the agent works. A decision that stayed open could be approved against
+   * a diff the agent still changes, and an approval merges the branch on its own.
+   */
+  private sendBack(task: TaskRow, target: RunRow): RunRow {
+    const title = this.stepTitle(task, target.step_id);
+    for (const r of this.store.runsForTask(task.id)) {
+      if (r.id === target.id || r.status !== 'waiting') continue;
+      this.killLive(r.id);
+      this.store.updateRun(r.id, { status: 'stopped', outcome: 'reopened', ended_at: Date.now() });
+      this.event(task.id, r.id, 'system', { text: `${r.kind === 'human' ? 'This decision closed' : 'This step closed'} without an answer: your message sent ${title} back to the agent.` });
+    }
+    this.killLive(target.id);
+    const attempt = this.store.runsForTask(task.id).filter((r) => r.step_id === target.step_id).length + 1;
+    const now = Date.now();
+    const run: RunRow = {
+      id: id('r'), task_id: task.id, step_id: target.step_id, kind: target.kind, attempt, status: 'running', outcome: null,
+      agent: target.agent, session_id: target.session_id, progress: null, output: null, created_at: now, started_at: now, ended_at: null,
+    };
+    this.store.insertRun(run);
+    this.store.updateTask(task.id, { status: 'running', inbox_reason: null, current_step: target.step_id });
+    return run;
+  }
+
+  /** The step's name for a sentence. A workflow file that moved must not drop your message. */
+  private stepTitle(task: TaskRow, stepId: string): string {
+    try {
+      return this.workflow(task.workflow_path).steps[stepId]?.title ?? stepId;
+    } catch {
+      return stepId;
+    }
+  }
+
+  /** Drop a session we must not talk to any more. Its turn no longer counts. */
+  private killLive(runId: string) {
+    const live = this.live.get(runId);
+    if (!live) return;
+    live.finished = true;
+    live.session.kill();
+    this.live.delete(runId);
+  }
+
+  /** What a resumed session is told after your message, so this round ends as a run of its own. */
+  private backOnStep(task: TaskRow, run: RunRow): string {
+    return [
+      '--- Orstra ---',
+      `Your message put ${this.stepTitle(task, run.step_id)} back on you. This is attempt ${run.attempt} of that step, and it is a run of its own: how it ends moves the workflow.`,
+      FINISH_INSTRUCTIONS.trim(),
+    ].join('\n\n');
   }
 
   /**
@@ -433,21 +509,34 @@ export class Runner extends EventEmitter {
       this.store.addEvent(taskId, null, 'note', { text: body });
       return this.event(taskId, null, 'system', { text: 'No agent has started yet. Your message goes to the next agent step.' });
     }
-    this.event(taskId, target.id, 'you', { mode: 'chat', ...said, via: opts.via });
-
+    // owns: the run still holds its step, so your message lands in the run it already has.
     const owns = target.status === 'running' || target.status === 'waiting';
-    if (owns && task.status !== 'stopped') {
+    // open: a done or stopped task reopens through a re-run only, never through one message.
+    const open = task.status === 'running' || task.status === 'needs_you';
+    // elsewhere: another run moves the task already, so this ended run takes the step back from nobody.
+    const elsewhere = this.store.runsForTask(taskId).some((r) => r.id !== target.id && (r.status === 'running' || r.status === 'queued'));
+    const routes = open && (owns || !elsewhere);
+
+    if (owns && routes) {
       this.store.updateRun(target.id, { status: 'running' });
       this.store.updateTask(taskId, { status: 'running', inbox_reason: null, current_step: target.step_id });
     }
-    let live = this.live.get(target.id);
+    // Your message hangs on the run that answers it, so one transcript holds the round.
+    const run = !owns && routes ? this.sendBack(task, target) : target;
+    this.event(taskId, run.id, 'you', { mode: 'chat', ...said, via: opts.via });
+    if (run !== target) {
+      this.event(taskId, run.id, 'system', { text: `Your message sent ${this.stepTitle(task, run.step_id)} back to the agent (attempt ${run.attempt}). The same session continues, and how it ends moves the workflow.` });
+    }
+    if (!routes) this.event(taskId, target.id, 'system', { text: chatOnlyText(task) });
+
+    let live = this.live.get(run.id);
     if (!live) {
-      const step = this.workflow(task.workflow_path).steps[target.step_id];
-      live = this.openSession(task, target, { sessionId: target.session_id, resume: true, routes: owns && task.status !== 'stopped', model: step?.model });
+      const step = this.workflow(task.workflow_path).steps[run.step_id];
+      live = this.openSession(task, run, { sessionId: target.session_id, resume: true, routes, model: step?.model });
     }
     live.humanSpoke = true;
     live.sendSeq++;
-    live.session.send(body);
+    live.session.send(run === target ? body : `${body}\n\n${this.backOnStep(task, run)}`);
     this.changed(taskId);
   }
 
@@ -461,13 +550,7 @@ export class Runner extends EventEmitter {
   }
 
   private closeLive(taskId: string) {
-    for (const r of this.store.runsForTask(taskId)) {
-      const live = this.live.get(r.id);
-      if (live) {
-        live.finished = true;
-        live.session.kill();
-      }
-    }
+    for (const r of this.store.runsForTask(taskId)) this.killLive(r.id);
   }
 
   /** Run a step again (default: where the task is now) as a fresh session. */

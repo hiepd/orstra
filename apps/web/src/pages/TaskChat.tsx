@@ -50,6 +50,11 @@ export function TaskChat({ task, runId, git, openPath, onOpenPath }: { task: Tas
     return { working, waiting, live: working || !!r.live };
   };
 
+  // A message to a session whose run ended takes the task back to that step, unless the task is
+  // closed or another step runs. Then the agent's finish moves the workflow again.
+  const open = task.status === 'running' || task.status === 'needs_you';
+  const sendsBack = (r: RunView) => open && !task.runs.some((x) => x.id !== r.id && (x.status === 'running' || x.status === 'queued'));
+
   return (
     <div className="ox-chatv">
       {sessionsOpen && (
@@ -76,7 +81,7 @@ export function TaskChat({ task, runId, git, openPath, onOpenPath }: { task: Tas
           })}
           {sessions.length === 0 && <div className="lx-hint" style={{ padding: '4px 8px' }}>None yet.</div>}
           <div className="lx-hint" style={{ padding: '10px 8px 0', lineHeight: 1.5 }}>
-            One session per agent run. Checks and decisions have no session; see Overview.
+            One session per agent run. A step that came back to its agent keeps the session in a new run. Checks and decisions have no session; see Overview.
           </div>
         </nav>
       )}
@@ -91,6 +96,7 @@ export function TaskChat({ task, runId, git, openPath, onOpenPath }: { task: Tas
           (() => {
             const s = state(run);
             const a = agentOf(run);
+            const back = !s.working && !s.waiting && sendsBack(run);
             const canTalk = s.working || s.waiting || !!reopened[run.id] || !!run.live;
             return (
               <>
@@ -112,6 +118,8 @@ export function TaskChat({ task, runId, git, openPath, onOpenPath }: { task: Tas
                       canStop={run.id === task.workingRunId}
                       waiting={s.waiting}
                       reopened={!s.working && !s.waiting}
+                      sendsBack={back}
+                      stepTitle={run.stepTitle}
                       who={a.name}
                       av={a.av}
                       color={a.color}
@@ -120,7 +128,8 @@ export function TaskChat({ task, runId, git, openPath, onOpenPath }: { task: Tas
                   ) : (
                     <div className="ox-ended">
                       <span style={{ flex: 1 }}>
-                        This session ended{run.outcome ? ` (${humanize(run.outcome).toLowerCase()})` : ''}. Reopen it to ask questions; the task doesn’t move.
+                        This session ended{run.outcome ? ` (${humanize(run.outcome).toLowerCase()})` : ''}.{' '}
+                        {back ? `Reopen it and your next message sends the task back to ${run.stepTitle}.` : 'Reopen it to ask questions; the task doesn’t move.'}
                       </span>
                       <button className="lx-btn" onClick={() => setReopened((m) => ({ ...m, [run.id]: true }))}>
                         Reopen session

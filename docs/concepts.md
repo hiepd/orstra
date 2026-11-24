@@ -61,7 +61,8 @@ What starts tasks automatically. Examples: a Linear issue labeled `agent-ready`,
 
 - Every run starts a **fresh** session. It knows the earlier runs only through their progress entries, the worktree and git.
 - You **chat** with a session while it runs: your message goes straight in, and Stop interrupts it. If it asks you something, it waits open for your reply.
-- After a run ends, you can **reopen** its session to keep talking (same history). That doesn't move the task.
+- After a run ends, you can **reopen** its session to keep talking (same history). While the task is still open, your message **sends that step back** to the agent: it gets a new run (next attempt) on the same session, so the round keeps its own progress entry and its outcome moves the task again. Anything that waited on you closes, because a decision must never stand while the agent changes the diff.
+- A task you finished or stopped never comes back from a message. The session answers you and the task stays where it is; re-run a step to start work again.
 - **Open in Claude Code** shows the same session in your terminal. Both windows are one session.
 - Gate, human, switch and action runs have no session.
 

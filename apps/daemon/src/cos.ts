@@ -319,9 +319,13 @@ export class ChiefOfStaff extends EventEmitter {
     }
     const t = this.task(a.task);
     switch (tool) {
-      case 'message_agent':
+      case 'message_agent': {
         await this.runner.message(t.id, String(a.text), 'chat', { via: 'cos' });
-        return { text: `Sent to ${this.agentName(t)} on ${label(t)}: “${clip(String(a.text), 300)}”`, taskId: t.id, view: 'chat' };
+        // A message to an agent whose run had ended sends that step back, so say where the task went.
+        const after = this.store.task(t.id)!;
+        const back = t.status === 'needs_you' && after.status === 'running' ? ` The task went back to ${this.views.stepTitle(after, after.current_step ?? '')}.` : '';
+        return { text: `Sent to ${this.agentName(t)} on ${label(t)}: “${clip(String(a.text), 300)}”${back}`, taskId: t.id, view: 'chat' };
+      }
       case 'add_note': {
         const stepId = this.stepId(t, a.step);
         await this.runner.message(t.id, String(a.text), 'note', { stepId, via: 'cos' });

@@ -157,7 +157,7 @@ function outcomeBadge(task: TaskDetail, r: RunView): { text: string; tone: keyof
   if (r.status === 'running') return { text: 'running', tone: 'live' };
   if (r.status === 'queued') return { text: 'queued', tone: 'plain' };
   if (r.status === 'waiting') return { text: 'waiting for you', tone: 'wait' };
-  if (r.status === 'stopped') return { text: 'stopped', tone: 'plain' };
+  if (r.status === 'stopped') return { text: r.outcome === 'reopened' ? 'closed' : 'stopped', tone: 'plain' };
   const outcome = r.outcome ?? r.status;
   const to = task.steps.find((s) => s.id === r.stepId)?.on[outcome];
   const order = task.track.map((s) => s.title);
@@ -186,6 +186,8 @@ function Overview({ task, git, onModal }: { task: TaskDetail; git: Resource<GitV
   const runText = (r: RunView): string | null => {
     if (r.status === 'running' && r.kind === 'agent') return 'Running now. Open Chat to watch it or talk to it.';
     if (r.status === 'waiting' && r.kind === 'agent') return 'The session is open and waiting for you.';
+    // Your chat sent the step back to the agent, so whatever waited here closed without an answer.
+    if (r.outcome === 'reopened') return 'Closed without an answer: your message sent the task back to the agent.';
     if (r.kind === 'human') {
       const d = task.events.find((e) => e.runId === r.id && e.kind === 'you' && e.mode === 'decision');
       if (d && d.kind === 'you') return `${d.via === 'cos' ? 'Your chief of staff chose (with your OK)' : 'You chose'} “${humanize(d.choice ?? r.outcome ?? '').toLowerCase()}”.` + (d.text ? ` Comment: “${d.text}”` : '');

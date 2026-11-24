@@ -12,6 +12,8 @@ export function ChatBox({
   canStop,
   waiting,
   reopened,
+  sendsBack,
+  stepTitle,
   who,
   av,
   color,
@@ -27,13 +29,24 @@ export function ChatBox({
   waiting: boolean;
   /** An ended session you reopened: talking here doesn't move the task. */
   reopened: boolean;
+  /** The run ended, but the task is open: your message sends it back to this step. */
+  sendsBack?: boolean;
+  stepTitle?: string;
   who: string;
   av: string;
   color: string;
   branch: string | null;
 }) {
-  const placeholder = waiting ? `Reply to ${who}…` : working ? `Message ${who}. It reads this after its current action.` : reopened ? 'Ask about this session. The task doesn’t move.' : `Message ${who}…`;
-  const status = working ? 'working' : waiting ? 'waiting for you' : reopened ? 'reopened; doesn’t move the task' : '';
+  const placeholder = waiting
+    ? `Reply to ${who}…`
+    : working
+      ? `Message ${who}. It reads this after its current action.`
+      : sendsBack
+        ? `Message ${who}. ${stepTitle ?? 'This step'} takes the task back.`
+        : reopened
+          ? 'Ask about this session. The task doesn’t move.'
+          : `Message ${who}…`;
+  const status = working ? 'working' : waiting ? 'waiting for you' : sendsBack ? 'sends the task back' : reopened ? 'reopened; doesn’t move the task' : '';
 
   return (
     <Composer

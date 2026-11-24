@@ -96,7 +96,9 @@ describe('ChiefOfStaff', () => {
     await runner.idle();
     const out = await cos.tool('message_agent', { task: 'HUB-2', text: 'use the shared button' });
     expect(out).toMatch(/^Done: Sent to Claude Code on HUB-2/);
-    expect(toAgents.at(-1)).toBe('use the shared button');
+    // The decision waited, so the chat sent Implement back to the agent too. Your words still lead the message.
+    expect(toAgents.at(-1)!.split('\n\n--- Orstra ---')[0]).toBe('use the shared button');
+    expect(out).toContain('The task went back to Implement');
     const you = store.events(t.id).map((e) => JSON.parse(e.payload)).find((p) => p.mode === 'chat');
     expect(you).toMatchObject({ text: 'use the shared button', via: 'cos' });
   });

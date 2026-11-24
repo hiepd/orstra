@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from '../src/db.ts';
 import { Runner } from '../src/runner.ts';
+import { makeViews } from '../src/server.ts';
 import type { Executors, LiveSession, SessionOptions } from '../src/executors.ts';
 
 interface Sent { sessionId: string; resume: boolean; text: string }
@@ -97,6 +98,23 @@ steps:
     use: action
     action: git.merge
     next: end
+`;
+
+/** An agent step, then your review. No merge action, so the tests need no repository. */
+const REVIEW = `
+name: Review
+steps:
+  work:
+    use: agent
+    prompt: Do {{ trigger.title }}
+    next: review
+  review:
+    use: human
+    question: Close it?
+    choices: [close, reopen]
+    on:
+      close: end
+      reopen: work
 `;
 
 const done = (did: string) => `## Progress\nDid: ${did}\nDecided: nothing\nLeft: nothing\nAvoid: nothing\n\nOUTCOME: done`;
@@ -318,6 +336,135 @@ steps:
     expect(t.inbox_reason).toBe('conflict');
     expect(sh(second.repo, 'rev-parse', 'HEAD').toString()).toBe(head);
     expect(sh(second.repo, 'status', '--porcelain').toString()).toBe('');
+  });
+
+  it('sends the task back to the agent when you chat during a human step', async () => {
+    const { store, runner, wfPath, fake } = setup(REVIEW, (_t, n) => done(n === 1 ? 'first pass' : 'added the changelog'));
+    const task = runner.startTask({ workflowPath: wfPath, title: 'changelog' });
+    await runner.idle();
+    const work1 = store.runsForTask(task.id)[0];
+    const review = store.runsForTask(task.id).find((r) => r.kind === 'human')!;
+    expect(review.status).toBe('waiting');
+
+    await runner.message(task.id, 'also update the changelog', 'chat');
+
+    // The task reads as working again, at the agent's step, with nothing waiting on you.
+    const mid = store.task(task.id)!;
+    expect(mid.status).toBe('running');
+    expect(mid.current_step).toBe('work');
+    expect(mid.inbox_reason).toBe(null);
+    expect(store.runsForTask(task.id).filter((r) => r.status === 'waiting')).toHaveLength(0);
+    expect(store.run(review.id)!.status).toBe('stopped');
+    expect(store.run(review.id)!.outcome).toBe('reopened');
+
+    // A run row of its own, on the same session, with the finish instructions.
+    const work2 = store.runsForTask(task.id).find((r) => r.step_id === 'work' && r.attempt === 2)!;
+    expect(work2.status).toBe('running');
+    expect(work2.kind).toBe('agent');
+    expect(work2.session_id).toBe(work1.session_id);
+    // Your words sit in the new run's transcript, with the work they asked for.
+    const chat = store.events(task.id).find((e) => e.kind === 'you' && JSON.parse(e.payload).mode === 'chat')!;
+    expect(chat.run_id).toBe(work2.id);
+
+    const resumed = fake.sent[fake.sent.length - 1];
+    expect(resumed.sessionId).toBe(work1.session_id);
+    expect(resumed.resume).toBe(true);
+    expect(resumed.text).toContain('also update the changelog');
+    expect(resumed.text).toContain('OUTCOME: done | needs_you | cant_do');
+
+    await runner.idle();
+    // The new work kept its own progress entry, and its outcome moved the workflow on.
+    expect(JSON.parse(store.run(work2.id)!.progress!).did).toBe('added the changelog');
+    expect(store.run(work2.id)!.outcome).toBe('done');
+    const rounds = store.runsForTask(task.id).filter((r) => r.kind === 'human');
+    expect(rounds).toHaveLength(2);
+    expect(rounds[1].status).toBe('waiting');
+  });
+
+  it('shows the task as running and drops the decision once the agent is back on it', async () => {
+    const { store, runner, wfPath } = setup(REVIEW, (_t, n) => (n === 1 ? done('first pass') : null));
+    const task = runner.startTask({ workflowPath: wfPath, title: 'board' });
+    await runner.idle();
+    const views = makeViews(store, runner);
+    expect(views.taskDetail(store.task(task.id)!).human).not.toBe(null);
+
+    await runner.message(task.id, 'rename the flag', 'chat');
+
+    const detail = views.taskDetail(store.task(task.id)!);
+    expect(detail.human).toBe(null);
+    expect(detail.status).toBe('running');
+    expect(detail.currentStep).toBe('work');
+    expect(detail.run).toEqual({ status: 'running', attempt: 2, kind: 'agent' });
+
+    runner.interrupt(task.id);
+    await runner.idle();
+  });
+
+  it('refuses a decision while an agent run works, so approval cannot merge a diff in flight', async () => {
+    const { store, runner, wfPath } = setup(REVIEW, () => done('first pass'));
+    const task = runner.startTask({ workflowPath: wfPath, title: 'guard' });
+    await runner.idle();
+    const work = store.runsForTask(task.id)[0];
+    const review = store.runsForTask(task.id).find((r) => r.kind === 'human')!;
+
+    // The state a stale page can send: the decision still waits, and the agent works again.
+    store.updateRun(work.id, { status: 'running', outcome: null, ended_at: null });
+    expect(() => runner.decide(review.id, 'close')).toThrow(/working/);
+
+    store.updateRun(work.id, { status: 'done', outcome: 'done' });
+    runner.decide(review.id, 'close');
+    await runner.idle();
+    expect(store.task(task.id)!.status).toBe('done');
+  });
+
+  it('keeps one run when you chat to an agent that is still working', async () => {
+    const { store, runner, wfPath, fake } = setup(LOOP, (text) => (text.includes('instead') ? done('did it the other way') : null));
+    const task = runner.startTask({ workflowPath: wfPath, title: 'mid-turn' });
+    await new Promise((r) => setTimeout(r, 5));
+    expect(store.runsForTask(task.id)[0].status).toBe('running');
+
+    await runner.message(task.id, 'do it this way instead', 'chat');
+
+    expect(store.runsForTask(task.id).filter((r) => r.step_id === 'impl')).toHaveLength(1);
+    expect(fake.sessions).toHaveLength(1);
+    await runner.idle();
+    expect(store.task(task.id)!.status).toBe('done');
+  });
+
+  it('does not move a stopped task when you chat to its agent', async () => {
+    const { store, runner, wfPath, fake } = setup(LOOP, (_t, n) => (n === 1 ? 'Which one?\n\nOUTCOME: needs_you' : done('ok')));
+    const task = runner.startTask({ workflowPath: wfPath, title: 'stopped' });
+    await runner.idle();
+    runner.stop(task.id);
+    await new Promise((r) => setTimeout(r, 5));
+    const before = store.runsForTask(task.id).length;
+
+    await runner.message(task.id, 'carry on', 'chat');
+    await runner.idle();
+
+    expect(store.task(task.id)!.status).toBe('stopped');
+    expect(store.runsForTask(task.id)).toHaveLength(before);
+    expect(fake.sent[fake.sent.length - 1].text).toContain('carry on');
+  });
+
+  it('does not reopen a finished task when you chat to its agent', async () => {
+    const { store, runner, wfPath, fake } = setup(REVIEW, () => done('shipped'));
+    const task = runner.startTask({ workflowPath: wfPath, title: 'finished' });
+    await runner.idle();
+    runner.decide(store.runsForTask(task.id).find((r) => r.status === 'waiting')!.id, 'close');
+    await runner.idle();
+    expect(store.task(task.id)!.status).toBe('done');
+    const before = store.runsForTask(task.id).length;
+
+    await runner.message(task.id, 'one more thing', 'chat');
+    await runner.idle();
+
+    const t = store.task(task.id)!;
+    expect(t.status).toBe('done');
+    expect(t.current_step).toBe(null);
+    expect(store.runsForTask(task.id)).toHaveLength(before);
+    expect(fake.sent[fake.sent.length - 1].text).toContain('one more thing');
+    expect(store.events(task.id).some((e) => e.kind === 'system' && String(JSON.parse(e.payload).text).includes('finished'))).toBe(true);
   });
 
   it('hands notes to the next run of that step', async () => {
