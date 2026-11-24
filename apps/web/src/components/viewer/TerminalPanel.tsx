@@ -142,8 +142,12 @@ export function TerminalPanel({ task }: PanelProps) {
     if (!term) return;
     const text = term.getSelection().trim() || lastLines(term, LAST_LINES);
     if (!text) return toast('The terminal shows nothing to send yet.');
-    insertIntoDraft({ kind: 'task', taskId: task.id }, '```\n' + text + '\n```');
-    toast('The output is in your message. Edit it, then send it.');
+    const block = '```\n' + text + '\n```';
+    if (insertIntoDraft({ kind: 'task', taskId: task.id }, block)) return toast('The output is in your message. Edit it, then send it.');
+    navigator.clipboard.writeText(block).then(
+      () => toast('The chat has no message box now, so the output is on your clipboard.'),
+      () => toast('The chat has no message box now. Reopen the session, then send it again.', { error: true }),
+    );
   };
 
   if (!task.worktree) return <div className="vw-empty">This task has no worktree yet, so a terminal has nowhere to start.</div>;

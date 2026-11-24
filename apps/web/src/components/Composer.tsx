@@ -7,9 +7,14 @@ import { useToast } from './Overlay';
 const INSERT_EVENT = 'orstra:insert-draft';
 const keyOf = (to: AttachTo) => (to.kind === 'task' ? `task:${to.taskId}` : 'cos');
 
-/** Put text in the draft of a chat's composer (the one with acceptsInserts), for example a terminal's output. */
-export function insertIntoDraft(to: AttachTo, text: string) {
-  window.dispatchEvent(new CustomEvent(INSERT_EVENT, { detail: { key: keyOf(to), text } }));
+/**
+ * Put text in the draft of a chat's composer (the one with acceptsInserts), for example a terminal's
+ * output. False when no such composer is on the page (an ended session shows none).
+ */
+export function insertIntoDraft(to: AttachTo, text: string): boolean {
+  const detail = { key: keyOf(to), text, taken: false };
+  window.dispatchEvent(new CustomEvent(INSERT_EVENT, { detail }));
+  return detail.taken;
 }
 
 /**
@@ -75,8 +80,9 @@ export function Composer({
   useEffect(() => {
     if (!acceptsInserts) return;
     const onInsert = (e: Event) => {
-      const d = (e as CustomEvent<{ key: string; text: string }>).detail;
+      const d = (e as CustomEvent<{ key: string; text: string; taken: boolean }>).detail;
       if (d.key !== insertKey) return;
+      d.taken = true;
       setDraft((t) => (t.trim() ? `${t.trimEnd()}\n\n${d.text}` : d.text));
       ref.current?.focus();
     };
