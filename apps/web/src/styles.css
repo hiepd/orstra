@@ -2137,3 +2137,12 @@ a:hover {
 .ox-md :is(th,td){border-left:1px solid var(--line);border-top:1px solid var(--line);padding:5px 9px;text-align:left;vertical-align:top}
 .ox-md tr>:first-child{border-left:0}
 .ox-md thead :is(th,td){border-top:0;font-weight:600;background:var(--hover)}
+
+/* ---- Inbox view of Tasks: the list on the left, the selected task on the right ---- */
+.ox-isplit{flex:1;min-height:0;display:flex}
+.ox-ilist{flex:none;width:400px;overflow:auto;padding:28px 16px 24px 22px;border-right:1px solid var(--line);display:flex;flex-direction:column;gap:22px}
+.ox-ilist .ox-h1{font-size:28px;line-height:34px;font-weight:700;letter-spacing:-0.02em;margin:0}
+.ox-ipane{flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden}
+.ox-irow[aria-current='true']{background:var(--accent-soft)}
+.ox-irow[aria-current='true']:hover{background:var(--accent-soft)}
+.ox-segn{margin-left:6px;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--accent);color:#fff;font-size:12px;font-weight:600;display:inline-grid;place-items:center}

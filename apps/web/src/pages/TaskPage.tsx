@@ -17,7 +17,7 @@ import { defaultSession, runName, TaskChat } from './TaskChat';
 
 type ModalState = { kind: 'retry'; stepId?: string } | { kind: 'stop' } | { kind: 'cc'; run: RunView } | { kind: 'note'; stepId: string; title: string } | { kind: 'cleanup' } | null;
 
-export function TaskPage({ id, view, runId }: { id: string; view: TaskViewName; runId?: string }) {
+export function TaskPage({ id, view, runId, embedded }: { id: string; view: TaskViewName; runId?: string; embedded?: boolean }) {
   // Each refetch asks only for the events the page has not seen yet.
   const load = useMemo(() => taskLoader(id), [id]);
   const res = useLiveResource(`task:${id}`, load, (taskId) => taskId === id);
@@ -48,11 +48,11 @@ export function TaskPage({ id, view, runId }: { id: string; view: TaskViewName; 
       </>
     );
   }
-  return <TaskView task={task} view={view} runId={runId} />;
+  return <TaskView task={task} view={view} runId={runId} embedded={embedded} />;
 }
 
 /** One task, two views: Overview (where it is and what happened) and Chat (the agent sessions and the worktree). */
-function TaskView({ task, view, runId }: { task: TaskDetail; view: TaskViewName; runId?: string }) {
+function TaskView({ task, view, runId, embedded }: { task: TaskDetail; view: TaskViewName; runId?: string; embedded?: boolean }) {
   const toast = useToast();
   useNow(15_000);
   const git = useGit(task.id);
@@ -71,6 +71,45 @@ function TaskView({ task, view, runId }: { task: TaskDetail; view: TaskViewName;
       toast('Couldn’t copy to the clipboard', { error: true });
     }
   };
+
+  if (embedded) {
+    // In the Inbox pane: the task's name and state, the Overview / Chat switch, and a way to open it in full.
+    return (
+      <>
+        <div className="lx-bar">
+          <span className="ox-id">{taskLabel(task)}</span>
+          <b className="ox-trunc" style={{ fontWeight: 600 }}>
+            {task.title}
+          </b>
+          <span className="ox-pill" style={{ background: STATE[state].bg, color: STATE[state].fg }}>
+            <span className={`ox-sd${state === 'running' ? ' ox-live' : ''}`} style={{ background: STATE[state].fg }} />
+            {STATE[state].label}
+          </span>
+          <div className="lx-acts">
+            <div className="ox-seg" role="group" aria-label="Task view">
+              <a href={href.inboxTask(task.id)} aria-current={view === 'overview' ? 'page' : undefined}>
+                Overview
+              </a>
+              <a href={href.inboxTask(task.id, 'chat')} aria-current={view === 'chat' ? 'page' : undefined}>
+                Chat
+              </a>
+            </div>
+            <a className="lx-btn" href={view === 'chat' ? href.chat(task.id) : href.task(task.id)}>
+              Open task
+            </a>
+          </div>
+        </div>
+        {view === 'overview' ? (
+          <Overview task={task} git={git} onModal={setModal} embedded />
+        ) : (
+          <TaskChat task={task} runId={runId} git={git} openPath={openPath} onOpenPath={setOpenPath} embedded />
+        )}
+        {modal?.kind === 'retry' && <RetryModal task={task} stepId={modal.stepId} onClose={() => setModal(null)} />}
+        {modal?.kind === 'stop' && <StopModal task={task} onClose={() => setModal(null)} />}
+        {modal?.kind === 'note' && <NoteModal task={task} stepId={modal.stepId} title={modal.title} onClose={() => setModal(null)} />}
+      </>
+    );
+  }
 
   return (
     <>
@@ -171,7 +210,7 @@ function outcomeBadge(task: TaskDetail, r: RunView): { text: string; tone: keyof
   return { text, tone: r.kind === 'switch' ? 'plain' : 'ok' };
 }
 
-function Overview({ task, git, onModal }: { task: TaskDetail; git: Resource<GitView>; onModal: (m: ModalState) => void }) {
+function Overview({ task, git, onModal, embedded }: { task: TaskDetail; git: Resource<GitView>; onModal: (m: ModalState) => void; embedded?: boolean }) {
   const state = taskState(task);
   const { now, next } = describeTask(task);
   const cur = currentRun(task);
@@ -374,6 +413,7 @@ function Overview({ task, git, onModal }: { task: TaskDetail; git: Resource<GitV
         </div>
       </div>
 
+      {!embedded && (
       <aside className="ox-props" aria-label="Task details">
         <Prop k="Status" v={STATE[state].label} />
         <Prop k="Step" v={stepLabel({ ...task, run: cur ? { status: cur.status, attempt: cur.attempt, kind: cur.kind } : null })} />
@@ -439,6 +479,7 @@ function Overview({ task, git, onModal }: { task: TaskDetail; git: Resource<GitV
           </div>
         )}
       </aside>
+      )}
     </div>
   );
 }

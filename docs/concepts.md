@@ -135,14 +135,13 @@ How many runs can work at the same time on this machine (default 4). Agent and g
 | Screen | Shows | Clicking an item |
 |---|---|---|
 | **Assistant** | The conversation, its plans waiting for your OK, what it is watching, what it may do without asking | Task rows open the task page |
-| **Inbox** | Tasks that need you: a decision, a question from an agent, or a stuck task | Opens the task page |
-| **Tasks** | All tasks. Board view groups them by their current step (columns = workflow steps); list view groups by status. Filter "Running now" for live work | Opens the task page |
+| **Tasks** | All tasks, in 3 views. **Inbox**: the tasks that need you (a decision, a question from an agent, a stuck task), across every workflow, with the selected task open beside the list. **Board**: one workflow's tasks by their current step (columns = workflow steps). **List**: all tasks by status | Inbox: opens the task in the pane. Board and List: open the task page |
 | **Task page** | One task: its steps (with notes), the decision if one is waiting, and the chat with its sessions | — |
 | **Workflows** | The workflow editor (canvas or YAML) | Edits a workflow |
 | **Settings** | Agents, triggers, repositories, connections, notifications | — |
 
 **Rules for the UI:**
-- **One home per object.** Tasks live on the task page, workflows on Workflows, agents and triggers in Settings. Lists only navigate; they never offer a second place to act. The one exception is the assistant: you can ask it to act, and it shows every action as a plan or a receipt that links to the task.
+- **One home per object.** Tasks live on the task page, workflows on Workflows, agents and triggers in Settings. Lists only navigate; they never offer a second place to act. Two exceptions: the Inbox view shows the task page itself in a pane beside the list, so acting there is acting on the task page; and the assistant, which you can ask to act, and which shows every action as a plan or a receipt that links to the task.
 - **No list → list links.** From any list you go to the task page and back, never to another list.
 - **Talking and notes never mix.** Chat goes to a session; notes go on a step.
 

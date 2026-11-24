@@ -1,9 +1,10 @@
 import type { ReactNode } from 'react';
 import { api, type TaskDetail } from '../api';
-import { ChevronRight, InboxIcon, StuckCircle, WaitCircle } from '../components/Icons';
+import { InboxIcon, StuckCircle, WaitCircle } from '../components/Icons';
 import { AGENTS, reasonText, taskLabel } from '../lib/format';
 import { useLiveResource, useNow } from '../lib/live';
-import { href } from '../lib/router';
+import { href, type TaskViewName } from '../lib/router';
+import { TaskPage } from './TaskPage';
 import { STATE, stepLabel, taskState, type TaskState } from '../lib/taskState';
 import { ago } from '../lib/time';
 
@@ -22,90 +23,102 @@ function what(t: TaskDetail, state: TaskState): string {
   return reasonText(t.inboxReason);
 }
 
-/** Every task that needs you. Rows only open the task; you act there. */
-export function InboxPage() {
+/**
+ * The Inbox view of Tasks: every task that needs you, across workflows. Pick a row and the task opens
+ * beside the list (Overview or Chat), so you can decide, answer or retry without leaving the Inbox.
+ */
+export function InboxView({ sel, selView }: { sel?: string; selView?: TaskViewName }) {
   useNow(30_000);
   const res = useLiveResource('inbox', api.inbox);
   const tasks = useLiveResource('inbox:tasks', api.tasks);
   const all = res.data ?? [];
   const groups = GROUPS.map((g) => ({ ...g, items: all.filter((t) => taskState(t) === g.state).sort((a, b) => a.updatedAt - b.updatedAt) })).filter((g) => g.items.length > 0);
+  const ordered = groups.flatMap((g) => g.items);
   const count = (group: string) => tasks.data?.filter((t) => STATE[taskState(t)].group === group).length ?? 0;
   const running = count('running');
   const queued = count('queued');
+  // The open task: the one in the URL while it still needs you, else the first in the list.
+  const picked = ordered.find((t) => t.id === sel) ?? ordered[0];
+  const pickedView: TaskViewName = picked && picked.id === sel ? selView ?? 'overview' : picked && taskState(picked) === 'question' ? 'chat' : 'overview';
 
   return (
-    <>
-      <div className="lx-bar">
-        <span className="lx-crumb">
-          <b>Inbox</b>
-        </span>
-        {res.data && <span className="lx-muted">{all.length ? `${all.length} ${all.length === 1 ? 'task needs' : 'tasks need'} you` : 'Nothing needs you'}</span>}
-      </div>
-      <div className="ox-scroll">
-        <div className="ox-col">
-          {res.error && !res.data && <div className="lx-error">{res.error}</div>}
-          {res.loading && !res.data && !res.error && (
-            <div className="lx-loading">
-              <span className="lx-spin" /> Loading…
-            </div>
-          )}
-          {res.data && all.length === 0 && (
-            <div className="lx-empty" style={{ padding: '48px 0 8px' }}>
-              <span style={{ color: 'var(--dim)' }}>
-                <InboxIcon />
-              </span>
-              <b>Nothing needs you</b>
-              <span>Decisions, questions from agents and stuck tasks show up here.</span>
-            </div>
-          )}
-          {groups.map((g) => (
-            <section key={g.state}>
-              <h2 className="ox-gh">
-                {g.name}
-                <span className="ox-gn">{g.items.length}</span>
-              </h2>
-              <div className="ox-card">
-                {g.items.map((t) => {
-                  const a = AGENTS[t.agent ?? 'claude-code'];
-                  return (
-                    <a key={t.id} className="ox-irow" href={g.state === 'question' ? href.chat(t.id) : href.task(t.id)}>
-                      <span className="ox-iic" style={{ background: STATE[g.state].bg }}>
-                        {g.icon}
-                      </span>
-                      <span className="ox-imain">
-                        <span className="ox-iline">
-                          <span className="ox-id">{taskLabel(t)}</span>
-                          <span className="ox-iname">{t.title}</span>
-                        </span>
-                        <span className="ox-iwhat">{what(t, g.state)}</span>
-                        <span className="ox-imeta">
-                          <span className="lx-av ox-av" style={{ background: a.color }}>
-                            {a.av}
-                          </span>
-                          <span>
-                            {a.name} · {stepLabel(t)} · {ago(t.updatedAt)}
-                          </span>
-                        </span>
-                      </span>
-                      <span className="ox-go">
-                        <ChevronRight size={14} />
-                      </span>
-                    </a>
-                  );
-                })}
-              </div>
-            </section>
-          ))}
-          {tasks.data && (running > 0 || queued > 0) && (
-            <div className="ox-calm">
-              <span className="ox-sd ox-live" style={{ background: 'var(--accent)' }} />
-              <span>
-                {running} {running === 1 ? 'task is' : 'tasks are'} running and {queued} queued. {all.length ? 'Nothing else needs you.' : ''}
-              </span>
-            </div>
-          )}
+    <div className="ox-isplit">
+      <section className="ox-ilist" aria-label="Needs you">
+        <div>
+          <h1 className="ox-h1">Inbox</h1>
+          <div className="ox-sub">
+            {res.data
+              ? all.length
+                ? `${all.length} ${all.length === 1 ? 'task needs' : 'tasks need'} you. About ${all.length * 2} minutes of your time.`
+                : 'You are all caught up.'
+              : 'Loading…'}
+          </div>
         </div>
+        {res.error && !res.data && <div className="lx-error">{res.error}</div>}
+        {res.data && all.length === 0 && (
+          <div className="lx-empty" style={{ padding: '40px 0 8px' }}>
+            <span style={{ color: 'var(--dim)' }}>
+              <InboxIcon />
+            </span>
+            <b>Nothing needs you</b>
+            <span>Decisions, questions from agents and stuck tasks show up here.</span>
+          </div>
+        )}
+        {groups.map((g) => (
+          <section key={g.state}>
+            <h2 className="ox-gh">
+              {g.name}
+              <span className="ox-gn">{g.items.length}</span>
+            </h2>
+            <div className="ox-card">
+              {g.items.map((t) => {
+                const a = AGENTS[t.agent ?? 'claude-code'];
+                const on = picked?.id === t.id;
+                return (
+                  <a key={t.id} className="ox-irow" aria-current={on ? 'true' : undefined} href={href.inboxTask(t.id, g.state === 'question' ? 'chat' : 'overview')}>
+                    <span className="ox-iic" style={{ background: STATE[g.state].bg }}>
+                      {g.icon}
+                    </span>
+                    <span className="ox-imain">
+                      <span className="ox-iline">
+                        <span className="ox-id">{taskLabel(t)}</span>
+                        <span className="ox-iname">{t.title}</span>
+                      </span>
+                      <span className="ox-iwhat">{what(t, g.state)}</span>
+                      <span className="ox-imeta">
+                        <span className="lx-av ox-av" style={{ background: a.color }}>
+                          {a.av}
+                        </span>
+                        <span>
+                          {a.name} · {stepLabel(t)} · {ago(t.updatedAt)}
+                        </span>
+                      </span>
+                    </span>
+                  </a>
+                );
+              })}
+            </div>
+          </section>
+        ))}
+        {tasks.data && (running > 0 || queued > 0) && (
+          <div className="ox-calm">
+            <span className="ox-sd ox-live" style={{ background: 'var(--accent)' }} />
+            <span>
+              {running} {running === 1 ? 'task is' : 'tasks are'} running and {queued} queued.{all.length ? ' Nothing else needs you.' : ''}
+            </span>
+          </div>
+        )}
+      </section>
+      <div className="ox-ipane">
+        {picked ? (
+          <TaskPage key={picked.id} id={picked.id} view={pickedView} embedded />
+        ) : (
+          <div className="lx-empty">
+            <b>{res.data ? 'Nothing needs you' : 'Loading…'}</b>
+            <span>Agents keep working. A task shows up here when a step needs you.</span>
+          </div>
+        )}
       </div>
-    </>
+    </div>
   );
 }

@@ -4,8 +4,8 @@ export type TaskViewName = 'overview' | 'chat';
 
 export type Route =
   | { name: 'cos' }
-  | { name: 'inbox' }
-  | { name: 'tasks' }
+  /** Tasks. `inbox`: the Inbox view, with `sel` the task open in its pane. */
+  | { name: 'tasks'; inbox?: boolean; sel?: string; selView?: TaskViewName }
   | { name: 'task'; id: string; view: TaskViewName; runId?: string }
   | { name: 'workflows'; file?: string }
   | { name: 'settings'; group?: string }
@@ -16,7 +16,11 @@ export function parseHash(hash: string): Route {
   const parts = path.split('/').filter(Boolean).map(decodeURIComponent);
   if (parts.length === 0) return { name: 'cos' };
   // "sessions" was a page in an earlier version; a task's sessions now live on its Chat view.
-  if ((parts[0] === 'inbox' || parts[0] === 'sessions') && parts.length === 1) return { name: 'inbox' };
+  if (parts[0] === 'sessions' && parts.length === 1) return { name: 'tasks', inbox: true };
+  // The Inbox is the first view of Tasks: what needs you, across workflows, with the task open beside it.
+  if (parts[0] === 'inbox' && parts.length <= 3 && (parts.length < 3 || parts[2] === 'chat')) {
+    return { name: 'tasks', inbox: true, sel: parts[1], selView: parts[2] === 'chat' ? 'chat' : 'overview' };
+  }
   if (parts[0] === 'tasks') {
     if (parts.length === 1) return { name: 'tasks' };
     if (parts.length === 2) return { name: 'task', id: parts[1], view: 'overview' };
@@ -31,6 +35,7 @@ export function parseHash(hash: string): Route {
 export const href = {
   cos: '#/',
   inbox: '#/inbox',
+  inboxTask: (id: string, view?: TaskViewName) => `#/inbox/${encodeURIComponent(id)}${view === 'chat' ? '/chat' : ''}`,
   tasks: '#/tasks',
   task: (id: string) => `#/tasks/${encodeURIComponent(id)}`,
   chat: (id: string, runId?: string) => `#/tasks/${encodeURIComponent(id)}/chat${runId ? `/${encodeURIComponent(runId)}` : ''}`,

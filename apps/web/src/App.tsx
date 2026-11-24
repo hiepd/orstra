@@ -8,7 +8,6 @@ import { useLiveConnected, useLiveResource } from './lib/live';
 import { href, useRoute } from './lib/router';
 import { STATE, taskState } from './lib/taskState';
 import { CosPage } from './pages/Cos';
-import { InboxPage } from './pages/Inbox';
 import { SettingsPage } from './pages/Settings';
 import { TaskPage } from './pages/TaskPage';
 import { TasksPage } from './pages/Tasks';
@@ -52,8 +51,7 @@ function Shell() {
       <Sidebar route={route} needsCount={inboxCount} running={running} queuedCount={count('queued')} costToday={settings.data?.cost?.today ?? null} connected={connected} />
       <div className="lx-frame">
         {route.name === 'cos' && <CosPage />}
-        {route.name === 'inbox' && <InboxPage />}
-        {route.name === 'tasks' && <TasksPage onNewTask={openNew} />}
+        {route.name === 'tasks' && <TasksPage onNewTask={openNew} inbox={!!route.inbox} sel={route.sel} selView={route.selView} />}
         {route.name === 'task' && <TaskPage key={route.id} id={route.id} view={route.view} runId={route.runId} />}
         {route.name === 'workflows' && <WorkflowsPage file={route.file} />}
         {route.name === 'settings' && <SettingsPage group={route.group} />}
