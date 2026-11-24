@@ -161,6 +161,8 @@ a:hover {
 /* ---------- Sidebar: translucent, the places on top, Settings and the status card at the bottom ---------- */
 .lx-side {
   flex: 0 0 232px;
+  /* A flex item does not shrink below its content: a long task title would widen the sidebar. */
+  min-width: 0;
   display: flex;
   flex-direction: column;
   padding: 14px 10px 12px;
@@ -267,6 +269,7 @@ a:hover {
   text-decoration: none;
 }
 .lx-live span:last-child {
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
