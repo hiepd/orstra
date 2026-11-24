@@ -94,7 +94,7 @@ function TaskView({ task, view, runId }: { task: TaskDetail; view: TaskViewName;
           </a>
         </div>
         <div className="lx-acts">
-          {task.worktree && (
+          {task.worktree && !task.worktreeGone && (
             <>
               <button className="lx-btn" aria-expanded={editorMenu} onClick={() => setEditorMenu((m) => !m)}>
                 Open in editor
@@ -386,7 +386,7 @@ function Overview({ task, git, onModal }: { task: TaskDetail; git: Resource<GitV
         <Prop k="Agent" v={agentRun ? agentOf(agentRun).name : 'None yet'} />
         {task.ref && <Prop k="Ticket" v={task.ref} mono />}
         <Prop k="Branch" v={g?.branch ? g.branch + (g.base ? ` → ${g.base}` : '') : task.worktree ? '…' : 'None'} mono />
-        <Prop k="Worktree" v={task.worktree ? shortPath(task.worktree) : 'None'} mono />
+        <Prop k="Worktree" v={task.worktreeGone ? 'Removed' : task.worktree ? shortPath(task.worktree) : 'None'} mono={!task.worktreeGone} />
         <Prop k="Changes" v={g ? (g.files.length ? `${g.files.length} ${g.files.length === 1 ? 'file' : 'files'} · ${g.commits.length} ${g.commits.length === 1 ? 'commit' : 'commits'}` : 'None yet') : '…'} />
         {task.prUrl ? (
           <div className="ox-prop">
@@ -424,7 +424,7 @@ function Overview({ task, git, onModal }: { task: TaskDetail; git: Resource<GitV
               <button className="lx-btn" style={{ justifyContent: 'center' }} onClick={() => void api.archive(task.id, true)}>
                 Archive
               </button>
-              {task.worktree && (
+              {task.worktree && !task.worktreeGone && (
                 <button className="lx-btn" style={{ justifyContent: 'center' }} onClick={() => onModal({ kind: 'cleanup' })}>
                   Clean up worktree…
                 </button>
