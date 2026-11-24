@@ -38,6 +38,9 @@ function Shell() {
 
   const count = (group: string) => tasks.data?.filter((t) => STATE[taskState(t)].group === group).length ?? 0;
   const inboxCount = count('needs');
+  const running = tasks.data?.filter((t) => taskState(t) === 'running') ?? [];
+  // Cost changes when a run ends a turn; a slow refresh is enough for the sidebar.
+  const settings = useLiveResource('nav:settings', api.settings, undefined, 5000);
   const openNew = () => setNewTask(true);
 
   useEffect(() => {
@@ -46,7 +49,7 @@ function Shell() {
 
   return (
     <div className="lx">
-      <Sidebar route={route} inboxCount={inboxCount} runningCount={count('running')} queuedCount={count('queued')} connected={connected} />
+      <Sidebar route={route} needsCount={inboxCount} running={running} queuedCount={count('queued')} costToday={settings.data?.cost?.today ?? null} connected={connected} />
       <div className="lx-frame">
         {route.name === 'cos' && <CosPage />}
         {route.name === 'inbox' && <InboxPage />}
