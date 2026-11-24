@@ -26,7 +26,7 @@ export type MessageMode = 'chat' | 'note' | 'ask';
 
 /** Set when the chief of staff acted for you; shown on the task. */
 export type Via = 'cos' | undefined;
-const byCos = (via: Via) => (via === 'cos' ? ' (by your chief of staff)' : '');
+const byCos = (via: Via) => (via === 'cos' ? ' (by your assistant)' : '');
 
 export interface RunnerOptions {
   slots: number;

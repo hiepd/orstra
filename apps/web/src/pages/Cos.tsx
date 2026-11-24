@@ -247,7 +247,7 @@ function Conversation({ view, tasks }: { view: CosView; tasks: TaskSummary[] }) 
   if (!items.length)
     return (
       <div className="cs-intro">
-        <b>Your chief of staff</b>
+        <b>Your assistant</b>
         <span>It keeps track of every task. Ask what needs you or how a task is going, or tell it what to do, like “tell Codex reposts count as duplicates” or “retry HUB-405 when HUB-432 is done”.</span>
         <span>It can read files, change files and run commands itself, and it asks before it starts a task or answers a decision. For real work on a task it goes through the task’s agent.</span>
       </div>
@@ -283,7 +283,7 @@ function CosComposer({ working, empty }: { working: boolean; empty: boolean }) {
       )}
       <Composer
         to={COS}
-        who="Chief of staff"
+        who="Assistant"
         av="O"
         color="var(--solid)"
         placeholder={working ? 'It reads this when it finishes what it’s doing…' : 'Ask about your tasks, or tell me what to do…'}
@@ -319,12 +319,12 @@ function Side({ view, tasks }: { view: CosView; tasks: TaskSummary[] }) {
   };
   const perms: { key: CosPermission | null; label: string; sub: string; fixed?: string }[] = [
     { key: null, label: 'Answer questions about your tasks', sub: 'Reads tasks, runs, sessions and worktrees', fixed: 'Always on' },
-    { key: 'msg', label: 'Message agents and leave notes', sub: 'Shows on the task as sent by your chief of staff' },
+    { key: 'msg', label: 'Message agents and leave notes', sub: 'Shows on the task as sent by your assistant' },
     { key: 'start', label: 'Start and retry tasks', sub: 'Otherwise it shows a plan and waits for your OK' },
     { key: null, label: 'Answer decisions or stop tasks', sub: 'Decisions are yours', fixed: 'Always asks' },
   ];
   return (
-    <aside className="cs-side" aria-label="What your chief of staff is doing">
+    <aside className="cs-side" aria-label="What your assistant is doing">
       <div className="cs-sh">Right now</div>
       {(
         [
@@ -387,7 +387,7 @@ function Side({ view, tasks }: { view: CosView; tasks: TaskSummary[] }) {
         );
       })}
       <div className="lx-hint" style={{ marginTop: 10, lineHeight: 1.5 }}>
-        Everything it does shows on the task too, marked as done by your chief of staff.
+        Everything it does shows on the task too, marked as done by your assistant.
       </div>
     </aside>
   );
@@ -403,7 +403,7 @@ export function CosPage() {
     <>
       <div className="lx-bar">
         <span className="lx-crumb">
-          <b>Chief of staff</b>
+          <b>Assistant</b>
         </span>
         <span className="lx-muted">Watches every task, briefs you, and acts when you ask.</span>
       </div>
@@ -415,7 +415,7 @@ export function CosPage() {
       )}
       {view && (
         <div className="cs-body">
-          <section className="ox-chat" aria-label="Chief of staff chat">
+          <section className="ox-chat" aria-label="Assistant chat">
             <div className="ox-cscroll" ref={scroll.ref} onScroll={scroll.onScroll} style={{ paddingBottom: 230 }}>
               <div className="ox-lane">
                 <Conversation view={view} tasks={tasks.data ?? []} />

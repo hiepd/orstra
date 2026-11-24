@@ -42,7 +42,7 @@ describe('the chief of staff command line', () => {
 
   it('tells the session who it is', () => {
     const args = cosToolArgs({ mcpConfig: 'm', dirs: [] });
-    expect(after(args, '--append-system-prompt')).toMatch(/chief of staff/);
+    expect(after(args, '--append-system-prompt')).toMatch(/assistant/);
   });
 
   it('reaches the session unchanged, and replaces the default flags', () => {

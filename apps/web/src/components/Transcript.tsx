@@ -119,7 +119,7 @@ export function Transcript({ run, events, working, agentName }: { run: RunView; 
             <div className="ox-user">
               <div className="ox-bubble">
                 {e.mode === 'ask' && <span className="ox-tag">Asked a copy</span>}
-                {e.via === 'cos' && <span className="ox-tag">Sent by your chief of staff</span>}
+                {e.via === 'cos' && <span className="ox-tag">Sent by your assistant</span>}
                 {e.text}
                 {!!e.files?.length && <SentFiles to={{ kind: 'task', taskId: run.taskId }} files={e.files} />}
               </div>

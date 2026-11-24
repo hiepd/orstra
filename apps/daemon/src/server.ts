@@ -330,7 +330,7 @@ export function buildApi(store: Store, runner: Runner, cos?: ChiefOfStaff, trigg
         return send(res, w ? 200 : 404, w ?? { error: 'No such workflow' }), true;
       }
       if (p.startsWith('/api/cos')) {
-        if (!cos) return send(res, 404, { error: 'The chief of staff isn’t running.' }), true;
+        if (!cos) return send(res, 404, { error: 'The assistant isn’t running.' }), true;
         if (req.method === 'GET' && p === '/api/cos') return send(res, 200, cos.view()), true;
         if (req.method === 'POST' && p === '/api/cos/messages') {
           const b = await readJson(req);

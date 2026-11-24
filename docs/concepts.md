@@ -77,12 +77,12 @@ What a run did, written when it ends: **Did · Decided · Left · Avoid**. It is
 Something you write **on a step that hasn't run yet**, for its next run to read ("also run the e2e suite"). A note is never sent to a running agent. To talk to a running agent, chat with its session.
 
 ### Attachment
-A file **you** add to a chat message: a screenshot you paste, a log you drop, a PDF you pick. It works the same in a task's chat and in the chief of staff's chat. Orstra writes the file into the folder that chat's agent works in, and puts its path at the end of your message, so the agent can open it.
+A file **you** add to a chat message: a screenshot you paste, a log you drop, a PDF you pick. It works the same in a task's chat and in the assistant's chat. Orstra writes the file into the folder that chat's agent works in, and puts its path at the end of your message, so the agent can open it.
 
 | Chat | Folder | Kept out of git by |
 |---|---|---|
 | A task's session | `<worktree>/.orstra/attachments/<id>/` | the repository's own exclude file, never your `.gitignore` |
-| Chief of staff | `~/.orstra/cos/attachments/<id>/` | no git there at all |
+| Assistant | `~/.orstra/cos/attachments/<id>/` | no git there at all |
 
 The caps are 10 MB per file and 25 MB per message; over them, Orstra tells you and attaches nothing.
 
@@ -121,20 +121,20 @@ A coding CLI Orstra can drive: Claude Code or Codex (`agent: codex` on a step). 
 ### Slot
 How many runs can work at the same time on this machine (default 4). Agent and gate runs take a slot; human, switch and action runs don't. When all slots are busy, new runs wait as **queued**.
 
-### Chief of staff
+### Assistant
 **One ongoing conversation with an agent that sees every task.** It briefs you, answers questions about any task, and acts for you through Orstra: it messages a task's agent, leaves notes, starts, retries or stops tasks, answers decisions, and **watches** tasks to follow up later ("retry HUB-405 when HUB-432 is done").
 
 - It is Claude Code with Orstra's tools **and** its own: Bash, Read, Edit, Write, the web tools, and whatever else Claude Code gives your machine. So it can read a file, change a file and run a command itself. Nothing limits it: no tool list, no path check, no permission question. Its working folders are `~/.orstra` (the database, the workflow files, every task worktree) and the Orstra checkout, and those are where it works, not a fence. It can reach any path you can.
 - It opens a file you **attach** to a message the same way, by the path Orstra puts at the end of your message. That folder, `~/.orstra/cos/attachments/`, is inside its workspace.
-- **Orstra, not the model, decides what needs your OK** for Orstra's own actions. This is a guard against mistakes, not a fence: the chief of staff also has Bash with no permission check, so it could call the daemon's API or edit the database itself. Its prompt tells it not to. Actions that need it become a **plan**: a card with Do it / Not now. Messaging agents is allowed by default; starting and retrying tasks asks by default; decisions and stopping always ask.
+- **Orstra, not the model, decides what needs your OK** for Orstra's own actions. This is a guard against mistakes, not a fence: the assistant also has Bash with no permission check, so it could call the daemon's API or edit the database itself. Its prompt tells it not to. Actions that need it become a **plan**: a card with Do it / Not now. Messaging agents is allowed by default; starting and retrying tasks asks by default; decisions and stopping always ask.
 - **A file or a command of its own has no plan card and no review step.** Work on a task still belongs to the task's agent: only then does the change land on the task's branch and go through the workflow. Ask it for a small fix or a quick look; ask a task for the work.
-- Everything it does through Orstra's tools is recorded on the task, marked as done by your chief of staff. Its own files and commands show in the conversation only.
+- Everything it does through Orstra's tools is recorded on the task, marked as done by your assistant. Its own files and commands show in the conversation only.
 
 ## Screens (one home per concept)
 
 | Screen | Shows | Clicking an item |
 |---|---|---|
-| **Chief of staff** | The conversation, its plans waiting for your OK, what it is watching, what it may do without asking | Task rows open the task page |
+| **Assistant** | The conversation, its plans waiting for your OK, what it is watching, what it may do without asking | Task rows open the task page |
 | **Inbox** | Tasks that need you: a decision, a question from an agent, or a stuck task | Opens the task page |
 | **Tasks** | All tasks. Board view groups them by their current step (columns = workflow steps); list view groups by status. Filter "Running now" for live work | Opens the task page |
 | **Task page** | One task: its steps (with notes), the decision if one is waiting, and the chat with its sessions | — |
@@ -142,7 +142,7 @@ How many runs can work at the same time on this machine (default 4). Agent and g
 | **Settings** | Agents, triggers, repositories, connections, notifications | — |
 
 **Rules for the UI:**
-- **One home per object.** Tasks live on the task page, workflows on Workflows, agents and triggers in Settings. Lists only navigate; they never offer a second place to act. The one exception is the chief of staff: you can ask it to act, and it shows every action as a plan or a receipt that links to the task.
+- **One home per object.** Tasks live on the task page, workflows on Workflows, agents and triggers in Settings. Lists only navigate; they never offer a second place to act. The one exception is the assistant: you can ask it to act, and it shows every action as a plan or a receipt that links to the task.
 - **No list → list links.** From any list you go to the task page and back, never to another list.
 - **Talking and notes never mix.** Chat goes to a session; notes go on a step.
 
