@@ -69,7 +69,8 @@ export function deriveState(input: StateInput): DerivedState {
     const state = openState(open);
     return at(state, state === 'waiting_you' ? open.waitReason : null);
   }
-  if (input.lastRouted === 'end') return at('done');
+  // A finished task is at no step. Every screen reads that null as "Finished".
+  if (input.lastRouted === 'end') return { ...at('done'), stepId: null };
   if (input.lastRouted?.startsWith('block:')) return at('blocked', input.lastRouted.slice('block:'.length));
   // Nothing holds the task and it did not finish: a run was lost. Say so instead of a comfortable lie.
   if (input.hasRuns) return at('blocked', 'lost');

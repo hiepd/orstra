@@ -6,6 +6,7 @@ import { withFiles, type Attachment } from './attachments.ts';
 import type { Executors, LiveSession, StreamEvent, TurnEnd } from './executors.ts';
 import type { RunRow, Store, TaskRow } from './db.ts';
 import { locateWorkflow } from './workflows.ts';
+import { projectTask, rebuildAll } from './project.ts';
 import { runAction } from './actions.ts';
 
 export interface StartTaskInput {
@@ -87,6 +88,12 @@ export class Runner extends EventEmitter {
     this.emit('change', { taskId });
   }
 
+  /** Work the task's state out from its runs and write it down. The only path that writes it. */
+  private project(taskId: string) {
+    projectTask(this.store, (runId) => this.live.has(runId), taskId);
+    this.changed(taskId);
+  }
+
   private event(taskId: string, runId: string | null, kind: string, payload: unknown) {
     this.store.addEvent(taskId, runId, kind, payload);
     this.changed(taskId);
@@ -99,12 +106,10 @@ export class Runner extends EventEmitter {
   recover() {
     for (const r of this.store.runsByStatus('running')) {
       if (r.kind === 'agent' && r.session_id) {
-        this.store.updateRun(r.id, { status: 'waiting' });
-        this.store.updateTask(r.task_id, { status: 'needs_you', inbox_reason: 'restarted', current_step: r.step_id });
+        this.store.updateRun(r.id, { status: 'waiting', wait_reason: 'paused' });
         this.store.addEvent(r.task_id, r.id, 'system', { text: 'Orstra restarted mid-run. Message Claude Code to pick the session back up, or retry the step.' });
       } else {
-        this.store.updateRun(r.id, { status: 'failed', outcome: 'interrupted', ended_at: Date.now() });
-        this.store.updateTask(r.task_id, { status: 'needs_you', inbox_reason: 'restarted', current_step: r.step_id });
+        this.store.updateRun(r.id, { status: 'failed', outcome: 'interrupted', ended_at: Date.now(), routed: 'block:interrupted' });
         this.store.addEvent(r.task_id, r.id, 'system', { text: 'Orstra restarted while this step was running. Retry it or stop the task.' });
       }
     }
@@ -137,8 +142,7 @@ export class Runner extends EventEmitter {
       created_at: Date.now(), started_at: null, ended_at: null, last_turn_at: null, wait_reason: null, routed: null,
     };
     this.store.insertRun(run);
-    this.store.updateTask(task.id, { current_step: stepId, status: 'running', inbox_reason: null });
-    this.changed(task.id);
+    this.project(task.id);
   }
 
   /** Start queued runs while there are free slots. Human, switch and action steps don't take a slot. */
@@ -296,14 +300,14 @@ export class Runner extends EventEmitter {
 
   private markWaiting(taskId: string, runId: string, reason: 'question' | 'reply' | 'paused') {
     this.store.updateRun(runId, { status: 'waiting', wait_reason: reason });
-    this.store.updateTask(taskId, { status: 'needs_you', inbox_reason: reason });
-    this.changed(taskId);
+    this.project(taskId);
     this.pump();
   }
 
   private onClosed(taskId: string, runId: string, live: Live, res: { ok: boolean; error?: string }) {
     if (this.live.get(runId) === live) this.live.delete(runId);
-    this.changed(taskId);
+    // The session is gone, so a run that still waits now reads as paused rather than as live.
+    this.project(taskId);
     if (live.finished || !live.routes) return;
     const run = this.store.run(runId);
     const task = this.store.task(taskId);
@@ -339,7 +343,7 @@ export class Runner extends EventEmitter {
 
       if (step.use === 'human') {
         this.store.updateRun(run.id, { status: 'waiting' });
-        this.store.updateTask(task.id, { status: 'needs_you', inbox_reason: 'decision' });
+        this.project(task.id);
         this.event(task.id, run.id, 'system', { text: step.question ?? 'Waiting for your decision' });
         return;
       }
@@ -385,12 +389,11 @@ export class Runner extends EventEmitter {
       this.event(taskId, runId, 'system', { text: `${outcome} → ${wf.steps[next.step].title ?? next.step}` });
       this.queueStep(this.store.task(taskId)!, next.step);
     } else if (next.type === 'end') {
-      this.store.updateTask(taskId, { status: 'done', current_step: null, inbox_reason: null });
       this.event(taskId, runId, 'system', { text: `${outcome} → finished` });
     } else {
-      this.store.updateTask(taskId, { status: 'needs_you', inbox_reason: next.reason, current_step: run.step_id });
       this.event(taskId, runId, 'system', { text: `${outcome} → needs you (${next.reason.replace('_', ' ')})` });
     }
+    this.project(taskId);
     this.pump();
   }
 
@@ -446,7 +449,6 @@ export class Runner extends EventEmitter {
       last_turn_at: null, wait_reason: null, routed: null,
     };
     this.store.insertRun(run);
-    this.store.updateTask(task.id, { status: 'running', inbox_reason: null, current_step: target.step_id });
     return run;
   }
 
@@ -522,8 +524,7 @@ export class Runner extends EventEmitter {
     const routes = open && (owns || !elsewhere);
 
     if (owns && routes) {
-      this.store.updateRun(target.id, { status: 'running' });
-      this.store.updateTask(taskId, { status: 'running', inbox_reason: null, current_step: target.step_id });
+      this.store.updateRun(target.id, { status: 'running', wait_reason: null });
     }
     // Your message hangs on the run that answers it, so one transcript holds the round.
     const run = !owns && routes ? this.sendBack(task, target) : target;
@@ -541,7 +542,8 @@ export class Runner extends EventEmitter {
     live.humanSpoke = true;
     live.sendSeq++;
     live.session.send(run === target ? body : `${body}\n\n${this.backOnStep(task, run)}`);
-    this.changed(taskId);
+    // After the session is open, never before: a run that is running with no session reads as paused.
+    this.project(taskId);
   }
 
   /** Stop the agent's current turn; the session stays open for your next message. */
@@ -579,6 +581,7 @@ export class Runner extends EventEmitter {
     this.closeOpenRuns(taskId, null);
     // A re-run is how you start a stopped task again, so it lifts the stop.
     this.store.updateTask(taskId, { stopped_at: null });
+    this.project(taskId);
     if (note) this.store.addEvent(taskId, null, 'note', { text: note, step });
     this.event(taskId, null, 'system', { text: `Retrying ${this.workflow(task.workflow_path).steps[step]?.title ?? step}${byCos(via)}` });
     this.queueStep(task, step);
@@ -587,7 +590,8 @@ export class Runner extends EventEmitter {
 
   stop(taskId: string, via?: Via) {
     this.closeOpenRuns(taskId, null);
-    this.store.updateTask(taskId, { status: 'stopped', stopped_at: Date.now() });
+    this.store.updateTask(taskId, { stopped_at: Date.now() });
+    this.project(taskId);
     this.event(taskId, null, 'system', { text: `Stopped${byCos(via)}` });
     this.pump();
   }

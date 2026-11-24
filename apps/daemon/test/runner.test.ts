@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from '../src/db.ts';
@@ -537,6 +537,46 @@ steps:
 
     runner.stop(task.id);
     expect(store.task(task.id)!.stopped_at).toBeGreaterThan(0);
+  });
+
+  it('keeps the task row true at every step of a task', async () => {
+    const seen: string[] = [];
+    const { store, runner, wfPath } = setup(REVIEW, (text, n) => (n === 1 ? 'Which timezone?\n\nOUTCOME: needs_you' : done('used the studio timezone')));
+    const task = runner.startTask({ workflowPath: wfPath, title: 'true at every step' });
+    const row = () => {
+      const t = store.task(task.id)!;
+      return `${t.status}/${t.inbox_reason ?? '-'}/${t.current_step ?? '-'}`;
+    };
+    seen.push(row());
+    await runner.idle();
+    seen.push(row());
+    await runner.message(task.id, 'the studio one', 'chat');
+    seen.push(row());
+    await runner.idle();
+    seen.push(row());
+    runner.decide(store.runsForTask(task.id).find((r) => r.status === 'waiting')!.id, 'close');
+    await runner.idle();
+    seen.push(row());
+    runner.stop(task.id);
+    seen.push(row());
+
+    expect(seen).toEqual([
+      'running/-/work',
+      'needs_you/question/work',
+      'running/-/work',
+      'needs_you/decision/review',
+      'done/-/-',
+      // A stopped task keeps the step it stopped at, which is what a re-run starts from.
+      'stopped/-/review',
+    ]);
+  });
+
+  it('has no writer of the task state but the projector', () => {
+    const dir = join(import.meta.dirname, '../src');
+    const writers = readdirSync(dir)
+      .filter((f) => f.endsWith('.ts'))
+      .filter((f) => /updateTask\([^)]*(status|current_step|inbox_reason)/s.test(readFileSync(join(dir, f), 'utf8')));
+    expect(writers).toEqual(['project.ts']);
   });
 
   it('hands notes to the next run of that step', async () => {
