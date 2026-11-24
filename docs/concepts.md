@@ -65,6 +65,7 @@ What starts tasks automatically. Examples: a Linear issue labeled `agent-ready`,
 - You **chat** with a session while it runs: your message goes straight in, and Stop interrupts it. If it asks you something, it waits open for your reply.
 - After a run ends, you can **reopen** its session to keep talking (same history). That doesn't move the task.
 - **Open in Claude Code** shows the same session in your terminal. Both windows are one session.
+- **Side chat** asks a copy of the session (a fork). The copy answers in the Side chat panel of the viewer. The run is not touched, and the task does not move.
 - Gate, human, switch and action runs have no session.
 
 ### Outcome
@@ -96,6 +97,15 @@ Its limits:
 - It needs a paid Claude plan and a claude.ai login. A session that signs in with `ANTHROPIC_API_KEY`, a gateway token or a cloud provider cannot publish.
 - A step's agent runs `claude -p`, which holds no live watch, so the page gets no live update subscription.
 - A republish of the same file path keeps the same URL, so the agent can correct a page without a second link.
+
+### Viewer
+The panel on the right of a task's Chat view. It shows what the agent's messages name, and the tools around the worktree, in tabs:
+
+- **References.** Orstra finds web links, Claude artifacts, a local dev server URL, and paths to `.md` and image files in each agent message. Each one shows as a chip under the message. A click opens it in a tab. A site that refuses frames (most do, claude.ai too) shows as a card with an Open button.
+- **Panels**, from the + menu: Changes (branch, files with diffs, checks, commits), Browser (Orstra starts the worktree's dev server and shows its page), Files (the worktree as a tree, read-only), Terminal (a real shell in the worktree), Side chat, and Artifacts (what the task's agents made).
+- **Layout.** 2 panes at most, side by side or stacked. Right-click a tab to split, move or close it. Expand (⌘\\, or a double-click on a tab) puts the viewer over the chat. Otherwise the chat keeps 380 px or more.
+
+Shells and dev servers end when the daemon stops, and before a cleanup removes the worktree.
 
 ### Decision
 Your answer at a `human` step. You see what you're deciding (e.g. the spec, the agent's assumptions and open questions) and what each choice leads to. Each choice is an arrow.
@@ -145,7 +155,7 @@ How many runs can work at the same time on this machine (default 4). Agent and g
 |---|---|---|
 | **Assistant** | The conversation, its plans waiting for your OK, what it is watching, what it may do without asking | Task rows open the task page |
 | **Tasks** | All tasks, in 3 views. **Inbox**: the tasks that need you (a decision, a question from an agent, a stuck task), across every workflow, with the selected task open beside the list. **Board**: one workflow's tasks by their current step (columns = workflow steps). **List**: all tasks by status | Inbox: opens the task in the pane. Board and List: open the task page |
-| **Task page** | One task: its steps (with notes), the decision if one is waiting, and the chat with its sessions | — |
+| **Task page** | One task: its steps (with notes), the decision if one is waiting, and the chat with its sessions and the viewer | A chip under an agent message opens it in the viewer |
 | **Workflows** | The workflow editor (canvas or YAML) | Edits a workflow |
 | **Settings** | Agents, triggers, repositories, connections, notifications | — |
 
