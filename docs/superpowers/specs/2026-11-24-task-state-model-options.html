@@ -1,0 +1,463 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Orstra · how a task says where it is · 3 options</title>
+<style>
+  :root {
+    --ink: #ececef; --ink-2: #c6c7ce; --muted: #9a9ba5; --faint: #7d7e88; --dim: #686973;
+    --line: #25262b; --line-2: #2e2f35; --line-3: #212227; --border-strong: #3a3b43;
+    --bg: #0e0f12; --surface: #17181c; --surface-2: #1a1b20; --hover: #1f2025;
+    --accent: #6773de; --accent-soft: #23253b; --accent-fg: #a1a9f2; --accent-line: #34375c;
+    --red-soft: #341c1f; --red-fg: #ff8a8e; --green-soft: #15281f; --green-fg: #5fcf97;
+    --yellow: #f2c94c; --yellow-soft: #2f2711; --orange-soft: #32200f; --orange-fg: #f2a266;
+    --purple-soft: #261f3b; --purple-fg: #b499f0; --grey-fg: #a9aab4; --claude: #c15f3c;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.6 Inter, -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 48px 28px 120px; }
+  h1 { font-size: 26px; line-height: 1.25; margin: 0 0 6px; letter-spacing: -0.015em; }
+  h2 { font-size: 17px; margin: 56px 0 4px; letter-spacing: -0.01em; }
+  h3 { font-size: 13.5px; margin: 24px 0 8px; color: var(--ink-2); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; }
+  p { margin: 8px 0; color: var(--ink-2); max-width: 78ch; }
+  .lead { color: var(--muted); font-size: 14.5px; max-width: 76ch; }
+  .sub { color: var(--faint); font-size: 12.5px; margin-top: 2px; }
+  code { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--line-3); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; color: var(--ink); }
+  .card { background: var(--surface); border: 1px solid var(--line-2); border-radius: 10px; padding: 18px 20px; }
+  .grid { display: grid; gap: 14px; }
+  .muted { color: var(--muted); }
+  .hr { height: 1px; background: var(--line-2); margin: 40px 0 0; }
+
+  table { border-collapse: collapse; width: 100%; font-size: 13px; margin-top: 10px; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--faint); font-weight: 600; font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.06em; }
+  tbody tr:last-child td { border-bottom: 0; }
+  td.num { color: var(--faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+  .tag { display: inline-flex; align-items: center; gap: 5px; border-radius: 99px; padding: 2px 9px; font-size: 11.5px; font-weight: 500; white-space: nowrap; }
+  .t-run { background: var(--accent-soft); color: var(--accent-fg); }
+  .t-wait { background: var(--purple-soft); color: var(--purple-fg); }
+  .t-done { background: var(--green-soft); color: var(--green-fg); }
+  .t-bad { background: var(--red-soft); color: var(--red-fg); }
+  .t-plain { background: var(--line-3); color: var(--grey-fg); }
+  .t-warn { background: var(--orange-soft); color: var(--orange-fg); }
+  .dot { width: 7px; height: 7px; border-radius: 99px; background: currentColor; display: inline-block; }
+
+  /* tabs */
+  .tabs { display: flex; gap: 4px; background: var(--surface-2); border: 1px solid var(--line-2); border-radius: 9px; padding: 4px; margin: 18px 0 0; width: fit-content; }
+  .tabs button { all: unset; cursor: pointer; padding: 7px 16px; border-radius: 6px; font-size: 13px; color: var(--muted); font-weight: 500; }
+  .tabs button[aria-selected="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.4); }
+  .panel[hidden] { display: none; }
+
+  /* flow diagram */
+  .flow { display: grid; grid-template-columns: 1fr auto 1fr auto 1fr; align-items: center; gap: 10px; margin: 14px 0 6px; }
+  .flow .box { background: var(--surface-2); border: 1px solid var(--line-2); border-radius: 8px; padding: 10px 12px; }
+  .flow .box b { display: block; font-size: 12px; margin-bottom: 4px; }
+  .flow .box span { display: block; font-size: 11.5px; color: var(--faint); }
+  .flow .arrow { color: var(--dim); font-size: 16px; }
+  .flow .truth { border-color: var(--accent-line); background: var(--accent-soft); }
+  .flow .truth b { color: var(--accent-fg); }
+  .flow .two { border-color: #5a2a2e; background: var(--red-soft); }
+  .flow .two b { color: var(--red-fg); }
+
+  /* board mockup */
+  .board { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 12px; }
+  .bcol { background: var(--surface-2); border: 1px solid var(--line-2); border-radius: 10px; padding: 10px; min-height: 120px; }
+  .bch { font-size: 11.5px; color: var(--faint); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; margin: 2px 4px 8px; }
+  .tcard { background: var(--surface); border: 1px solid var(--line-2); border-radius: 8px; padding: 10px 11px; }
+  .tcard .id { font: 11px ui-monospace, Menlo, monospace; color: var(--faint); }
+  .tcard .ti { font-size: 13px; margin: 3px 0 7px; }
+  .empty { color: var(--dim); font-size: 12px; padding: 8px 4px; }
+
+  /* scrubber */
+  .scrub { background: var(--surface); border: 1px solid var(--line-2); border-radius: 12px; padding: 18px 20px 22px; margin-top: 14px; }
+  .steps { display: flex; gap: 0; margin: 4px 0 16px; border: 1px solid var(--line-2); border-radius: 8px; overflow: hidden; }
+  .steps button { all: unset; cursor: pointer; flex: 1; text-align: center; padding: 9px 6px; font-size: 11.5px; color: var(--muted); border-right: 1px solid var(--line-2); }
+  .steps button:last-child { border-right: 0; }
+  .steps button[aria-selected="true"] { background: var(--accent-soft); color: var(--accent-fg); font-weight: 600; }
+  .moment { display: flex; gap: 12px; align-items: baseline; margin-bottom: 14px; }
+  .moment .when { font: 12px ui-monospace, Menlo, monospace; color: var(--yellow); white-space: nowrap; }
+  .moment .what { font-size: 14px; color: var(--ink); }
+  .cmp { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .cmp .col { border: 1px solid var(--line-2); border-radius: 10px; overflow: hidden; background: var(--surface-2); }
+  .cmp .colh { padding: 8px 12px; font-size: 12px; font-weight: 600; border-bottom: 1px solid var(--line-2); display: flex; justify-content: space-between; align-items: center; }
+  .cmp .body { padding: 12px; display: grid; gap: 10px; }
+  .cmp .runs { font-size: 11.5px; color: var(--muted); display: grid; gap: 3px; }
+  .cmp .runs div { display: flex; justify-content: space-between; gap: 8px; }
+  .verdict { font-size: 12px; padding: 7px 10px; border-radius: 7px; }
+  .v-ok { background: var(--green-soft); color: var(--green-fg); }
+  .v-lie { background: var(--red-soft); color: var(--red-fg); }
+  .v-na { background: var(--line-3); color: var(--grey-fg); }
+
+  ul { margin: 8px 0; padding-left: 18px; color: var(--ink-2); }
+  li { margin: 4px 0; }
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .pick { border-left: 3px solid var(--accent); padding-left: 14px; margin: 14px 0; }
+  .warnbox { background: var(--orange-soft); border: 1px solid #54451b; color: var(--orange-fg); border-radius: 8px; padding: 12px 14px; font-size: 13px; }
+  @media (max-width: 900px) { .board, .cmp, .two-col { grid-template-columns: 1fr; } .flow { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>How a task says where it is</h1>
+  <p class="lead">3 ways to build the state model, with the real case from your database. 24 Nov 2026.</p>
+
+  <h2>1. What is broken</h2>
+  <p>A task carries 3 stored facts: <code>status</code>, <code>inbox_reason</code> and <code>current_step</code>. The
+  state machine writes all 3, and only at the moment a step routes. Anything that happens between 2 routings
+  changes nothing. These 5 came out of <code>~/.orstra/orstra.db</code> this morning.</p>
+
+  <table>
+    <thead><tr><th style="width:30%">Task</th><th>The board says</th><th>The runs say</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><b>t-mwtzpbti2n1a</b><div class="sub">the task that fixes this</div></td>
+        <td>In review · Decide, since 12:22:24</td>
+        <td>42 events on the <b>ended</b> run after 12:22:24. 8 messages from you, replies, edits, 1 commit. Last at 12:48:21.</td>
+      </tr>
+      <tr>
+        <td><b>t-mwt5ry6u6x7u</b><div class="sub">a file in a chat message</div></td>
+        <td>In review for 13 hours, then Done</td>
+        <td>147 events on the ended run, 23 Nov 22:34 to 24 Nov 11:49. 0 run rows for any of it.</td>
+      </tr>
+      <tr>
+        <td><b>t-mwt5ry6u6x7u</b><div class="sub">the same task, the merge</div></td>
+        <td>Merged at 11:32:10</td>
+        <td>The agent kept working until 11:49:44. 17 minutes of edits were never reviewed and never merged.</td>
+      </tr>
+      <tr>
+        <td><b>t-mwt4qs7by1xx</b><div class="sub">step artifacts</div></td>
+        <td>Past the Merge step, in a column called Done</td>
+        <td>No merge run exists. The step joined the workflow after this task passed. 1 commit sits on <code>orstra/step-artifacts</code>, out of main.</td>
+      </tr>
+      <tr>
+        <td><b>t-mwt4ootxs8gp</b><div class="sub">what a workspace is</div></td>
+        <td>Agent is waiting for you</td>
+        <td>1 run row has said <code>waiting</code> for 27 hours. It covers a silent night and a live exchange at 09:56. No outcome, no progress entry.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p><b>4 of the 5 share 1 rule.</b> The run row is the only unit of truth, and only the state machine makes one.
+  A chat makes no run. A second turn in an open session makes no record. So real work falls outside the
+  account, and the step keeps pointing at the last thing the machine did.</p>
+  <p><b>The 5th is a different rule, same shape.</b> The track is drawn from today's YAML file, while the history
+  is what really ran. Edit the file and the drawing lies about the past.</p>
+
+  <div class="hr"></div>
+
+  <h2>2. Play the real case</h2>
+  <p class="lead">Task t-mwt5ry6u6x7u, 23 and 24 Nov, with the real timestamps. Step through it and watch the
+  3 models disagree.</p>
+
+  <div class="scrub">
+    <div class="steps" id="steps" role="tablist"></div>
+    <div class="moment"><span class="when" id="when"></span><span class="what" id="what"></span></div>
+    <div class="cmp" id="cmp"></div>
+  </div>
+
+  <div class="hr"></div>
+
+  <h2>3. The 3 models</h2>
+  <div class="tabs" id="tabs" role="tablist">
+    <button role="tab" data-p="now" aria-selected="true">Today</button>
+    <button role="tab" data-p="a" aria-selected="false">A · runs are the truth</button>
+    <button role="tab" data-p="b" aria-selected="false">B · a second field</button>
+    <button role="tab" data-p="c" aria-selected="false">C · events are the truth</button>
+  </div>
+
+  <section class="panel" id="p-now">
+    <h3>Where truth lives today</h3>
+    <div class="flow">
+      <div class="box"><b>The state machine</b><span>route() on a finish</span></div>
+      <div class="arrow">→</div>
+      <div class="box two"><b>tasks.status, inbox_reason, current_step</b><span>written only at a routing</span></div>
+      <div class="arrow">→</div>
+      <div class="box"><b>Board, Inbox, task page</b><span>read the 3 fields</span></div>
+    </div>
+    <div class="flow" style="grid-template-columns:1fr auto 1fr auto 1fr">
+      <div class="box"><b>A chat session</b><span>messages, tools, 13 hours of work</span></div>
+      <div class="arrow">⇢</div>
+      <div class="box"><b>events only</b><span>nothing reads them for state</span></div>
+      <div class="arrow">✕</div>
+      <div class="box"><b>Nothing changes</b><span>the board holds its last answer</span></div>
+    </div>
+    <p>The run rows and the task fields are 2 records of the same thing, written at different moments by
+    different code. They drift the moment anything happens off the routing path.</p>
+  </section>
+
+  <section class="panel" id="p-a" hidden>
+    <h3>A · the runs are the truth, the task state is read from them</h3>
+    <div class="flow">
+      <div class="box"><b>Writers</b><span>route(), the session layer, your chat</span></div>
+      <div class="arrow">→</div>
+      <div class="box truth"><b>runs</b><span>1 open run per task, each with its own turn state</span></div>
+      <div class="arrow">→</div>
+      <div class="box"><b>Readers</b><span>board, Inbox, run list, chief of staff</span></div>
+    </div>
+    <ul>
+      <li><code>tasks.status</code> and <code>inbox_reason</code> stop being truth. A read computes them.</li>
+      <li>1 invariant: a task has at most <b>1 open run</b> (queued, running or waiting). That run names the step and who holds it.</li>
+      <li>Each run keeps its own live state: the time of its last turn, and whether a turn is in flight.
+        <code>onTurn</code> already fires at every one of those moments, so there is 1 writer.</li>
+      <li>A chat to a run that ended opens a new run of that step. Nothing can happen outside a run.</li>
+      <li>No open run and the plan reached the end means Done. No open run and no end is a bug, and the board says so.</li>
+    </ul>
+    <h3>What a task can be</h3>
+    <table>
+      <thead><tr><th>The open run</th><th>The board reads</th></tr></thead>
+      <tbody>
+        <tr><td>agent · a turn in flight</td><td><span class="tag t-run"><i class="dot"></i>In progress · attempt N</span></td></tr>
+        <tr><td>agent · no turn, it asked you something</td><td><span class="tag t-wait"><i class="dot"></i>Agent waiting for you</span></td></tr>
+        <tr><td>agent · no turn, no session alive</td><td><span class="tag t-warn"><i class="dot"></i>Paused · last turn 27 h ago</span></td></tr>
+        <tr><td>human</td><td><span class="tag t-wait"><i class="dot"></i>Needs your decision</span></td></tr>
+        <tr><td>gate</td><td><span class="tag t-run"><i class="dot"></i>Checks running</span></td></tr>
+        <tr><td>none, the plan ended</td><td><span class="tag t-done"><i class="dot"></i>Done</span></td></tr>
+        <tr><td>none, the plan did not end</td><td><span class="tag t-bad"><i class="dot"></i>Stuck · nothing holds this task</span></td></tr>
+      </tbody>
+    </table>
+    <div class="two-col" style="margin-top:16px">
+      <div class="card"><b style="color:var(--green-fg)">Keeps</b>
+        <ul><li>1 writer, 1 truth. The run list and the board cannot disagree.</li>
+        <li>Fixes 4 of the 5 rows above.</li>
+        <li>The 27 hour run stops hiding: the card reads its last turn.</li>
+        <li>The merge can ask "is a turn in flight?" and refuse.</li></ul>
+      </div>
+      <div class="card"><b style="color:var(--orange-fg)">Costs</b>
+        <ul><li>A read computes instead of reads 1 field. Cheap, the rows are indexed by task.</li>
+        <li>Every reader changes: board, Inbox, task page, chief of staff, the CLI.</li>
+        <li>The column moves when you chat at a decision. See the fork.</li></ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel" id="p-b" hidden>
+    <h3>B · the step stays the position, a live state sits next to it</h3>
+    <div class="flow">
+      <div class="box"><b>route()</b><span>writes the step</span></div>
+      <div class="arrow">→</div>
+      <div class="box two"><b>current_step + activity</b><span>2 fields, 2 writers</span></div>
+      <div class="arrow">→</div>
+      <div class="box"><b>Readers</b><span>column from the step, line from the activity</span></div>
+    </div>
+    <ul>
+      <li><code>tasks</code> gains <code>activity</code> and <code>activity_run_id</code>. The session layer writes them when a
+        session opens, when a turn ends, and when a session dies.</li>
+      <li>The card keeps its column and says who is at work. The decision goes on hold instead of closing.</li>
+      <li>Smallest change of the 3. No reader has to learn the run rows.</li>
+    </ul>
+    <div class="two-col" style="margin-top:16px">
+      <div class="card"><b style="color:var(--green-fg)">Keeps</b>
+        <ul><li>The board's columns stay a map of the plan.</li>
+        <li>The review round keeps the work that was done for it.</li>
+        <li>Least code touched.</li></ul>
+      </div>
+      <div class="card"><b style="color:var(--red-fg)">Costs</b>
+        <ul><li>2 writers again. The next thing that happens off the path drifts the same way.</li>
+        <li>It stores liveness in a file on disk. Orstra already lost that bet: <code>recover()</code> exists because rows
+          said <code>running</code> after the process died.</li>
+        <li>The work still gets no run row, so it still has no outcome and no progress entry.</li></ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel" id="p-c" hidden>
+    <h3>C · the events are the truth, the state is a fold over them</h3>
+    <div class="flow">
+      <div class="box"><b>Everything</b><span>messages, tools, decisions, routings</span></div>
+      <div class="arrow">→</div>
+      <div class="box truth"><b>events</b><span>append only, already written today</span></div>
+      <div class="arrow">→</div>
+      <div class="box"><b>Readers</b><span>fold the tail into a state</span></div>
+    </div>
+    <ul>
+      <li>Nothing can happen without a record, by construction. The timeline and the board agree because they
+        read the same rows.</li>
+      <li>It is the same screens as A. The difference is the machinery, not what you see.</li>
+    </ul>
+    <div class="card" style="margin-top:12px"><b style="color:var(--red-fg)">Why not now</b>
+      <ul><li>The payloads are loose JSON. A typed event schema is its own project.</li>
+      <li>Reads walk hundreds of rows per task, or need a cache, which is a second truth again.</li>
+      <li>A gets most of the gain for a fraction of the work, and C stays open as a later move.</li></ul>
+    </div>
+  </section>
+
+  <div class="hr"></div>
+
+  <h2>4. Side by side</h2>
+  <table>
+    <thead><tr><th style="width:34%">&nbsp;</th><th>Today</th><th>A</th><th>B</th><th>C</th></tr></thead>
+    <tbody>
+      <tr><td>Where the truth is</td><td>3 task fields</td><td>the run rows</td><td>4 task fields</td><td>the events</td></tr>
+      <tr><td>Who writes it</td><td>route()</td><td>route() + sessions, 1 path</td><td>route() and sessions, 2 paths</td><td>everything, 1 way</td></tr>
+      <tr><td>Chat at a decision shows</td><td><span class="tag t-bad">Decide</span></td><td><span class="tag t-run">In progress</span></td><td><span class="tag t-run">In review · at work</span></td><td>as A</td></tr>
+      <tr><td>Work gets a run row</td><td>no</td><td>yes</td><td>no</td><td>n/a, every turn is recorded</td></tr>
+      <tr><td>Approve can race the agent</td><td><span class="tag t-bad">yes, it happened</span></td><td>no</td><td>no</td><td>no</td></tr>
+      <tr><td>A 27 hour open run</td><td>reads as waiting for you</td><td>reads as paused, last turn 27 h ago</td><td>reads as idle</td><td>as A</td></tr>
+      <tr><td>Survives a daemon restart</td><td>partly, see recover()</td><td>yes, liveness is in memory only</td><td>no, liveness is on disk</td><td>yes</td></tr>
+      <tr><td>Size of the work</td><td>&mdash;</td><td>medium</td><td>small</td><td>large</td></tr>
+    </tbody>
+  </table>
+
+  <div class="hr"></div>
+
+  <h2>5. The fork you settle</h2>
+  <p>A and B disagree about 1 visible thing. You sit at In review and you message the agent.</p>
+  <div class="two-col">
+    <div>
+      <h3>A · the card moves</h3>
+      <div class="board" style="grid-template-columns:1fr 1fr">
+        <div class="bcol"><div class="bch">In progress</div>
+          <div class="tcard"><div class="id">t-mwt5ry</div><div class="ti">Include a file in a chat message</div>
+            <span class="tag t-run"><i class="dot"></i>Running · attempt 2</span></div>
+        </div>
+        <div class="bcol"><div class="bch">In review</div><div class="empty">No tasks at this step</div></div>
+      </div>
+      <p class="sub">The review round closed. A new one opens when the agent finishes. The work has its own
+      run row, its own progress entry, and it moves the workflow.</p>
+    </div>
+    <div>
+      <h3>B · the card stays</h3>
+      <div class="board" style="grid-template-columns:1fr 1fr">
+        <div class="bcol"><div class="bch">In progress</div><div class="empty">No tasks at this step</div></div>
+        <div class="bcol"><div class="bch">In review</div>
+          <div class="tcard"><div class="id">t-mwt5ry</div><div class="ti">Include a file in a chat message</div>
+            <span class="tag t-run"><i class="dot"></i>Claude Code is at work</span>
+            <div class="sub" style="margin-top:6px">Decision on hold</div></div>
+        </div>
+      </div>
+      <p class="sub">The review round keeps the work that was done for it. The decision reappears when the
+      agent stops.</p>
+    </div>
+  </div>
+
+  <div class="pick">
+    <p><b>My pick: A.</b> B is this bug again with 1 more field. A gives 1 writer and 1 truth, and every other
+    record in Orstra already hangs off a run, and a run hangs off a step. B is defensible, and it is your product.</p>
+  </div>
+
+  <div class="hr"></div>
+
+  <h2>6. The other decision in this design</h2>
+  <div class="warnbox">
+    <b>Which workflow does the track draw?</b><br />
+    Today it draws from the YAML file as it is now, which is why a task that never merged shows Merge as done.
+    Option 1: pin the workflow version to the task when it starts. Option 2: draw the track from the runs that
+    happened, plus the steps that remain. Pinning changes a rule you chose on purpose, because today an edit to
+    a workflow reaches tasks that already run.
+  </div>
+
+</div>
+
+<script>
+  const MODELS = ['Today', 'A · runs are truth', 'B · step + activity'];
+
+  const S = [
+    {
+      when: '23 Nov 22:04', what: 'The agent starts the work step.',
+      cells: [
+        { col: 'In progress', tag: ['t-run', 'Running'], runs: [['In progress · 1', 'running']], v: 'ok', note: 'True.' },
+        { col: 'In progress', tag: ['t-run', 'Running'], runs: [['In progress · 1', 'running']], v: 'ok', note: 'True.' },
+        { col: 'In progress', tag: ['t-run', 'Running'], runs: [['In progress · 1', 'running']], v: 'ok', note: 'True.' },
+      ],
+    },
+    {
+      when: '23 Nov 22:28:36', what: 'The agent writes its progress. The run ends and the task routes to In review.',
+      cells: [
+        { col: 'In review', tag: ['t-wait', 'Decide'], runs: [['In progress · 1', 'done'], ['In review · 1', 'waiting']], v: 'ok', note: 'True. Nobody is at work.' },
+        { col: 'In review', tag: ['t-wait', 'Decide'], runs: [['In progress · 1', 'done'], ['In review · 1', 'waiting']], v: 'ok', note: 'True.' },
+        { col: 'In review', tag: ['t-wait', 'Decide'], runs: [['In progress · 1', 'done'], ['In review · 1', 'waiting']], v: 'ok', note: 'True.' },
+      ],
+    },
+    {
+      when: '23 Nov 22:34:49', what: 'You message the agent in the chat to ask what it did.',
+      cells: [
+        { col: 'In review', tag: ['t-wait', 'Decide'], runs: [['In progress · 1', 'done'], ['In review · 1', 'waiting']], v: 'lie', note: 'Wrong. The agent reads you and starts work. No row moves.' },
+        { col: 'In progress', tag: ['t-run', 'Running · attempt 2'], runs: [['In progress · 1', 'done'], ['In review · 1', 'closed'], ['In progress · 2', 'running']], v: 'ok', note: 'The decision closed. A run opens on the same session.' },
+        { col: 'In review', tag: ['t-run', 'Claude Code is at work'], runs: [['In progress · 1', 'done'], ['In review · 1', 'on hold']], v: 'ok', note: 'The column holds. The card says who works. Approve is blocked.' },
+      ],
+    },
+    {
+      when: '23 Nov 22:35 → 24 Nov 11:29', what: '37 agent messages and 101 tool calls. Real edits, real commits, 13 hours.',
+      cells: [
+        { col: 'In review', tag: ['t-wait', 'Decide'], runs: [['In progress · 1', 'done'], ['In review · 1', 'waiting']], v: 'lie', note: 'Wrong for 13 hours. No outcome and no progress entry for any of it.' },
+        { col: 'In progress', tag: ['t-run', 'Running · attempt 2'], runs: [['In progress · 1', 'done'], ['In review · 1', 'closed'], ['In progress · 2', 'running']], v: 'ok', note: 'The card counts from the last turn, so a quiet session reads as paused, not as busy.' },
+        { col: 'In review', tag: ['t-run', 'Claude Code is at work'], runs: [['In progress · 1', 'done'], ['In review · 1', 'on hold']], v: 'ok', note: 'The line is right. The work still earns no run row and no progress entry.' },
+      ],
+    },
+    {
+      when: '24 Nov 11:32:10', what: 'You approve the review. The merge action runs in the same second.',
+      cells: [
+        { col: 'Done', tag: ['t-wait', 'Decide'], runs: [['In review · 1', 'approved'], ['Merge · 1', 'ok'], ['Done · 1', 'waiting']], v: 'lie', note: 'The merge took its snapshot while the agent was mid-task.' },
+        { col: 'In progress', tag: ['t-run', 'Running · attempt 2'], runs: [['In progress · 2', 'running']], v: 'ok', note: 'There is no decision to approve. It closed when you joined the chat.' },
+        { col: 'In review', tag: ['t-run', 'Claude Code is at work'], runs: [['In review · 1', 'on hold']], v: 'ok', note: 'Approve is disabled while a turn is in flight.' },
+      ],
+    },
+    {
+      when: '24 Nov 11:32 → 11:49:44', what: 'The agent keeps working for 17 more minutes, after the merge.',
+      cells: [
+        { col: 'Done', tag: ['t-wait', 'Decide'], runs: [['Merge · 1', 'ok'], ['Done · 1', 'waiting']], v: 'lie', note: '17 minutes of edits were never reviewed and never merged. They are still only in the worktree.' },
+        { col: 'In progress', tag: ['t-run', 'Running · attempt 2'], runs: [['In progress · 2', 'running']], v: 'ok', note: 'The merge comes after the agent finishes and you approve the new round.' },
+        { col: 'In review', tag: ['t-run', 'Claude Code is at work'], runs: [['In review · 1', 'on hold']], v: 'ok', note: 'Same: the merge waits for the agent to stop.' },
+      ],
+    },
+  ];
+
+  const stepsEl = document.getElementById('steps');
+  const cmpEl = document.getElementById('cmp');
+  const whenEl = document.getElementById('when');
+  const whatEl = document.getElementById('what');
+  let at = 0;
+
+  S.forEach((s, i) => {
+    const b = document.createElement('button');
+    b.setAttribute('role', 'tab');
+    b.textContent = (i + 1) + '. ' + s.when.replace('23 Nov ', '').replace('24 Nov ', '');
+    b.onclick = () => { at = i; draw(); };
+    stepsEl.appendChild(b);
+  });
+
+  const RUNTAG = { running: 't-run', done: 't-done', waiting: 't-wait', closed: 't-plain', 'on hold': 't-warn', approved: 't-done', ok: 't-done' };
+
+  function draw() {
+    [...stepsEl.children].forEach((b, i) => b.setAttribute('aria-selected', String(i === at)));
+    const s = S[at];
+    whenEl.textContent = s.when;
+    whatEl.textContent = s.what;
+    cmpEl.innerHTML = '';
+    s.cells.forEach((c, i) => {
+      const col = document.createElement('div');
+      col.className = 'col';
+      col.innerHTML =
+        '<div class="colh">' + MODELS[i] + '</div>' +
+        '<div class="body">' +
+          '<div class="tcard"><div class="id">t-mwt5ry · column: ' + c.col + '</div>' +
+          '<div class="ti">Include a file in a chat message</div>' +
+          '<span class="tag ' + c.tag[0] + '"><i class="dot"></i>' + c.tag[1] + '</span></div>' +
+          '<div class="runs">' + c.runs.map(function (r) {
+            return '<div><span>' + r[0] + '</span><span class="tag ' + (RUNTAG[r[1]] || 't-plain') + '">' + r[1] + '</span></div>';
+          }).join('') + '</div>' +
+          '<div class="verdict ' + (c.v === 'ok' ? 'v-ok' : c.v === 'lie' ? 'v-lie' : 'v-na') + '">' + c.note + '</div>' +
+        '</div>';
+      cmpEl.appendChild(col);
+    });
+  }
+  draw();
+
+  const tabs = document.getElementById('tabs');
+  tabs.addEventListener('click', function (e) {
+    const b = e.target.closest('button');
+    if (!b) return;
+    [...tabs.children].forEach(function (x) { x.setAttribute('aria-selected', String(x === b)); });
+    ['now', 'a', 'b', 'c'].forEach(function (p) { document.getElementById('p-' + p).hidden = p !== b.dataset.p; });
+  });
+</script>
+</body>
+</html>
