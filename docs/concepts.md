@@ -35,9 +35,11 @@ One node in a workflow. Each step has a kind:
 | `gate` | Runs shell commands, such as tests | `pass`, `fail` |
 | `human` | Waits for your decision | one outcome per choice (`approved`, `changes_requested`, `rejected`, …) |
 | `switch` | Picks a branch from the task's data | the matching case |
-| `action` | Runs one named action, such as `git.merge` | `ok`, `error`, `conflict` |
+| `action` | Runs one named action: `git.merge`, `github.pr` or `git.cleanup` | `ok`, `error`, `conflict`, `nothing`, `refused` |
 
 Arrows say where each outcome goes. Backward arrows (retries) must have a cap: `{ goto: impl, max: 3 }`.
+
+Any agent or gate step can also end with `timeout` (it worked longer than its `timeout:` in minutes) and an agent step with `over_budget` (the task reached the workflow's `budget_usd`). With no arrow for them, the task goes to your Inbox.
 
 ### Trigger
 What starts tasks automatically. Examples: a Linear issue labeled `agent-ready`, a schedule, a GitHub PR comment, a file change. One trigger points at one workflow and creates one task per matching event. You can also start a task by hand.
@@ -93,7 +95,7 @@ Your answer at a `human` step. You see what you're deciding (e.g. the spec, the 
 The task's own working copy: `git worktree` on branch `orstra/<task>`. All of a task's runs work in it, one after another.
 
 ### Merge
-The `git.merge` action, the last step of the Simple workflow. When you close a task, it merges the task's branch into the branch the repository has checked out.
+The `git.merge` action. In the Simple workflow it runs as soon as you approve the work: it merges the task's branch into the branch the repository has checked out.
 
 - Local only. It never pushes, and it never forces a merge.
 - It does nothing when the task branch has no new commit, or when the task has its own scratch repository (a task started without a repo).
@@ -101,8 +103,20 @@ The `git.merge` action, the last step of the Simple workflow. When you close a t
 - On a conflict it runs `git merge --abort`, so the repository is as it was, and the task goes to the Inbox.
 - The worktree and the branch are kept either way, so the task's diffs and any uncommitted work stay readable. Remove them by hand when you are done: `git worktree remove <path>`.
 
+### Pull request
+The `github.pr` action. It pushes the task's branch (never with force) and opens a draft pull request with the GitHub CLI. Its body holds the ticket, the task's description and every progress entry. If a pull request is already open for the branch, it pushes the new commits to it. The task page links to it.
+
+### Cleanup and archive
+When a task is done or stopped, **Archive** takes it out of the lists. **Clean up** also removes its worktree, and its branch when your checked-out branch already has every commit. Clean up refuses, and changes nothing, when the worktree has uncommitted work or the task has its own scratch repository; you can then choose to throw that work away. The `git.cleanup` action does the same as a workflow step; put it last.
+
+### Permission question
+A Claude Code tool call that the agent's permission mode does not allow. Orstra puts it in your Inbox: **Allow once**, **Allow for this task** (later calls of that tool pass), or **Refuse** with a reason the agent reads. The run waits, and its timeout clock stops, until you answer. Turn this off in Settings to have Claude Code refuse such calls.
+
+### Budget
+`budget_usd` on a workflow: when a task's runs cost that much (Claude Code's own estimate), Orstra starts no more agent work for it, and the task goes to your Inbox. Codex reports tokens but no cost, so a budget does not count Codex runs.
+
 ### Agent
-A coding CLI Orstra can drive: Claude Code today, Codex next. Configured in Settings (command, model, limits, which of your skills and MCP servers it gets).
+A coding CLI Orstra can drive: Claude Code or Codex (`agent: codex` on a step). Configured in Settings (model, effort, permission mode, permission questions). Codex runs `codex exec` in a workspace-write sandbox; each message is a new turn on the same Codex thread.
 
 ### Slot
 How many runs can work at the same time on this machine (default 4). Agent and gate runs take a slot; human, switch and action runs don't. When all slots are busy, new runs wait as **queued**.
@@ -112,7 +126,7 @@ How many runs can work at the same time on this machine (default 4). Agent and g
 
 - It is Claude Code with Orstra's tools **and** its own: Bash, Read, Edit, Write, the web tools, and whatever else Claude Code gives your machine. So it can read a file, change a file and run a command itself. Nothing limits it: no tool list, no path check, no permission question. Its working folders are `~/.orstra` (the database, the workflow files, every task worktree) and the Orstra checkout, and those are where it works, not a fence. It can reach any path you can.
 - It opens a file you **attach** to a message the same way, by the path Orstra puts at the end of your message. That folder, `~/.orstra/cos/attachments/`, is inside its workspace.
-- **Orstra, not the model, decides what needs your OK** for Orstra's own actions. Actions that need it become a **plan**: a card with Do it / Not now. Messaging agents is allowed by default; starting and retrying tasks asks by default; decisions and stopping always ask.
+- **Orstra, not the model, decides what needs your OK** for Orstra's own actions. This is a guard against mistakes, not a fence: the chief of staff also has Bash with no permission check, so it could call the daemon's API or edit the database itself. Its prompt tells it not to. Actions that need it become a **plan**: a card with Do it / Not now. Messaging agents is allowed by default; starting and retrying tasks asks by default; decisions and stopping always ask.
 - **A file or a command of its own has no plan card and no review step.** Work on a task still belongs to the task's agent: only then does the change land on the task's branch and go through the workflow. Ask it for a small fix or a quick look; ask a task for the work.
 - Everything it does through Orstra's tools is recorded on the task, marked as done by your chief of staff. Its own files and commands show in the conversation only.
 

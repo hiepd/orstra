@@ -14,7 +14,7 @@ Mock (all screens): https://claude.ai/artifact/6ekxsGvdsWrBfEEoyyv3Ce
 ## Non-goals (for now)
 
 - Running in the cloud or for a whole team.
-- Auto-merging. A human merges; Orstra opens draft PRs.
+- Merging without a human. A merge or a pull request comes only after a `human` step that you answer. The Simple workflow merges locally as soon as you approve; a workflow can open a draft pull request (`github.pr`) instead.
 - Its own coding agent. Orstra orchestrates existing CLIs.
 
 ## Concepts
@@ -23,7 +23,7 @@ Task, workflow, step, trigger, run, session, outcome, progress entry, note and d
 
 ## The rules we settled
 
-1. **The workflow is a state machine with capped loops, not a DAG.** Every step ends with exactly one outcome; each arrow out of a step is labeled with an outcome; Orstra follows the matching arrow. Backward arrows (retries, "changes requested") must declare a cap. Cap reached, no matching arrow, timeout, or `needs_you` → the task goes to your Inbox. Nothing is ever silently stuck.
+1. **The workflow is a state machine with capped loops, not a DAG.** Every step ends with exactly one outcome; each arrow out of a step is labeled with an outcome; Orstra follows the matching arrow. Backward arrows (retries, "changes requested") must declare a cap. Cap reached, no matching arrow, timeout, budget reached, or `needs_you` → the task goes to your Inbox. Nothing is ever silently stuck, and nothing silently passes: an agent turn with no `OUTCOME:` line is not `done`, and an unknown action name is a parse error.
 2. **The task persists; sessions don't.** Every run of a step is a fresh session, retries included. Continuity comes from the task's progress entries, the worktree and git. Workflows also chain into each other through triggers and `workflow` steps.
 3. **Hand-offs live in the task's progress, not in files.** Each run ends by writing a progress entry (Did / Decided / Left / Avoid). The next session starts from those entries. Entries are mirrored to the ticket's source (e.g. a Linear comment), summaries only.
 4. **Human steps are decisions with consequences.** A human step shows the artifact being decided (e.g. the spec), the agent's assumptions and open questions, and what each choice does. Each choice is an outgoing arrow.
@@ -44,15 +44,20 @@ workflows/    Default workflows, copied into ~/.orstra/workflows/ on first run (
 - **Agent runs:** `claude -p … --output-format stream-json --session-id <uuid>` in the task's worktree. Stream events become the session's activity. The final message carries the progress entry and an `OUTCOME:` line.
 - **Gate runs:** shell commands in the worktree; exit code 0 → `pass`, else `fail`.
 - **Worktrees:** when a workflow names a repo, each task gets `git worktree add ~/.orstra/wt/<task> -b orstra/<task>`.
-- **API:** REST for tasks, runs, sessions, decisions, messages; SSE `/api/events` for live updates.
+- **API:** REST for tasks, runs, sessions, decisions, messages; SSE `/api/events` for live updates (at most one message per task per 100 ms). The task API can send only the events after a given id.
+- **API guard:** the daemon listens on 127.0.0.1 and refuses a request whose `Host` is not this machine, whose `Origin` is not Orstra's UI, or that changes something without `content-type: application/json` (`apps/daemon/src/guard.ts`). Without this, any web page could send a command to the chief of staff. The CLI and the MCP servers send no `Origin`, so they pass.
+- **Workflow copy:** a task stores the workflow YAML it started with. An edit to the file changes new tasks only, until you move a task to the new version.
 
 ## What is built
 
-- Engine: parse a workflow, start a task by hand (CLI or UI), run agent / gate / human / switch steps, route outcomes with capped loops, record runs, sessions, events and progress. You can message a running agent, stop its turn, and reopen an ended session. One action step is built: `git.merge` merges the task branch into the branch the repository has checked out (`apps/daemon/src/merge.ts`), locally, never forced and never pushed.
+- Engine: parse a workflow, start a task by hand (CLI or UI) or from a trigger, run agent / gate / human / switch / action steps, route outcomes with capped loops, record runs, sessions, events, progress, cost and tokens. You can message a running agent, stop its turn, and reopen an ended session. Steps have timeouts (`timeout:`, default 120 min for agents and 30 min for gates). A workflow can cap a task's cost (`budget_usd`) and how many of its tasks work at once (`concurrency`).
+- Agents: Claude Code (`claude -p`, stream-json) and Codex (`codex exec --json`, one process per turn). A Claude Code tool call that the permission mode does not allow comes to the Inbox as a question (`apps/daemon/src/perm-mcp.ts`).
+- Actions: `git.merge` merges the task branch into the branch the repository has checked out (local, never forced, never pushed). `github.pr` pushes the task branch and opens a draft pull request with `gh`. `git.cleanup` removes the worktree, and the branch when merged.
+- Triggers: `linear` (one task per open issue with a label; progress entries go back as comments) and `schedule` (`apps/daemon/src/triggers.ts`).
 - Chief of staff: a long-running Claude Code session with Orstra's tools (an MCP server, `apps/daemon/src/cos-mcp.ts`, that forwards to the daemon) and its own, with no limit on either. The flags are 4 (`cosToolArgs` in `apps/daemon/src/cos-tools.ts`): `--mcp-config`, `--strict-mcp-config`, `--permission-mode bypassPermissions`, `--add-dir`, plus the system prompt. The daemon enforces what needs your OK for Orstra's tools; gated actions become plans. Its own files and commands pass no gate and write no run row. `bypassPermissions` is what makes Orstra's tools work at all: the daemon answers no permission request, and Claude Code then refuses the call. Measured with `--mcp-config` alone, it refused `mcp__orstra__list_tasks`. The built-in set is the machine's, so some machines have no Glob and no Grep; the prompt says to search with Bash. Watches wake it when a task reaches a state.
 - UI: the chief of staff page, then four places (see [concepts.md](concepts.md)):
   - **Inbox**: tasks that need you, grouped by decision, agent waiting, stuck. Rows only open the task.
   - **Tasks**: board (columns are one workflow's steps) and list (grouped by status).
   - **Task page**, two views. **Overview**: where the task is, what happens next, the decision if one is waiting, every run with its progress note, and notes for upcoming steps. **Chat**: the task's sessions, the conversation with the selected one, and the worktree panel (branch, changed files with diffs, checks, commits).
-  - **Workflows** (read-only steps and YAML) and **Settings** (read-only: agents found, slots, file locations).
-- Not yet: a scheduled morning brief, the chief of staff on screens other than its own; a record on the task for the files it changes and the commands it runs itself (an event on the task, or a run row of its own kind, so its work shows next to the agents'); triggers (Linear polling), the Codex runner, service actions (so no PR is opened yet), the workflow canvas editor, editable settings, mirroring progress to the ticket.
+  - **Workflows** (the canvas editor and the YAML) and **Settings** (agent defaults, permission questions, triggers, cost, slots, file locations).
+- Not yet: a scheduled morning brief, the chief of staff on screens other than its own; a record on the task for the files it changes and the commands it runs itself (an event on the task, or a run row of its own kind, so its work shows next to the agents'); GitHub and webhook triggers; a step that watches CI and pull request comments; permission questions for Codex (it runs in its own sandbox instead).
