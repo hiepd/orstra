@@ -56,6 +56,8 @@ describe('describeTask after a chat sent the task back', () => {
     expect(awaitingTitle('paused', null)).toBe('Claude Code’s session is closed');
     expect(awaitingTitle('waiting_you', 'question')).toBe('Claude Code is asking');
     expect(awaitingTitle('waiting_you', 'reply')).toBe('Claude Code replied');
+    expect(awaitingTitle('waiting_you', 'permission')).toBe('Claude Code needs your OK');
+    expect(awaitingTitle('waiting_you', 'no_outcome')).toBe('Claude Code ended without an outcome');
   });
 
   it('says the session is closed when the run is paused', () => {

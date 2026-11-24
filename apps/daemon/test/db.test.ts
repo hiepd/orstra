@@ -11,13 +11,13 @@ const file = () => join(mkdtempSync(join(tmpdir(), 'orstra-db-')), 'orstra.db');
 
 const task = (id: string, p: Partial<TaskRow> = {}): TaskRow => ({
   id, ref: null, title: id, description: '', workflow_path: '/wf.yaml', workflow_name: 'Simple', status: 'running',
-  current_step: 'work', inbox_reason: null, edge_counts: '{}', worktree: null, created_at: 1, updated_at: 1, stopped_at: null, ...p,
+  current_step: 'work', inbox_reason: null, edge_counts: '{}', worktree: null, created_at: 1, updated_at: 1, stopped_at: null, workflow_yaml: null, pr_url: null, source: null, archived_at: null, ...p,
 });
 
 const run = (id: string, taskId: string, p: Partial<RunRow> = {}): RunRow => ({
   id, task_id: taskId, step_id: 'work', kind: 'agent', attempt: 1, status: 'waiting', outcome: null, agent: 'claude-code',
   session_id: null, progress: null, output: null, created_at: 1, started_at: null, ended_at: null,
-  last_turn_at: null, wait_reason: null, routed: null, ...p,
+  last_turn_at: null, wait_reason: null, routed: null, cost_usd: null, tokens_in: null, tokens_out: null, ...p,
 });
 
 /** A database file written by the version before this change: no stopped_at, no run facts, no index. */

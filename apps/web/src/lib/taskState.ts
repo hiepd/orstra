@@ -9,7 +9,7 @@ export type { TaskState };
  */
 export function taskState(t: Pick<TaskSummary, 'state'>): TaskState {
   // A page older than the daemon would otherwise throw on every screen.
-  return t.state in STATE ? t.state : 'blocked';
+  return Object.hasOwn(STATE, t.state) ? t.state : 'blocked';
 }
 
 export type StateGroup = 'needs' | 'running' | 'queued' | 'done';

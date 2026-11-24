@@ -151,16 +151,17 @@ describe('mergeTaskBranch', () => {
 });
 
 describe('the Simple workflow Orstra ships', () => {
-  it('runs the merge as soon as you approve, then asks you to close it', () => {
+  it('is Todo, In progress, Done: it waits for Start, and merges nothing', () => {
     const path = fileURLToPath(new URL('../../../workflows/simple.yaml', import.meta.url));
     const wf = parseWorkflow(readFileSync(path, 'utf8'));
-    expect(wf.steps.review.on.approved.goto).toBe('merge');
-    expect(wf.steps.review.on.changes_requested.goto).toBe('work');
-    expect(wf.steps.merge.use).toBe('action');
-    expect(wf.steps.merge.action).toBe('git.merge');
-    expect(wf.steps.merge.on).toEqual({ ok: { goto: 'done' } });
+    expect(Object.values(wf.steps).map((s) => s.title)).toEqual(['Todo', 'In progress', 'Done']);
+    expect(wf.start).toBe('todo');
+    expect(wf.steps.todo.use).toBe('human');
+    expect(wf.steps.todo.on.start.goto).toBe('work');
+    expect(wf.steps.work.on.done.goto).toBe('done');
     expect(wf.steps.done.on.close.goto).toBe('end');
     expect(wf.steps.done.on.reopen.goto).toBe('work');
+    expect(Object.values(wf.steps).some((s) => s.use === 'action')).toBe(false);
   });
 });
 
@@ -173,9 +174,9 @@ describe('runAction', () => {
     expect(runAction('git.merge', { cwd: wt, input: {} }).outcome).toBe('ok'); // merged
   });
 
-  it('passes an action it does not have, so the workflow still moves', () => {
+  it('never passes an action it does not have', () => {
     const res = runAction('linear.comment', { cwd: tmpdir(), input: {} });
-    expect(res.outcome).toBe('ok');
-    expect(res.text).toContain("isn't built yet");
+    expect(res.outcome).toBe('error');
+    expect(res.text).toContain('no action');
   });
 });

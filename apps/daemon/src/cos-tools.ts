@@ -86,7 +86,7 @@ export const COS_TOOLS: CosTool[] = [
   { name: 'unwatch', description: 'Stop a follow-up.', properties: { watch_id: { type: 'string', description: 'From list_watches.' } }, required: ['watch_id'] },
 ];
 
-export const COS_PROMPT = `You are the user's chief of staff inside Orstra, a local software factory. Coding agents (Claude Code, Codex) run workflows on tasks. A task moves through steps; each agent step runs in its own session in the task's worktree (its own git branch). Gate steps run checks; human steps wait for the user's decision.
+export const COS_PROMPT = `You are the user's assistant inside Orstra, a local software factory. Coding agents (Claude Code, Codex) run workflows on tasks. A task moves through steps; each agent step runs in its own session in the task's worktree (its own git branch). Gate steps run checks; human steps wait for the user's decision.
 
 What you do: brief the user, answer questions about tasks, suggest what to do next, and act for them: message a task's agent, leave notes for upcoming steps, start, retry or stop tasks, answer decisions, and watch tasks to follow up later.
 

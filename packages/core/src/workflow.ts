@@ -16,6 +16,13 @@ export const SUCCESS_OUTCOME: Record<StepKind, string> = {
 
 export const END = 'end';
 
+/**
+ * The actions an `action` step can name. The daemon runs them (apps/daemon/src/actions.ts) and a test
+ * keeps the two lists equal. A name outside this list is a parse error, so a typo never passes silently.
+ */
+export const ACTION_NAMES = ['git.merge', 'github.pr', 'git.cleanup'] as const;
+export type ActionName = (typeof ACTION_NAMES)[number];
+
 export interface Target {
   goto: string;
   /** How many times this arrow may be followed for one task. Unset = unlimited. */
@@ -47,13 +54,36 @@ export interface Step {
   on: Record<string, Target>;
 }
 
+/**
+ * What starts tasks on its own.
+ * - linear: one task per open Linear issue with the label (and team and state, when set). With
+ *   `comment` (default true), each progress entry goes back to the issue as a comment.
+ * - schedule: one task every `everyMinutes`, with this title. The first task starts one interval
+ *   after Orstra first sees the trigger.
+ */
+export type Trigger =
+  | { kind: 'linear'; label: string; team?: string; state?: string; repo?: string; comment: boolean }
+  | { kind: 'schedule'; everyMinutes: number; title: string; description?: string; repo?: string };
+
+/** "30m", "6h", "1d" or a number of minutes -> minutes. */
+export function parseEvery(v: string | number): number {
+  if (typeof v === 'number') return v;
+  const m = v.trim().match(/^(\d+(?:\.\d+)?)\s*(m|min|h|d)?$/i);
+  if (!m) throw new Error(`"${v}" is not an interval. Write it like 30m, 6h or 1d.`);
+  const n = Number(m[1]);
+  const unit = (m[2] ?? 'm').toLowerCase();
+  return unit === 'd' ? n * 1440 : unit === 'h' ? n * 60 : n;
+}
+
 export interface Workflow {
   name: string;
   description?: string;
   repo?: string;
   concurrency: number;
+  /** Stop starting agent work on a task once its runs cost this much (US dollars). Unset = no cap. */
+  budgetUsd?: number;
   start: string;
-  triggers: unknown[];
+  triggers: Trigger[];
   steps: Record<string, Step>;
   /** Where each step sits on the canvas: id -> [x, y]. Only the editor reads this. */
   layout: Record<string, [number, number]>;
@@ -85,13 +115,31 @@ const stepSchema = z
   })
   .passthrough();
 
+const triggerSchema = z.union([
+  z.object({
+    linear: z.object({ label: z.string(), team: z.string().optional(), state: z.string().optional(), repo: z.string().optional(), comment: z.boolean().default(true) }),
+  }),
+  z.object({
+    schedule: z.object({ every: z.union([z.string(), z.number().positive()]), title: z.string(), description: z.string().optional(), repo: z.string().optional() }),
+  }),
+]);
+
+function toTrigger(t: z.infer<typeof triggerSchema>): Trigger {
+  if ('linear' in t) return { kind: 'linear', ...t.linear };
+  const everyMinutes = parseEvery(t.schedule.every);
+  if (!(everyMinutes >= 1)) throw new Error('A schedule trigger runs at most once a minute.');
+  const { every: _every, ...rest } = t.schedule;
+  return { kind: 'schedule', everyMinutes, ...rest };
+}
+
 const workflowSchema = z.object({
   name: z.string(),
   description: z.string().optional(),
   repo: z.string().optional(),
   concurrency: z.number().int().positive().default(3),
+  budget_usd: z.number().positive().optional(),
   start: z.string().optional(),
-  triggers: z.array(z.unknown()).default([]),
+  triggers: z.array(triggerSchema).default([]),
   steps: z.record(stepSchema),
   layout: z.record(z.tuple([z.number(), z.number()])).default({}),
 });
@@ -145,6 +193,12 @@ export function parseWorkflow(source: string): Workflow {
     }
     if (step.use === 'agent' && !step.prompt) throw new Error(`Agent step "${step.id}" needs a prompt.`);
     if (step.use === 'gate' && !step.run?.length) throw new Error(`Gate step "${step.id}" needs run commands.`);
+    if (step.use === 'action') {
+      if (!step.action) throw new Error(`Action step "${step.id}" needs an action: ${ACTION_NAMES.join(', ')}.`);
+      if (!(ACTION_NAMES as readonly string[]).includes(step.action)) {
+        throw new Error(`Action step "${step.id}" names "${step.action}", which Orstra does not have. Use one of: ${ACTION_NAMES.join(', ')}.`);
+      }
+    }
   }
 
   return {
@@ -152,8 +206,9 @@ export function parseWorkflow(source: string): Workflow {
     description: raw.description,
     repo: raw.repo,
     concurrency: raw.concurrency,
+    ...(raw.budget_usd !== undefined ? { budgetUsd: raw.budget_usd } : {}),
     start,
-    triggers: raw.triggers,
+    triggers: raw.triggers.map(toTrigger),
     steps,
     layout: raw.layout,
   };

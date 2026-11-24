@@ -34,6 +34,24 @@ export interface TaskSummary {
   agent: AgentName | null;
   createdAt: number;
   updatedAt: number;
+  /** What the task's runs cost so far. Codex runs add tokens but no dollars. */
+  cost: { usd: number; tokensIn: number; tokensOut: number };
+  /** The pull request a github.pr step opened. */
+  prUrl: string | null;
+  /** Where a trigger got the task, e.g. "linear:<issue id>". */
+  source: string | null;
+  archivedAt: number | null;
+}
+
+/** A tool call that waits for your OK. */
+export interface PermissionView {
+  id: string;
+  runId: string;
+  tool: string;
+  summary: string;
+  /** The tool's input as JSON, cut at 4000 characters. */
+  input: string;
+  ts: number;
 }
 
 export interface RunView {
@@ -52,6 +70,9 @@ export interface RunView {
   createdAt: number;
   startedAt: number | null;
   endedAt: number | null;
+  costUsd: number | null;
+  tokensIn: number | null;
+  tokensOut: number | null;
   openCommand: string | null;
   forkCommand: string | null;
   /** The session process is running right now. */
@@ -126,6 +147,17 @@ export interface TaskDetail extends TaskSummary {
   awaiting?: Awaiting | null;
   workingRunId?: string | null;
   events: TaskEvent[];
+  /** The workflow's budget_usd: agent work stops when the task's cost reaches it. */
+  budgetUsd?: number | null;
+  /** A cleanup removed the worktree; the path stays for the record. */
+  worktreeGone?: boolean;
+  /** Set when `events` holds only the events after this id. */
+  eventsAfter?: number | null;
+  /** The workflow file changed after the task started; the task still follows its own copy. */
+  workflowChanged?: boolean;
+  permission?: PermissionView | null;
+  /** The task's last system line. The Inbox gets no events, so it reads this. */
+  lastSystem?: string | null;
 }
 
 export interface TrackStep {
@@ -161,7 +193,34 @@ export interface GitView {
   files: ChangedFile[];
   commits: { sha: string; message: string; ts: number }[];
   checks: Check[];
-  pr: null | { number: number; url: string; state: string };
+  pr: null | { url: string };
+}
+
+/** One shell in the task's worktree (the side viewer's Terminal panel). */
+export interface TerminalInfo {
+  id: string;
+  taskId: string;
+  title: string;
+  cwd: string;
+  alive: boolean;
+  createdAt: number;
+}
+
+/** The task's dev server (the side viewer's Browser panel). */
+export interface DevServerView {
+  state: 'stopped' | 'starting' | 'running' | 'exited';
+  command: string | null;
+  suggested: string | null;
+  url: string | null;
+  port: number | null;
+  log: string;
+  exitCode: number | null;
+}
+
+export interface LinkInfo {
+  url: string;
+  frameable: boolean;
+  title: string | null;
 }
 
 export interface FileDiff {
@@ -235,6 +294,20 @@ export interface Settings {
   permissionModes: string[];
   /** Set when ORSTRA_CLAUDE_PERMISSION is in the daemon's environment (used when no mode is chosen here). */
   envPermissionMode: string | null;
+  /** What runs cost since midnight and in the last 7 days, in US dollars. */
+  cost?: { today: number; week: number };
+  triggers?: TriggerStatus[];
+  /** LINEAR_API_KEY is set in the daemon's environment. */
+  linear?: boolean;
+}
+
+export interface TriggerStatus {
+  workflow: string;
+  kind: 'linear' | 'schedule';
+  label: string;
+  lastCheck: number | null;
+  lastError: string | null;
+  started: number;
 }
 
 /** Per-agent defaults saved in ~/.orstra/agents.json. A missing field means the agent's own default. */
@@ -242,6 +315,10 @@ export interface AgentSettings {
   model?: string;
   effort?: string;
   permissionMode?: string;
+  /** false: a tool the permission mode does not allow is refused, not asked about. */
+  askPermission?: boolean;
+  /** false: a step's agent cannot publish a Claude artifact. */
+  artifact?: boolean;
 }
 
 /** One entry in the chief of staff conversation. */
@@ -306,10 +383,12 @@ export class ApiError extends Error {
 async function request<T>(method: 'GET' | 'POST' | 'PUT', path: string, body?: unknown): Promise<T> {
   let res: Response;
   try {
+    // The daemon refuses a change without a JSON content type (see apps/daemon/src/guard.ts).
+    const payload = body === undefined && method !== 'GET' ? {} : body;
     res = await fetch(path, {
       method,
-      headers: body === undefined ? undefined : { 'content-type': 'application/json' },
-      body: body === undefined ? undefined : JSON.stringify(body),
+      headers: payload === undefined ? undefined : { 'content-type': 'application/json' },
+      body: payload === undefined ? undefined : JSON.stringify(payload),
     });
   } catch {
     throw new ApiError('Can’t reach the Orstra daemon. Is it running on port 4317?', 0);
@@ -331,6 +410,7 @@ async function request<T>(method: 'GET' | 'POST' | 'PUT', path: string, body?: u
 
 export const api = {
   tasks: () => request<TaskSummary[]>('GET', '/api/tasks'),
+  archivedTasks: () => request<TaskSummary[]>('GET', '/api/tasks?archived=1'),
   task: (id: string) => request<TaskDetail>('GET', `/api/tasks/${encodeURIComponent(id)}`),
   inbox: () => request<TaskDetail[]>('GET', '/api/inbox'),
   workflows: () => request<WorkflowInfo[]>('GET', '/api/workflows'),
@@ -347,6 +427,17 @@ export const api = {
   cosPermission: (key: CosPermission, value: boolean) => request<{ ok: true }>('POST', '/api/cos/permissions', { key, value }),
   git: (taskId: string) => request<GitView>('GET', `/api/tasks/${encodeURIComponent(taskId)}/git`),
   diff: (taskId: string, path: string) => request<FileDiff>('GET', `/api/tasks/${encodeURIComponent(taskId)}/diff?path=${encodeURIComponent(path)}`),
+  // The side viewer.
+  files: (taskId: string) => request<{ paths: string[]; truncated: boolean }>('GET', `/api/tasks/${encodeURIComponent(taskId)}/files`),
+  linkInfo: (url: string) => request<LinkInfo>('GET', `/api/link-info?url=${encodeURIComponent(url)}`),
+  terminals: (taskId: string) => request<TerminalInfo[]>('GET', `/api/tasks/${encodeURIComponent(taskId)}/terminals`),
+  openTerminal: (taskId: string) => request<TerminalInfo>('POST', `/api/tasks/${encodeURIComponent(taskId)}/terminals`, {}),
+  terminalInput: (tid: string, data: string) => request<{ ok: true }>('POST', `/api/terminals/${encodeURIComponent(tid)}/input`, { data }),
+  terminalResize: (tid: string, cols: number, rows: number) => request<{ ok: true }>('POST', `/api/terminals/${encodeURIComponent(tid)}/resize`, { cols, rows }),
+  closeTerminal: (tid: string) => request<{ ok: true }>('POST', `/api/terminals/${encodeURIComponent(tid)}/close`, {}),
+  devServer: (taskId: string) => request<DevServerView>('GET', `/api/tasks/${encodeURIComponent(taskId)}/devserver`),
+  startDevServer: (taskId: string, command?: string) => request<DevServerView>('POST', `/api/tasks/${encodeURIComponent(taskId)}/devserver/start`, { command }),
+  stopDevServer: (taskId: string) => request<DevServerView>('POST', `/api/tasks/${encodeURIComponent(taskId)}/devserver/stop`, {}),
   saveWorkflow: (file: string, graph: WorkflowGraphInput) => request<WorkflowDetail>('PUT', `/api/workflows/${encodeURIComponent(file)}`, graph),
   createTask: (input: NewTaskInput) => request<TaskSummary>('POST', '/api/tasks', input),
   message: (taskId: string, body: { text: string; mode: MessageMode; runId?: string; stepId?: string; files?: ChatFile[] }) =>
@@ -360,10 +451,36 @@ export const api = {
   stop: (taskId: string) => request<{ ok: true }>('POST', `/api/tasks/${encodeURIComponent(taskId)}/stop`),
   decide: (runId: string, body: { choice: string; comment?: string }) =>
     request<{ ok: true }>('POST', `/api/runs/${encodeURIComponent(runId)}/decide`, body),
+  archive: (taskId: string, archived: boolean) => request<{ ok: true }>('POST', `/api/tasks/${encodeURIComponent(taskId)}/${archived ? 'archive' : 'unarchive'}`),
+  /** Remove the worktree (and the branch when merged), then archive. `force` also throws away uncommitted work. */
+  cleanup: (taskId: string, force = false) => request<{ ok: true; text: string }>('POST', `/api/tasks/${encodeURIComponent(taskId)}/cleanup`, { force }),
+  refreshWorkflow: (taskId: string) => request<{ ok: true }>('POST', `/api/tasks/${encodeURIComponent(taskId)}/workflow/refresh`),
+  answerPermission: (id: string, body: { allow: boolean; always?: boolean; message?: string }) =>
+    request<{ ok: true }>('POST', `/api/permissions/${encodeURIComponent(id)}/answer`, body),
 };
+
+/**
+ * A loader for one task that fetches only the events it has not seen. Each call asks for the events
+ * after the last one it holds, then adds them to the ones it had when the call started.
+ */
+export function taskLoader(id: string): () => Promise<TaskDetail> {
+  let cache: TaskDetail | null = null;
+  return async () => {
+    const base = cache;
+    const last = base?.events.length ? Number(base.events[base.events.length - 1].id) : NaN;
+    const after = Number.isFinite(last) ? last : undefined;
+    const fresh = await request<TaskDetail>('GET', `/api/tasks/${encodeURIComponent(id)}${after !== undefined ? `?after=${after}` : ''}`);
+    if (base && after !== undefined && fresh.eventsAfter === after) fresh.events = [...base.events, ...fresh.events];
+    cache = fresh;
+    return fresh;
+  };
+}
 
 export const errorMessage = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
 /** Where the browser reads an attachment's bytes (a thumbnail, or a click to open it). */
+/** Where the browser reads one file of the task's worktree. */
+export const worktreeFileUrl = (taskId: string, path: string) => `/api/tasks/${encodeURIComponent(taskId)}/file?path=${encodeURIComponent(path)}`;
+export const terminalStreamUrl = (tid: string) => `/api/terminals/${encodeURIComponent(tid)}/stream`;
 export const fileUrl = (taskId: string, path: string) => `/api/tasks/${encodeURIComponent(taskId)}/attachment?path=${encodeURIComponent(path)}`;
 export const cosFileUrl = (path: string) => `/api/cos/attachment?path=${encodeURIComponent(path)}`;

@@ -1,4 +1,4 @@
-import { memo } from 'react';
+import { memo, useMemo, type MouseEvent } from 'react';
 import ReactMarkdown, { type Components, type ExtraProps } from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
@@ -47,10 +47,32 @@ const COMPONENTS: Components = {
  * The text is untrusted. react-markdown builds React elements, so nothing goes through
  * innerHTML, and without rehype-raw it drops any HTML the message carries. Keep it that way.
  */
-export const Markdown = memo(function Markdown({ text }: { text: string }) {
+export const Markdown = memo(function Markdown({ text, onLink }: { text: string; onLink?: (href: string) => void }) {
+  // With onLink, a plain click on a link opens it in the side viewer. A ⌘-click, a Ctrl-click or a
+  // middle click still opens a new browser tab.
+  const components = useMemo<Components>(() => {
+    if (!onLink) return COMPONENTS;
+    return {
+      ...COMPONENTS,
+      a: ({ children, node: _node, ...props }) => (
+        <a
+          {...props}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e: MouseEvent<HTMLAnchorElement>) => {
+            if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0 || !props.href || !/^https?:/i.test(props.href)) return;
+            e.preventDefault();
+            onLink(props.href);
+          }}
+        >
+          {children}
+        </a>
+      ),
+    };
+  }, [onLink]);
   return (
     <div className="ox-md">
-      <ReactMarkdown remarkPlugins={PLUGINS} components={COMPONENTS}>
+      <ReactMarkdown remarkPlugins={PLUGINS} components={components}>
         {text}
       </ReactMarkdown>
     </div>

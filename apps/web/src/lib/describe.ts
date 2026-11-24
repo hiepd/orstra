@@ -25,6 +25,8 @@ export function awaitingTitle(state: TaskState, reason: string | null): string {
   if (reason === 'question') return 'Claude Code is asking';
   if (reason === 'reply') return 'Claude Code replied';
   if (reason === 'paused') return 'You stopped Claude Code';
+  if (reason === 'permission') return 'Claude Code needs your OK';
+  if (reason === 'no_outcome') return 'Claude Code ended without an outcome';
   return 'Claude Code is waiting for you';
 }
 
@@ -64,7 +66,12 @@ export function describeTask(task: TaskDetail): { now: string; next: string } {
           ? `${agent} answered you during ${step}${attempt} and is waiting for your reply.`
           : r === 'paused'
             ? `You stopped ${agent} during ${step}${attempt}. It is waiting for you to say what to do next.`
-            : `${agent} asked a question during ${step}${attempt} and is waiting for your answer.`;
+            : r === 'permission'
+              ? `${agent} wants to use a tool during ${step}${attempt} that needs your OK.`
+              : r === 'no_outcome'
+                ? `${agent} ended its turn during ${step}${attempt} without saying whether the step is done.`
+                : `${agent} asked a question during ${step}${attempt} and is waiting for your answer.`;
+      if (r === 'permission') return { now, next: `When you allow or refuse it, the same session continues. Then ${todo.length ? joinSteps(todo) : 'the task finishes'}.` };
       return { now, next: `When you reply in Chat, the same session continues. Then ${todo.length ? joinSteps(todo) : 'the task finishes'}.` };
     }
     case 'blocked':

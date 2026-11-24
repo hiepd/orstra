@@ -4,6 +4,19 @@ import { filesOf, upload, type AttachTo } from '../lib/attach';
 import { DraftFiles } from './FileChips';
 import { useToast } from './Overlay';
 
+const INSERT_EVENT = 'orstra:insert-draft';
+const keyOf = (to: AttachTo) => (to.kind === 'task' ? `task:${to.taskId}` : 'cos');
+
+/**
+ * Put text in the draft of a chat's composer (the one with acceptsInserts), for example a terminal's
+ * output. False when no such composer is on the page (an ended session shows none).
+ */
+export function insertIntoDraft(to: AttachTo, text: string): boolean {
+  const detail = { key: keyOf(to), text, taken: false };
+  window.dispatchEvent(new CustomEvent(INSERT_EVENT, { detail }));
+  return detail.taken;
+}
+
 /**
  * The message box, shared by a task's session and by the chief of staff. Enter sends. While the agent
  * works and the box is empty, the button stops its current turn.
@@ -22,6 +35,7 @@ export function Composer({
   canStop = true,
   autoFocus,
   focusWhen,
+  acceptsInserts,
   context,
   onSend,
   onStop,
@@ -40,6 +54,8 @@ export function Composer({
   autoFocus?: boolean;
   /** Focus the box when this turns true (the agent started to wait for you). */
   focusWhen?: boolean;
+  /** Take text that another part of the page puts in the draft (insertIntoDraft), for this chat. */
+  acceptsInserts?: boolean;
   /** An extra chip in the footer, such as the branch a session works on. */
   context?: ReactNode;
   /** Throw to keep the draft and the files in the box. */
@@ -59,6 +75,20 @@ export function Composer({
   useEffect(() => {
     if (focusWhen) ref.current?.focus();
   }, [focusWhen]);
+
+  const insertKey = keyOf(to);
+  useEffect(() => {
+    if (!acceptsInserts) return;
+    const onInsert = (e: Event) => {
+      const d = (e as CustomEvent<{ key: string; text: string; taken: boolean }>).detail;
+      if (d.key !== insertKey) return;
+      d.taken = true;
+      setDraft((t) => (t.trim() ? `${t.trimEnd()}\n\n${d.text}` : d.text));
+      ref.current?.focus();
+    };
+    window.addEventListener(INSERT_EVENT, onInsert);
+    return () => window.removeEventListener(INSERT_EVENT, onInsert);
+  }, [acceptsInserts, insertKey]);
 
   const add = async (picked: File[]) => {
     if (!picked.length) return;

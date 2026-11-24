@@ -1,7 +1,17 @@
 name: Simple
-description: The agent does the work, you review it, and you can reopen it after it is done.
+description: A task waits in Todo until you start it, the agent does the work, and you close it or reopen it for more changes.
 
 steps:
+  # A new task waits here. It shows in your Inbox; press Start when you want the agent to begin.
+  todo:
+    title: Todo
+    use: human
+    question: Start this task?
+    choices:
+      - start
+    on:
+      start: work
+
   work:
     title: In progress
     use: agent
@@ -9,31 +19,14 @@ steps:
       Do the task "{{ trigger.title }}".
       {{ trigger.description }}
       If a human left feedback or asked for more changes, address it first.
-    next: review
-
-  review:
-    title: In review
-    use: human
-    question: Is the work good?
-    on:
-      approved: merge
-      changes_requested: work
-
-  # Merges the task branch into the branch the repository has checked out. Local only; it never pushes.
-  # It runs as soon as you approve, so no click merges the work.
-  # It does nothing when the task has no commits or its own scratch repository.
-  # "conflict" and "error" have no arrow on purpose: the task goes to the Inbox with that reason,
-  # and nothing is merged.
-  merge:
-    title: Merge
-    use: action
-    action: git.merge
+      Commit your work on this branch with a clear message.
     next: done
 
+  # Nothing is merged: the work stays on the task's branch (orstra/<task>), and you merge it yourself.
   done:
     title: Done
     use: human
-    question: The work is merged. Close it, or reopen it to ask for more changes.
+    question: Is the work good? Close it, or reopen it to ask for more changes.
     choices:
       - close
       - reopen

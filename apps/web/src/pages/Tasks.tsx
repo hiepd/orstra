@@ -4,7 +4,8 @@ import { PlusIcon, TasksIcon } from '../components/Icons';
 import { taskLabel } from '../lib/format';
 import { useLiveResource, useNow } from '../lib/live';
 import { remember, store } from '../lib/remember';
-import { href } from '../lib/router';
+import { href, navigate, type TaskViewName } from '../lib/router';
+import { InboxView } from './Inbox';
 import { agentMeta, STATE, stepLabel, taskState, type StateGroup } from '../lib/taskState';
 import { age } from '../lib/time';
 
@@ -35,14 +36,19 @@ function StatusText({ t }: { t: TaskSummary }) {
   );
 }
 
-/** All tasks. Board groups them by the step they're at; list groups by status. Both only open the task. */
-export function TasksPage({ onNewTask }: { onNewTask: () => void }) {
+/**
+ * All tasks, in 3 views. Inbox: what needs you across every workflow, with the selected task open beside
+ * the list, so you can act on it there. Board groups one workflow's tasks by step; List groups by status.
+ */
+export function TasksPage({ onNewTask, inbox, sel, selView }: { onNewTask: () => void; inbox: boolean; sel?: string; selView?: TaskViewName }) {
   useNow(30_000);
-  const res = useLiveResource('tasks', api.tasks);
+  const [archived, setArchived] = useState(false);
+  const res = useLiveResource(archived ? 'tasks:archived' : 'tasks', archived ? api.archivedTasks : api.tasks);
   const [view, setView] = useState<View>(() => remember<View>('orstra.tasks.view', 'board'));
   const [filter, setFilter] = useState<Filter>('all');
   const [wfFile, setWfFile] = useState<string | null>(null);
   const tasks = res.data ?? [];
+  const needsCount = (archived ? [] : tasks).filter((t) => STATE[taskState(t)].group === 'needs').length;
 
   // Workflows that have tasks, the busiest first. The board shows one workflow at a time.
   const countOf = (f: string) => tasks.filter((t) => t.workflowFile === f).length;
@@ -56,7 +62,9 @@ export function TasksPage({ onNewTask }: { onNewTask: () => void }) {
   const ofWorkflow = tasks.filter((t) => t.workflowFile === file);
 
   const columns = [
-    ...(wf.data?.steps ?? []).map((s) => ({ id: s.id, name: s.title, cards: ofWorkflow.filter((t) => t.status !== 'done' && t.status !== 'stopped' && t.currentStep === s.id) })),
+    ...(wf.data?.steps ?? [])
+      .filter((s) => s.title.trim().toLowerCase() !== 'done' || ofWorkflow.some((t) => t.status !== 'done' && t.status !== 'stopped' && t.currentStep === s.id))
+      .map((s) => ({ id: s.id, name: s.title, cards: ofWorkflow.filter((t) => t.status !== 'done' && t.status !== 'stopped' && t.currentStep === s.id) })),
     { id: '__done', name: 'Done', cards: ofWorkflow.filter((t) => t.status === 'done' || t.status === 'stopped') },
   ];
 
@@ -66,15 +74,22 @@ export function TasksPage({ onNewTask }: { onNewTask: () => void }) {
         <span className="lx-crumb">
           <b>Tasks</b>
         </span>
-        <div className="ox-seg" role="group" aria-label="View">
-          <button aria-pressed={view === 'board'} onClick={() => setView('board')}>
+        <div className="ox-seg" role="group" aria-label="Tasks view">
+          <button aria-pressed={inbox} onClick={() => navigate(href.inbox)}>
+            Inbox
+            {needsCount > 0 && <span className="ox-segn">{needsCount}</span>}
+          </button>
+          <button aria-pressed={!inbox && view === 'board'} onClick={() => { setView('board'); navigate(href.tasks); }}>
             Board
           </button>
-          <button aria-pressed={view === 'list'} onClick={() => setView('list')}>
+          <button aria-pressed={!inbox && view === 'list'} onClick={() => { setView('list'); navigate(href.tasks); }}>
             List
           </button>
         </div>
         <div className="lx-acts">
+          <button className="lx-btn" aria-pressed={archived && !inbox} onClick={() => { if (inbox) { setArchived(true); navigate(href.tasks); } else setArchived((a) => !a); }}>
+            {archived && !inbox ? 'Back to tasks' : 'Archived'}
+          </button>
           <button className="lx-btn lx-pri" onClick={onNewTask}>
             <PlusIcon />
             New task
@@ -82,13 +97,14 @@ export function TasksPage({ onNewTask }: { onNewTask: () => void }) {
         </div>
       </div>
 
-      {res.error && !res.data && <div className="lx-error">{res.error}</div>}
-      {res.loading && !res.data && !res.error && (
+      {inbox && <InboxView sel={sel} selView={selView} />}
+      {!inbox && res.error && !res.data && <div className="lx-error">{res.error}</div>}
+      {!inbox && res.loading && !res.data && !res.error && (
         <div className="lx-loading">
           <span className="lx-spin" /> Loading tasks…
         </div>
       )}
-      {res.data && tasks.length === 0 && (
+      {!inbox && res.data && tasks.length === 0 && (
         <div className="lx-empty">
           <span style={{ color: 'var(--dim)' }}>
             <TasksIcon />
@@ -102,7 +118,7 @@ export function TasksPage({ onNewTask }: { onNewTask: () => void }) {
         </div>
       )}
 
-      {tasks.length > 0 && (
+      {!inbox && tasks.length > 0 && (
         <>
           <div className="ox-fbar">
             {FILTERS.map((f) => (

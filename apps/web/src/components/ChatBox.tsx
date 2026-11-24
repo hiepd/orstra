@@ -59,6 +59,7 @@ export function ChatBox({
       working={working}
       canStop={canStop}
       focusWhen={waiting}
+      acceptsInserts
       context={
         branch ? (
           <span className="ox-cctx ox-cbranch" title="The branch this session works on">

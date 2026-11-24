@@ -1,10 +1,12 @@
-import { useState, type ReactNode } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import type { RunView, TaskEvent } from '../api';
 import { useNow } from '../lib/live';
 import { duration } from '../lib/time';
 import { SentFiles } from './FileChips';
 import { ChevronRight } from './Icons';
 import { Markdown } from './Markdown';
+import { RefChips } from './RefChips';
+import { findRefs, type Ref } from '../lib/refs';
 import { ProgressList } from './ProgressList';
 
 type ToolEvent = Extract<TaskEvent, { kind: 'tool' }>;
@@ -69,8 +71,28 @@ function WorkFold({ tools, from, to, live }: { tools: ToolEvent[]; from: number;
  * One session as a chat: the agent's messages as plain text, yours as bubbles on the right, and its
  * tool calls folded into "Worked for 1m 12s" rows. `working` shows the last stretch as live.
  */
-export function Transcript({ run, events, working, agentName }: { run: RunView; events: TaskEvent[]; working: boolean; agentName: string }) {
-  const mine = events.filter((e) => e.runId === run.id);
+export function Transcript({
+  run,
+  events,
+  working,
+  agentName,
+  onOpenRef,
+  hideAsides,
+  worktree,
+}: {
+  run: RunView;
+  events: TaskEvent[];
+  working: boolean;
+  agentName: string;
+  /** Open a reference (a link, a file, an artifact) in the side viewer. */
+  onOpenRef?: (r: Ref) => void;
+  /** Questions to a copy and its answers show in the Side chat panel instead. */
+  hideAsides?: boolean;
+  /** The task's worktree: an absolute path inside it gets a chip too. */
+  worktree?: string | null;
+}) {
+  const mine = events.filter((e) => e.runId === run.id && !(hideAsides && (e.kind === 'aside' || (e.kind === 'you' && e.mode === 'ask'))));
+  const onLink = useMemo(() => (onOpenRef ? (href: string) => onOpenRef(findRefs(href)[0] ?? { kind: 'link', target: href, label: href }) : undefined), [onOpenRef]);
   const items: { key: string; node: ReactNode }[] = [];
   let tools: ToolEvent[] = [];
   let since = run.startedAt ?? run.createdAt;
@@ -88,7 +110,16 @@ export function Transcript({ run, events, working, agentName }: { run: RunView; 
     if (e.kind === 'output') continue;
     flush(e.ts, false);
     const key = String(e.id);
-    if (e.kind === 'message') items.push({ key, node: <div className="ox-ai"><Markdown text={e.text} /></div> });
+    if (e.kind === 'message')
+      items.push({
+        key,
+        node: (
+          <div className="ox-ai">
+            <Markdown text={e.text} onLink={onLink} />
+            {onOpenRef && <RefChips taskId={run.taskId} refs={findRefs(e.text, worktree)} onOpen={onOpenRef} />}
+          </div>
+        ),
+      });
     else if (e.kind === 'aside')
       items.push({
         key,
@@ -119,7 +150,7 @@ export function Transcript({ run, events, working, agentName }: { run: RunView; 
             <div className="ox-user">
               <div className="ox-bubble">
                 {e.mode === 'ask' && <span className="ox-tag">Asked a copy</span>}
-                {e.via === 'cos' && <span className="ox-tag">Sent by your chief of staff</span>}
+                {e.via === 'cos' && <span className="ox-tag">Sent by your assistant</span>}
                 {e.text}
                 {!!e.files?.length && <SentFiles to={{ kind: 'task', taskId: run.taskId }} files={e.files} />}
               </div>

@@ -1,0 +1,46 @@
+name: Linear ticket to PR
+description: An agent implements a Linear ticket, the tests run, you review, and Orstra opens a draft pull request.
+
+# Starts one task per open issue with this label. Needs LINEAR_API_KEY in the daemon's environment.
+# Each progress entry goes back to the issue as a comment. Remove this block to start tasks by hand only.
+triggers:
+  - linear:
+      label: agent-ready
+
+concurrency: 2
+budget_usd: 10
+
+steps:
+  impl:
+    title: Implement
+    use: agent
+    timeout: 90
+    prompt: |
+      Implement the ticket "{{ trigger.title }}" ({{ trigger.ref }}).
+      {{ trigger.description }}
+      Commit your work on this branch with a clear message. If a human left feedback, address it first.
+    next: test
+
+  test:
+    title: Tests
+    use: gate
+    run: [npm test]
+    on:
+      pass: review
+      fail: { goto: impl, max: 2 }
+
+  review:
+    title: Review
+    use: human
+    question: Is the change ready for a pull request?
+    on:
+      approved: pr
+      changes_requested: { goto: impl, max: 3 }
+      rejected: end
+
+  # Pushes the task branch and opens a draft pull request with gh. Nothing is merged.
+  pr:
+    title: Pull request
+    use: action
+    action: github.pr
+    next: end

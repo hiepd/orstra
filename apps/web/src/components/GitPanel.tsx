@@ -21,19 +21,19 @@ const CHECK: Record<Check['state'], { color: string; label: string; path: string
 };
 
 /**
- * What a coding tool shows beside the chat: where the work lives (worktree, branch, PR) and what it
- * changed (files with diffs, checks, commits).
+ * The side viewer's Changes panel: where the work lives (worktree, branch, PR) and what it changed
+ * (files with diffs, checks, commits).
  */
-export function GitPanel({ task, git, openPath, onOpenPath }: { task: TaskDetail; git: Resource<GitView>; openPath: string | null; onOpenPath: (path: string | null) => void }) {
+export function GitBody({ task, git, openPath, onOpenPath }: { task: TaskDetail; git: Resource<GitView>; openPath: string | null; onOpenPath: (path: string | null) => void }) {
   const toast = useToast();
   const [tab, setTab] = useState<Tab>('changes');
   const g = git.data;
 
   if (!task.worktree) {
     return (
-      <aside className="ox-git" aria-label="Worktree and changes">
+      <div className="vw-git">
         <div className="ox-gempty">No worktree yet. Orstra creates one, on its own branch, when the task starts.</div>
-      </aside>
+      </div>
     );
   }
 
@@ -51,7 +51,7 @@ export function GitPanel({ task, git, openPath, onOpenPath }: { task: TaskDetail
     : '…';
 
   return (
-    <aside className="ox-git" aria-label="Worktree and changes" style={{ flexBasis: openPath && tab === 'changes' ? 480 : 348 }}>
+    <div className="vw-git">
       <div className="ox-gitc">
         <div className="ox-grow">
           <span className="ox-gk">Worktree</span>
@@ -77,7 +77,7 @@ export function GitPanel({ task, git, openPath, onOpenPath }: { task: TaskDetail
           <span className="ox-gk">PR</span>
           {g?.pr ? (
             <a className="ox-gvp" href={g.pr.url} target="_blank" rel="noreferrer">
-              #{g.pr.number} · {g.pr.state}
+              {prName(g.pr.url)}
             </a>
           ) : (
             <span className="ox-gvp" style={{ color: 'var(--faint)' }}>
@@ -159,7 +159,7 @@ export function GitPanel({ task, git, openPath, onOpenPath }: { task: TaskDetail
           </>
         )}
       </div>
-    </aside>
+    </div>
   );
 }
 
@@ -221,4 +221,10 @@ function DiffView({ taskId, path, add, del, stamp, onBack }: { taskId: string; p
       )}
     </>
   );
+}
+
+/** "#123" from a pull request URL, else the URL. */
+export function prName(url: string): string {
+  const m = url.match(/\/pull\/(\d+)/);
+  return m ? `#${m[1]}` : url;
 }

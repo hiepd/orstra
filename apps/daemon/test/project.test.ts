@@ -4,13 +4,13 @@ import { projectTask, rebuildAll } from '../src/project.ts';
 
 const task = (id: string, p: Partial<TaskRow> = {}): TaskRow => ({
   id, ref: null, title: id, description: '', workflow_path: '/wf.yaml', workflow_name: 'Simple', status: 'running',
-  current_step: null, inbox_reason: null, edge_counts: '{}', worktree: null, created_at: 1, updated_at: 1, stopped_at: null, ...p,
+  current_step: null, inbox_reason: null, edge_counts: '{}', worktree: null, created_at: 1, updated_at: 1, stopped_at: null, workflow_yaml: null, pr_url: null, source: null, archived_at: null, ...p,
 });
 
 const run = (id: string, taskId: string, p: Partial<RunRow> = {}): RunRow => ({
   id, task_id: taskId, step_id: 'work', kind: 'agent', attempt: 1, status: 'running', outcome: null, agent: 'claude-code',
   session_id: 's1', progress: null, output: null, created_at: 1, started_at: 1, ended_at: null,
-  last_turn_at: null, wait_reason: null, routed: null, ...p,
+  last_turn_at: null, wait_reason: null, routed: null, cost_usd: null, tokens_in: null, tokens_out: null, ...p,
 });
 
 const dead = () => false;
