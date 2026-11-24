@@ -1,12 +1,13 @@
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { FINISH_INSTRUCTIONS, parseAgentResult, parseWorkflow, renderTemplate, route, stripProgressBlock, switchCase, type Progress, type Step, type Workflow } from '@orstra/core';
 import { withFiles, type Attachment } from './attachments.ts';
-import type { Executors, LiveSession, StreamEvent, TurnEnd } from './executors.ts';
+import { summarizeTool, type Executors, type LiveSession, type StreamEvent, type TurnEnd, type TurnUsage } from './executors.ts';
 import type { RunRow, Store, TaskRow } from './db.ts';
 import { locateWorkflow } from './workflows.ts';
 import { runAction } from './actions.ts';
+import { cleanupWorktree } from './cleanup.ts';
 
 export interface StartTaskInput {
   workflowPath: string;
@@ -42,6 +43,22 @@ export function defaultTimeoutsFromEnv(): { agent: number; gate: number } {
   return { agent: min(process.env.ORSTRA_AGENT_TIMEOUT_MIN, 120), gate: min(process.env.ORSTRA_GATE_TIMEOUT_MIN, 30) };
 }
 
+/** Claude Code's answer to a permission question: run the tool (maybe with changed input), or not. */
+export type PermissionDecision = { behavior: 'allow'; updatedInput: Record<string, unknown> } | { behavior: 'deny'; message: string };
+
+/** A tool call that waits for your OK. */
+export interface PendingPermission {
+  id: string;
+  taskId: string;
+  runId: string;
+  tool: string;
+  input: Record<string, unknown>;
+  summary: string;
+  ts: number;
+  decision?: PermissionDecision;
+  waiters: ((d: PermissionDecision) => void)[];
+}
+
 /** Sent once when an agent ends a turn with no OUTCOME line, before the task goes to the Inbox. */
 export const NUDGE = 'Your last message had no OUTCOME line, so Orstra cannot tell if the step is finished. If you are finished, reply with only the "## Progress" block and the OUTCOME line. If you are not finished, continue the work and end with them.';
 
@@ -54,6 +71,8 @@ interface Live {
   finished: boolean;
   /** Orstra already asked for the missing OUTCOME line once. */
   nudged: boolean;
+  /** The run's cost before this process started; Claude Code counts each process from zero. */
+  baseCost: number;
 }
 
 const id = (p: string) => `${p}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
@@ -72,6 +91,8 @@ export class Runner extends EventEmitter {
   private deadlines = new Map<string, NodeJS.Timeout>();
   /** Runs that hit their timeout, so the gate's abort reads as a timeout and not as a stop. */
   private timedOut = new Set<string>();
+  /** Permission questions by id, open or answered in the last minute. */
+  private permissions = new Map<string, PendingPermission>();
 
   constructor(private store: Store, private exec: Executors, private opts: RunnerOptions) {
     super();
@@ -316,9 +337,9 @@ export class Runner extends EventEmitter {
       }
       this.event(task.id, run.id, e.kind, e);
     };
-    const live: Live = { session: null as unknown as LiveSession, routes: opts.routes, humanSpoke: false, sendSeq: 0, finished: false, nudged: false };
+    const live: Live = { session: null as unknown as LiveSession, routes: opts.routes, humanSpoke: false, sendSeq: 0, finished: false, nudged: false, baseCost: this.store.run(run.id)?.cost_usd ?? 0 };
     live.session = this.exec.session((run.agent as 'claude-code' | 'codex') ?? 'claude-code', {
-      cwd: task.worktree ?? process.cwd(), sessionId: opts.sessionId, resume: opts.resume, model: opts.model,
+      cwd: task.worktree ?? process.cwd(), sessionId: opts.sessionId, resume: opts.resume, model: opts.model, runId: run.id,
       onEvent, onTurn: (t) => this.onTurn(task.id, run.id, t),
     });
     this.live.set(run.id, live);
@@ -331,6 +352,7 @@ export class Runner extends EventEmitter {
   private onTurn(taskId: string, runId: string, t: TurnEnd) {
     const live = this.live.get(runId);
     if (!live || live.finished) return;
+    if (t.usage) this.recordUsage(runId, live, t.usage);
 
     if (t.interrupted) {
       this.event(taskId, runId, 'system', { text: 'Stopped. Tell Claude Code what to do next.' });
@@ -350,6 +372,12 @@ export class Runner extends EventEmitter {
     }
 
     const parsed = parseAgentResult(t.text);
+    const ends = parsed.hasOutcome && parsed.outcome !== 'needs_you';
+    if (!ends && this.overBudget(taskId)) {
+      live.finished = true;
+      live.session.end();
+      return this.finish(taskId, runId, 'over_budget');
+    }
     if (!parsed.hasOutcome && live.humanSpoke) {
       // It answered you mid-conversation without finishing the step: wait for your reply.
       return this.markWaiting(taskId, runId, 'reply');
@@ -373,6 +401,28 @@ export class Runner extends EventEmitter {
     this.closeAfterGrace(live, () => this.finish(taskId, runId, parsed.outcome));
   }
 
+  /** Add one turn's cost and tokens to the run. */
+  private recordUsage(runId: string, live: Live, u: TurnUsage) {
+    const run = this.store.run(runId);
+    if (!run) return;
+    const patch: Partial<RunRow> = { tokens_in: (run.tokens_in ?? 0) + u.tokensIn, tokens_out: (run.tokens_out ?? 0) + u.tokensOut };
+    if (u.totalCostUsd !== undefined) patch.cost_usd = live.baseCost + u.totalCostUsd;
+    this.store.updateRun(runId, patch);
+  }
+
+  /** true when the task's runs cost as much as its workflow's `budget_usd`, or more. Says so on the task. */
+  private overBudget(taskId: string): boolean {
+    const task = this.store.task(taskId);
+    if (!task) return false;
+    const cap = this.workflowFor(task).budgetUsd;
+    if (cap === undefined) return false;
+    const usd = this.store.taskCost(taskId).usd;
+    if (usd < cap) return false;
+    const money = (v: number) => '$' + v.toFixed(2);
+    this.event(taskId, null, 'system', { text: `This task cost ${money(usd)}, which reaches its budget of ${money(cap)}. Orstra stopped the agent work. Raise budget_usd in the workflow, or retry to continue.` });
+    return true;
+  }
+
   /** Close the session unless you send another message within the grace period. */
   private closeAfterGrace(live: Live, then: () => void) {
     const seq = live.sendSeq;
@@ -394,8 +444,99 @@ export class Runner extends EventEmitter {
     this.pump();
   }
 
+  /** The tools you allowed for every later call in this task. */
+  private allowedTools(taskId: string): string[] {
+    try { return JSON.parse(this.store.get(`perm-allow:${taskId}`) ?? '[]') as string[]; } catch { return []; }
+  }
+
+  /** The permission question open for a task, if any. */
+  pendingPermission(taskId: string): PendingPermission | undefined {
+    return [...this.permissions.values()].find((p) => p.taskId === taskId && !p.decision);
+  }
+
+  /**
+   * An agent wants to run a tool that its permission mode does not allow. The run waits on you, and
+   * the question goes to the Inbox. A tool you allowed for the whole task passes at once.
+   */
+  requestPermission(runId: string, tool: string, input: Record<string, unknown>): { id: string; decision?: PermissionDecision } {
+    const run = this.store.run(runId);
+    const task = run && this.store.task(run.task_id);
+    const id = `p-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    if (!run || !task || task.status === 'stopped' || (run.status !== 'running' && run.status !== 'waiting')) {
+      return { id, decision: { behavior: 'deny', message: 'This run is no longer active in Orstra.' } };
+    }
+    const summary = summarizeTool(tool, input);
+    if (this.allowedTools(task.id).includes(tool)) {
+      this.event(task.id, runId, 'system', { text: `Allowed ${tool}: ${summary} (you allowed ${tool} for this task).` });
+      return { id, decision: { behavior: 'allow', updatedInput: input } };
+    }
+    this.permissions.set(id, { id, taskId: task.id, runId, tool, input, summary, ts: Date.now(), waiters: [] });
+    this.event(task.id, runId, 'permission', { id, tool, summary });
+    this.markWaiting(task.id, runId, 'permission');
+    return { id };
+  }
+
+  /** Wait up to `ms` for the answer; null means "still open, ask again". */
+  waitPermission(id: string, ms = 25_000): Promise<PermissionDecision | null> {
+    const p = this.permissions.get(id);
+    if (!p) return Promise.resolve({ behavior: 'deny', message: 'Orstra lost this question (it restarted). Ask again in your reply.' });
+    if (p.decision) return Promise.resolve(p.decision);
+    return new Promise((resolve) => {
+      const t = setTimeout(() => {
+        p.waiters = p.waiters.filter((w) => w !== done);
+        resolve(null);
+      }, ms);
+      t.unref?.();
+      const done = (d: PermissionDecision) => {
+        clearTimeout(t);
+        resolve(d);
+      };
+      p.waiters.push(done);
+    });
+  }
+
+  /** Your answer to a permission question. `always` allows that tool for the rest of the task. */
+  answerPermission(id: string, allow: boolean, opts: { always?: boolean; message?: string; via?: Via } = {}) {
+    const p = this.permissions.get(id);
+    if (!p || p.decision) throw new Error('That permission question is no longer open.');
+    const decision: PermissionDecision = allow
+      ? { behavior: 'allow', updatedInput: p.input }
+      : { behavior: 'deny', message: opts.message?.trim() || 'The user said no. Do not try this again; find another way or explain what you need.' };
+    this.settle(p, decision);
+    if (allow && opts.always) {
+      const list = this.allowedTools(p.taskId);
+      if (!list.includes(p.tool)) this.store.set(`perm-allow:${p.taskId}`, JSON.stringify([...list, p.tool]));
+    }
+    this.event(p.taskId, p.runId, 'you', { mode: 'permission', text: opts.message ?? '', allow, always: !!opts.always, tool: p.tool, via: opts.via });
+    const run = this.store.run(p.runId);
+    const task = this.store.task(p.taskId);
+    if (run && task && run.status === 'waiting' && task.status !== 'stopped' && this.live.has(p.runId)) {
+      this.store.updateRun(p.runId, { status: 'running' });
+      this.store.updateTask(p.taskId, { status: 'running', inbox_reason: null, current_step: run.step_id });
+      const step = this.workflowFor(task).steps[run.step_id];
+      if (step) this.arm(p.taskId, p.runId, step);
+      this.changed(p.taskId);
+    }
+  }
+
+  private settle(p: PendingPermission, d: PermissionDecision) {
+    p.decision = d;
+    for (const w of p.waiters) w(d);
+    p.waiters = [];
+    const t = setTimeout(() => this.permissions.delete(p.id), 60_000);
+    t.unref?.();
+  }
+
+  /** Close every open question of a run: its session is gone, so no one waits for the answer. */
+  private dropPermissions(runId: string) {
+    for (const p of this.permissions.values()) {
+      if (p.runId === runId && !p.decision) this.settle(p, { behavior: 'deny', message: 'The run ended.' });
+    }
+  }
+
   private onClosed(taskId: string, runId: string, live: Live, res: { ok: boolean; error?: string }) {
     if (this.live.get(runId) === live) this.live.delete(runId);
+    this.dropPermissions(runId);
     this.changed(taskId);
     if (live.finished || !live.routes) return;
     const run = this.store.run(runId);
@@ -444,8 +585,14 @@ export class Runner extends EventEmitter {
     const wf = this.workflowFor(task);
     const step = wf.steps[run.step_id];
     const cwd = task.worktree ?? process.cwd();
+    if ((step.use === 'agent' || step.use === 'gate') && task.worktree && !existsSync(task.worktree)) {
+      // A git.cleanup step or a cleanup removed it. Never run an agent in some other folder.
+      this.event(task.id, run.id, 'system', { text: `The task's worktree at ${task.worktree} is gone, so this step cannot run.` });
+      return this.finish(task.id, run.id, 'cant_do');
+    }
 
     if (step.use === 'agent') {
+      if (this.overBudget(task.id)) return this.finish(task.id, run.id, 'over_budget');
       const sessionId = randomUUID();
       this.store.updateRun(run.id, { session_id: sessionId });
       const live = this.openSession(task, { ...run, session_id: sessionId }, { sessionId, resume: false, routes: true, model: step.model });
@@ -486,8 +633,13 @@ export class Runner extends EventEmitter {
       }
 
       if (step.use === 'action') {
-        const res = runAction(step.action, { cwd, input: step.with ?? {} });
+        const res = runAction(step.action, {
+          cwd, input: step.with ?? {},
+          task: { title: task.title, ref: task.ref, description: task.description },
+          progress: this.progressText(task, wf),
+        });
         this.store.updateRun(run.id, { output: res.text });
+        if (res.prUrl) this.store.updateTask(task.id, { pr_url: res.prUrl });
         this.event(task.id, run.id, 'system', { text: res.text });
         return this.finish(task.id, run.id, res.outcome);
       }
@@ -554,6 +706,7 @@ export class Runner extends EventEmitter {
   async message(taskId: string, text: string, mode: MessageMode, opts: { runId?: string; stepId?: string; via?: Via; files?: Attachment[] } = {}) {
     const task = this.store.task(taskId);
     if (!task) throw new Error('No such task.');
+    this.assertActive(task);
     const files = opts.files ?? [];
     // What the agent reads. With no attachment it is your text, byte for byte.
     const body = withFiles(text, files);
@@ -638,6 +791,7 @@ export class Runner extends EventEmitter {
   retry(taskId: string, stepId?: string, note?: string, via?: Via) {
     const task = this.store.task(taskId);
     if (!task) throw new Error('No such task.');
+    this.assertActive(task);
     const step = stepId ?? task.current_step;
     if (!step) throw new Error('Nothing to retry.');
     this.closeLive(taskId);
@@ -648,6 +802,34 @@ export class Runner extends EventEmitter {
     this.event(taskId, null, 'system', { text: `Retrying ${this.workflowFor(task).steps[step]?.title ?? step}${byCos(via)}` });
     this.queueStep(task, step);
     this.pump();
+  }
+
+  /** Archive a task, or bring it back. Archived tasks leave the lists; nothing else changes. */
+  archive(taskId: string, archived = true) {
+    const task = this.store.task(taskId);
+    if (!task) throw new Error('No such task.');
+    if (archived && (task.status === 'running' || task.status === 'needs_you')) throw new Error('Stop the task or let it finish before you archive it.');
+    this.store.updateTask(taskId, { archived_at: archived ? Date.now() : null });
+    this.event(taskId, null, 'system', { text: archived ? 'Archived' : 'Back from the archive' });
+  }
+
+  /**
+   * Remove a finished task's worktree (and its branch when merged), then archive it. Refuses, and
+   * changes nothing, when work would be lost and `force` is not set. See cleanup.ts.
+   */
+  cleanup(taskId: string, opts: { force?: boolean } = {}): string {
+    const task = this.store.task(taskId);
+    if (!task) throw new Error('No such task.');
+    if (task.status === 'running' || task.status === 'needs_you') throw new Error('Stop the task or let it finish before you clean it up.');
+    const res = cleanupWorktree(task.worktree, opts);
+    if (res.outcome === 'refused') throw new Error(res.text);
+    this.store.updateTask(taskId, { archived_at: Date.now() });
+    this.event(taskId, null, 'system', { text: `${res.text} Archived the task.` });
+    return res.text;
+  }
+
+  private assertActive(task: TaskRow) {
+    if (task.archived_at) throw new Error('This task is archived. Bring it back from the archive first.');
   }
 
   stop(taskId: string, via?: Via) {

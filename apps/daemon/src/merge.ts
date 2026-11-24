@@ -21,7 +21,7 @@ export interface MergeResult {
 }
 
 /** Run git and keep its output. Never opens an editor and never asks for a password. */
-function git(dir: string, args: string[]): { ok: boolean; out: string } {
+export function git(dir: string, args: string[]): { ok: boolean; out: string } {
   try {
     const out = execFileSync('git', ['-C', dir, ...args], {
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -37,7 +37,7 @@ function git(dir: string, args: string[]): { ok: boolean; out: string } {
 }
 
 /** The main checkout of the repository the worktree belongs to: the first block of `worktree list`. */
-function mainCheckout(dir: string): { path: string | null; branch: string | null } {
+export function mainCheckout(dir: string): { path: string | null; branch: string | null } {
   const porcelain = git(dir, ['worktree', 'list', '--porcelain']);
   if (!porcelain.ok) return { path: null, branch: null };
   const block = porcelain.out.split(/\n\s*\n/)[0].split('\n');

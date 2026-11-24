@@ -1,6 +1,8 @@
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
+import { fileURLToPath } from 'node:url';
 import { loadAgentConfig, type AgentSettings } from './agentConfig.ts';
+import { PORT, TSX } from './paths.ts';
 
 /** Something the run streamed: agent text, a tool call, or a line of command output. */
 export type StreamEvent =
@@ -13,6 +15,28 @@ export interface TurnEnd {
   text: string;
   interrupted: boolean;
   isError: boolean;
+  /** What the turn cost, when the agent reports it. */
+  usage?: TurnUsage;
+}
+
+export interface TurnUsage {
+  /** Claude Code: the session's running total for this process, in US dollars. Codex reports none. */
+  totalCostUsd?: number;
+  /** Tokens of this turn only: input plus cache reads and cache writes. */
+  tokensIn: number;
+  tokensOut: number;
+}
+
+/** Read the usage of one `result` message from Claude Code's stream. */
+export function usageOf(msg: any): TurnUsage | undefined {
+  const u = msg?.usage;
+  if (!u && typeof msg?.total_cost_usd !== 'number') return undefined;
+  const n = (v: unknown) => (typeof v === 'number' ? v : 0);
+  return {
+    totalCostUsd: typeof msg?.total_cost_usd === 'number' ? msg.total_cost_usd : undefined,
+    tokensIn: n(u?.input_tokens) + n(u?.cache_read_input_tokens) + n(u?.cache_creation_input_tokens),
+    tokensOut: n(u?.output_tokens),
+  };
 }
 
 export interface SessionOptions {
@@ -23,6 +47,8 @@ export interface SessionOptions {
   model?: string;
   /** Replaces the default tool and permission flags (used by the chief of staff, which gets only Orstra's tools). */
   toolArgs?: string[];
+  /** The Orstra run this session works for. With it, permission questions go to the Inbox. */
+  runId?: string;
   onEvent: (e: StreamEvent) => void;
   onTurn: (t: TurnEnd) => void;
 }
@@ -53,20 +79,34 @@ export interface Executors {
   ask(sessionId: string, cwd: string, question: string): Promise<string>;
 }
 
-function summarizeTool(name: string, input: Record<string, unknown>): string {
+export function summarizeTool(name: string, input: Record<string, unknown>): string {
   const pick = input.file_path ?? input.path ?? input.command ?? input.pattern ?? input.url ?? input.description ?? input.task ?? input.title ?? input.workflow;
   const s = typeof pick === 'string' ? pick : JSON.stringify(input);
   return s.length > 140 ? s.slice(0, 137) + '…' : s;
 }
 
+/** The full name Claude Code gives Orstra's permission tool. */
+export const PERMISSION_TOOL = 'mcp__orstra_perm__permission_prompt';
+
+/** The MCP server (perm-mcp.ts) that carries a run's permission questions to the daemon, as inline JSON. */
+export function permissionMcpConfig(runId: string): string {
+  const script = fileURLToPath(new URL('./perm-mcp.ts', import.meta.url));
+  return JSON.stringify({ mcpServers: { orstra_perm: { type: 'stdio', command: TSX, args: [script], env: { ORSTRA_PORT: String(PORT), ORSTRA_RUN_ID: runId } } } });
+}
+
 /** The claude command line for a session. A model set by the caller (a workflow step) wins over the configured default. */
-export function claudeArgs(opts: Pick<SessionOptions, 'sessionId' | 'resume' | 'model' | 'toolArgs'>, cfg: AgentSettings = {}): string[] {
+export function claudeArgs(opts: Pick<SessionOptions, 'sessionId' | 'resume' | 'model' | 'toolArgs' | 'runId'>, cfg: AgentSettings = {}): string[] {
+  // Without --strict-mcp-config, so the agent keeps your own MCP servers next to Orstra's permission tool.
+  const ask = !opts.toolArgs && opts.runId && cfg.askPermission !== false
+    ? ['--mcp-config', permissionMcpConfig(opts.runId), '--permission-prompt-tool', PERMISSION_TOOL]
+    : [];
   const args = [
     '-p',
     '--input-format', 'stream-json',
     '--output-format', 'stream-json',
     '--verbose',
     ...(opts.toolArgs ?? ['--permission-mode', cfg.permissionMode ?? process.env.ORSTRA_CLAUDE_PERMISSION ?? 'acceptEdits', '--allowedTools', process.env.ORSTRA_CLAUDE_TOOLS ?? 'Bash Read Edit Write Glob Grep']),
+    ...ask,
     ...(opts.resume ? ['--resume', opts.sessionId] : ['--session-id', opts.sessionId]),
   ];
   const model = opts.model || cfg.model;
@@ -79,7 +119,9 @@ export function claudeArgs(opts: Pick<SessionOptions, 'sessionId' | 'resume' | '
 function claudeSession(opts: SessionOptions): LiveSession {
   const args = claudeArgs(opts, loadAgentConfig()['claude-code']);
 
-  const child = spawn(process.env.ORSTRA_CLAUDE_BIN ?? 'claude', args, { cwd: opts.cwd, stdio: ['pipe', 'pipe', 'pipe'] });
+  // A permission question can wait hours for you. These keep Claude Code from giving up on the tool call.
+  const env = { ...process.env, MCP_TOOL_TIMEOUT: process.env.MCP_TOOL_TIMEOUT ?? '86400000', CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT: '0', CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS: '0' };
+  const child = spawn(process.env.ORSTRA_CLAUDE_BIN ?? 'claude', args, { cwd: opts.cwd, stdio: ['pipe', 'pipe', 'pipe'], env });
   let stderr = '';
   let interruptPending = false;
   let lastText = '';
@@ -103,7 +145,7 @@ function claudeSession(opts: SessionOptions): LiveSession {
     } else if (msg.type === 'result') {
       const interrupted = interruptPending || msg.subtype === 'error_during_execution';
       interruptPending = false;
-      opts.onTurn({ text: typeof msg.result === 'string' && msg.result ? msg.result : lastText, interrupted, isError: !!msg.is_error && !interrupted });
+      opts.onTurn({ text: typeof msg.result === 'string' && msg.result ? msg.result : lastText, interrupted, isError: !!msg.is_error && !interrupted, usage: usageOf(msg) });
       lastText = '';
     }
   });

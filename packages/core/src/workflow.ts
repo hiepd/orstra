@@ -59,6 +59,8 @@ export interface Workflow {
   description?: string;
   repo?: string;
   concurrency: number;
+  /** Stop starting agent work on a task once its runs cost this much (US dollars). Unset = no cap. */
+  budgetUsd?: number;
   start: string;
   triggers: unknown[];
   steps: Record<string, Step>;
@@ -97,6 +99,7 @@ const workflowSchema = z.object({
   description: z.string().optional(),
   repo: z.string().optional(),
   concurrency: z.number().int().positive().default(3),
+  budget_usd: z.number().positive().optional(),
   start: z.string().optional(),
   triggers: z.array(z.unknown()).default([]),
   steps: z.record(stepSchema),
@@ -165,6 +168,7 @@ export function parseWorkflow(source: string): Workflow {
     description: raw.description,
     repo: raw.repo,
     concurrency: raw.concurrency,
+    ...(raw.budget_usd !== undefined ? { budgetUsd: raw.budget_usd } : {}),
     start,
     triggers: raw.triggers,
     steps,
