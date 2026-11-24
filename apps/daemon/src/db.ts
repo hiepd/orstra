@@ -164,6 +164,11 @@ export class Store {
     return this.db.prepare('SELECT * FROM tasks WHERE id = ?').get(id) as TaskRow | undefined;
   }
 
+  /** The task a trigger started for this source (e.g. a Linear issue) with this workflow, if any. */
+  taskBySource(source: string, workflowPath: string): TaskRow | undefined {
+    return this.db.prepare('SELECT * FROM tasks WHERE source = ? AND workflow_path = ? LIMIT 1').get(source, workflowPath) as TaskRow | undefined;
+  }
+
   tasks(): TaskRow[] {
     return this.db.prepare('SELECT * FROM tasks ORDER BY created_at DESC').all() as unknown as TaskRow[];
   }

@@ -397,6 +397,7 @@ export class Runner extends EventEmitter {
     if (parsed.outcome === 'needs_you') return this.markWaiting(taskId, runId, 'question');
     this.store.updateRun(runId, { progress: JSON.stringify(parsed.progress) });
     this.event(taskId, runId, 'progress', parsed.progress);
+    this.emit('progress', { taskId, runId, outcome: parsed.outcome });
 
     this.closeAfterGrace(live, () => this.finish(taskId, runId, parsed.outcome));
   }

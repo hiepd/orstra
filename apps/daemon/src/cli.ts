@@ -65,7 +65,11 @@ async function main() {
         // The files you attach live under ~/.orstra/cos/attachments/, so they are inside it.
         toolArgs: cosToolArgs({ mcpConfig, dirs: [HOME, REPO_ROOT] }),
       });
-      startServer(store, runner, PORT, cos);
+      // Triggers: Linear issues with a label, and schedules. Checked every ORSTRA_TRIGGER_INTERVAL_S (60) seconds.
+      const { Triggers, linearClient } = await import('./triggers.ts');
+      const triggers = new Triggers(store, runner, { linear: process.env.LINEAR_API_KEY ? linearClient(process.env.LINEAR_API_KEY) : null });
+      startServer(store, runner, PORT, cos, triggers);
+      triggers.start(Number(process.env.ORSTRA_TRIGGER_INTERVAL_S ?? 60) * 1000);
       cos.start();
       console.log(`Orstra is running at http://localhost:${PORT}  (data: ${DB_PATH})`);
       return;

@@ -7,6 +7,7 @@ import { MAX_FILE_BYTES, checkAttachments, cosFiles, mb, readAttachment, saveAtt
 import type { EventRow, RunRow, Store, TaskRow } from './db.ts';
 import type { Runner } from './runner.ts';
 import type { ChiefOfStaff } from './cos.ts';
+import type { Triggers } from './triggers.ts';
 import { gitDiff, gitInfo } from './git.ts';
 import { listWorkflows, resolveWorkflow } from './workflows.ts';
 export { listWorkflows, resolveWorkflow };
@@ -193,7 +194,7 @@ const path = taskPath(wf, runs.map((r) => r.stepId), t.current_step);
 
 export type Views = ReturnType<typeof makeViews>;
 
-export function buildApi(store: Store, runner: Runner, cos?: ChiefOfStaff) {
+export function buildApi(store: Store, runner: Runner, cos?: ChiefOfStaff, triggers?: Triggers) {
   const { runView, taskSummary, taskDetail, gitView } = makeViews(store, runner);
   const sessions = () => {
     const since = Date.now() - 24 * 3600_000;
@@ -369,6 +370,7 @@ export function buildApi(store: Store, runner: Runner, cos?: ChiefOfStaff) {
       }
       if (req.method === 'GET' && p === '/api/settings') {
         return send(res, 200, { home: HOME, database: DB_PATH, worktrees: WORKTREES, workflowDirs: WORKFLOW_DIRS, port: PORT, slots: SLOTS, agents: agents(), agentConfig: loadAgentConfig(), efforts: EFFORTS,
+          triggers: triggers?.view() ?? [], linear: !!process.env.LINEAR_API_KEY,
           cost: { today: store.costSince(new Date().setHours(0, 0, 0, 0)), week: store.costSince(Date.now() - 7 * 86400_000) }, permissionModes: PERMISSION_MODES, envPermissionMode: process.env.ORSTRA_CLAUDE_PERMISSION ?? null }), true;
       }
       if ((mm = m(/^\/api\/settings\/agents\/([\w-]+)$/)) && req.method === 'PUT') {
@@ -385,8 +387,8 @@ export function buildApi(store: Store, runner: Runner, cos?: ChiefOfStaff) {
   };
 }
 
-export function startServer(store: Store, runner: Runner, port: number, cos?: ChiefOfStaff) {
-  const api = buildApi(store, runner, cos);
+export function startServer(store: Store, runner: Runner, port: number, cos?: ChiefOfStaff, triggers?: Triggers) {
+  const api = buildApi(store, runner, cos, triggers);
   const clients = new Set<ServerResponse>();
   const broadcast = (e: unknown) => {
     const line = `data: ${JSON.stringify(e)}\n\n`;
