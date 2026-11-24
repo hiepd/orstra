@@ -90,7 +90,7 @@ Settings via environment variables: `ORSTRA_HOME` (default `~/.orstra`), `ORSTRA
 
 ## Security
 
-The daemon listens on 127.0.0.1 only. It refuses requests from other web sites (Origin check), from DNS-rebinding pages (Host check), and changes without a JSON content type. The chief of staff runs every tool without a prompt, so do not expose the port to a network.
+The daemon listens on 127.0.0.1 only. It refuses requests from other web sites (Origin check), from DNS-rebinding pages (Host check), and changes without a JSON content type. The assistant runs every tool without a prompt, so do not expose the port to a network.
 
 ## Develop
 

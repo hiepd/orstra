@@ -1,87 +1,112 @@
-/* Orstra: Linear-style design language, ported from the design mocks (lx- classes). */
+/*
+ * Orstra design language: calm, clear, and quiet until it needs you.
+ * Fewer lines and more space. One status, said once. Every text colour passes 4.5:1 on its surface.
+ * The prototype and the token sheet: the "Orstra UI Redesign" canvas.
+ *
+ * Token names are kept from the first design so every component picks the new values up:
+ *   --ink / --muted / --faint   label 1 / 2 / 3 (all text). --dim is for icons and dividers only.
+ *   --bg                        the window ground. --surface: cards and panels that float on it.
+ *   --fill / --fill-2           fields, chips, selected rows, quiet buttons.
+ *   --line                      separators between rows. A border is the last tool, not the first.
+ */
 :root {
-  --ink: #1b1b1f;
-  --ink-2: #3c3c43;
-  --muted: #6f6f78;
-  --faint: #8a8a93;
-  --line: #edeef1;
-  --line-2: #e0e1e6;
-  --frame-line: #e3e4e8;
-  --bg: #f4f5f8;
-  --hover: #f7f8fa;
-  --accent: #5e6ad2;
-  --accent-hover: #5560c6;
-  --accent-soft: #eef0fb;
-  --danger: #d93d42;
+  --font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', system-ui, sans-serif;
+  --mono: ui-monospace, 'SF Mono', Menlo, monospace;
+  --ink: #1d1d1f;
+  --ink-2: #3a3a3f;
+  --muted: #55555b;
+  --faint: #6b6b70;
+  --dim: #a1a1a6;
+  --line: #e6e6eb;
+  --line-2: #dcdce1;
+  --line-3: #efeff2;
+  --frame-line: #e3e3e8;
+  --bg: #f5f5f7;
+  --side: rgba(234, 234, 238, 0.86);
+  --hover: rgba(0, 0, 0, 0.04);
+  --fill: rgba(118, 118, 128, 0.1);
+  --fill-2: rgba(118, 118, 128, 0.16);
+  --accent: #2563eb;
+  --accent-hover: #1d4fd8;
+  --accent-soft: #e9f0fd;
+  --accent-faint: #f4f7fe;
+  --accent-fg: #1d4fc4;
+  --accent-line: #cfddfb;
+  --danger: #c0261a;
   --red: #e5484d;
-  --green: #4cb782;
+  --green: #34c759;
   --yellow: #f2c94c;
-  --orange: #f2994a;
+  --orange: #ff9500;
   --claude: #c15f3c;
-  --solid: #1b1b1f;
+  --solid: #1d1d1f;
   --surface: #fff;
   --surface-rgb: 255, 255, 255;
-  --surface-2: #fcfcfd;
-  --line-3: #f0f1f4;
-  --border-strong: #d5d6dc;
-  --border-stronger: #c4c5cd;
-  --dim: #b4b5bd;
-  --accent-faint: #f7f8fe;
-  --accent-fg: #4b55b8;
-  --accent-line: #d9dcf5;
-  --red-soft: #fcebea;
-  --red-line: #f3c1c2;
-  --red-fg: #c4302b;
-  --green-soft: #eaf6ef;
-  --green-fg: #1a7f4b;
+  --surface-2: #fbfbfd;
+  --border-strong: #d2d2d7;
+  --border-stronger: #c1c1c7;
+  --red-soft: #fdecea;
+  --red-line: #f5c2bd;
+  --red-fg: #c0261a;
+  --green-soft: #e6f6ec;
+  --green-fg: #17803d;
   --yellow-soft: #fff8db;
   --yellow-line: #f1e3a4;
-  --orange-soft: #fdf0e8;
-  --orange-fg: #b4531b;
-  --purple-soft: #f3eefc;
-  --purple-fg: #7444c2;
-  --grey-fg: #5a5a63;
+  --orange-soft: #fff1e0;
+  --orange-fg: #a35200;
+  --purple-soft: #f3edfc;
+  --purple-fg: #6b3fc4;
+  --grey-fg: #55555b;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.05), 0 8px 28px rgba(0, 0, 0, 0.07);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.06), 0 2px 10px rgba(0, 0, 0, 0.04);
+  --shadow-pop: 0 12px 40px rgba(0, 0, 0, 0.18), 0 0 0 1px rgba(0, 0, 0, 0.05);
+  --ring: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent);
   color-scheme: light;
 }
 
 /* Dark theme: applied by data-theme="dark" on <html> (see lib/theme.ts). */
 :root[data-theme='dark'] {
-  --ink: #ececef;
-  --ink-2: #c6c7ce;
-  --muted: #9a9ba5;
-  --faint: #7d7e88;
-  --dim: #686973;
-  --line: #25262b;
-  --line-2: #2e2f35;
-  --line-3: #212227;
-  --frame-line: #2a2b31;
-  --border-strong: #3a3b43;
-  --border-stronger: #4b4c55;
-  --bg: #0e0f12;
-  --surface: #17181c;
-  --surface-rgb: 23, 24, 28;
-  --surface-2: #1a1b20;
-  --hover: #1f2025;
-  --solid: #3d3e4a;
-  --accent: #6773de;
-  --accent-hover: #7480e6;
-  --accent-soft: #23253b;
-  --accent-faint: #1b1c2b;
-  --accent-fg: #a1a9f2;
-  --accent-line: #34375c;
-  --danger: #ee5a5f;
-  --red-soft: #341c1f;
-  --red-line: #5a2a2e;
-  --red-fg: #ff8a8e;
-  --green-soft: #15281f;
-  --green-fg: #5fcf97;
+  --ink: #f5f5f7;
+  --ink-2: #e0e0e5;
+  --muted: #c2c2c8;
+  --faint: #a3a3a9;
+  --dim: #6e6e74;
+  --line: #2c2c30;
+  --line-2: #36363b;
+  --line-3: #262629;
+  --frame-line: #2e2e32;
+  --bg: #161618;
+  --side: rgba(36, 36, 40, 0.84);
+  --hover: rgba(255, 255, 255, 0.05);
+  --fill: rgba(255, 255, 255, 0.08);
+  --fill-2: rgba(255, 255, 255, 0.13);
+  --border-strong: #3f3f45;
+  --border-stronger: #4e4e55;
+  --surface: #1f1f22;
+  --surface-rgb: 31, 31, 34;
+  --surface-2: #232326;
+  --solid: #3a3a3f;
+  --accent: #3b82f6;
+  --accent-hover: #5b96f7;
+  --accent-soft: #1c2a45;
+  --accent-faint: #17202f;
+  --accent-fg: #8eb6ff;
+  --accent-line: #2a3c63;
+  --danger: #ff6961;
+  --red-soft: #3a1d1c;
+  --red-line: #5c2a28;
+  --red-fg: #ff8077;
+  --green-soft: #15291d;
+  --green-fg: #5bd68a;
   --yellow-soft: #2f2711;
   --yellow-line: #54451b;
-  --orange-soft: #32200f;
-  --orange-fg: #f2a266;
-  --purple-soft: #261f3b;
-  --purple-fg: #b499f0;
-  --grey-fg: #a9aab4;
+  --orange-soft: #33220d;
+  --orange-fg: #ffb454;
+  --purple-soft: #2a2140;
+  --purple-fg: #cda8ff;
+  --grey-fg: #c2c2c8;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 10px 30px rgba(0, 0, 0, 0.4);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.05);
+  --shadow-pop: 0 16px 48px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.08);
   color-scheme: dark;
 }
 
@@ -93,13 +118,15 @@ body,
 body {
   margin: 0;
   background: var(--bg);
-  font-family: Inter, system-ui, sans-serif;
+  font-family: var(--font);
   color: var(--ink);
-  font-size: 13px;
+  font-size: 14px;
+  line-height: 1.43;
+  letter-spacing: -0.01em;
   -webkit-font-smoothing: antialiased;
 }
 a {
-  color: var(--accent);
+  color: var(--accent-fg);
   text-decoration: none;
 }
 a:hover {
@@ -117,42 +144,46 @@ a:hover {
 .lx :where(button, input, textarea, select) {
   font: inherit;
   color: inherit;
+  letter-spacing: inherit;
 }
 .lx button:focus-visible,
 .lx input:focus-visible,
 .lx textarea:focus-visible,
 .lx select:focus-visible,
 .lx a:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
+  outline: none;
+  box-shadow: var(--ring);
 }
 .lx button:disabled {
   cursor: default;
 }
 
-/* ---------- Sidebar ---------- */
+/* ---------- Sidebar: translucent, the places on top, Settings and the status card at the bottom ---------- */
 .lx-side {
-  flex: 0 0 220px;
+  flex: 0 0 232px;
   display: flex;
   flex-direction: column;
-  padding: 8px 8px 10px;
+  padding: 14px 10px 12px;
   gap: 2px;
+  background: var(--side);
+  backdrop-filter: blur(30px) saturate(1.6);
+  border-right: 1px solid var(--line);
 }
 .lx-ws {
   display: flex;
   align-items: center;
-  gap: 8px;
-  height: 32px;
-  padding: 0 8px;
-  border-radius: 6px;
+  gap: 10px;
+  height: 34px;
+  padding: 0 10px;
+  margin-bottom: 10px;
   font-weight: 600;
-  font-size: 13px;
+  font-size: 15px;
 }
 .lx-logo {
-  width: 20px;
-  height: 20px;
-  border-radius: 5px;
-  background: var(--solid);
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  background: linear-gradient(160deg, var(--accent), color-mix(in srgb, var(--accent) 60%, black));
   display: flex;
   align-items: center;
   justify-content: center;
@@ -165,12 +196,12 @@ a:hover {
 .lx-sbtn {
   display: flex;
   align-items: center;
-  gap: 8px;
-  height: 28px;
-  padding: 0 8px;
-  border-radius: 6px;
-  font-size: 13px;
-  color: var(--ink-2);
+  gap: 10px;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-size: 14px;
+  color: var(--ink);
   border: 0;
   background: transparent;
   width: 100%;
@@ -179,13 +210,13 @@ a:hover {
   cursor: pointer;
 }
 .lx-sbtn:hover {
-  background: var(--line-2);
+  background: var(--fill);
   text-decoration: none;
 }
 .lx-sbtn.lx-on {
-  background: var(--frame-line);
+  background: var(--fill);
   color: var(--ink);
-  font-weight: 500;
+  font-weight: 600;
 }
 .lx-sbtn svg {
   color: var(--muted);
@@ -193,8 +224,16 @@ a:hover {
 }
 .lx-sbtn .lx-n {
   margin-left: auto;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: var(--accent);
+  color: #fff;
   font-size: 12px;
-  color: var(--muted);
+  font-weight: 600;
+  display: grid;
+  place-items: center;
 }
 .lx-sbtn.lx-soon {
   color: var(--dim);
@@ -206,56 +245,131 @@ a:hover {
 .lx-sbtn.lx-soon svg {
   color: var(--dim);
 }
-.lx-sbtn.lx-soon .lx-n {
-  font-size: 11px;
-  color: var(--dim);
-}
 .lx-group {
-  margin: 14px 8px 4px;
+  margin: 20px 10px 6px;
   font-size: 12px;
-  font-weight: 500;
-  color: var(--muted);
+  font-weight: 600;
+  color: var(--faint);
 }
-.lx-runner {
+.lx-live {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 13px;
+  text-decoration: none;
+}
+.lx-live:hover {
+  background: var(--fill);
+  text-decoration: none;
+}
+.lx-live span:last-child {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lx-pulse {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+.lx-foot {
   margin-top: auto;
-  padding: 8px;
+  padding-top: 12px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 10px;
+}
+.lx-status {
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+  border-radius: 12px;
+  background: var(--fill);
+}
+.lx-status-h {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 2px 6px 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.lx-status-h > span:nth-child(2) {
+  flex: 1;
+  min-width: 0;
+}
+.lx-status-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.lx-theme {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  border: 0;
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  color: var(--muted);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+.lx-stat {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 26px;
+  padding: 0 6px;
+  border-radius: 7px;
   font-size: 12px;
   color: var(--muted);
+  text-decoration: none;
 }
-.lx-slots {
-  display: flex;
-  gap: 2px;
+.lx-stat:hover {
+  background: var(--fill);
+  text-decoration: none;
 }
-.lx-slots i {
+.lx-stat i {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+.lx-stat span {
   flex: 1;
-  height: 4px;
-  border-radius: 2px;
-  display: block;
-  background: var(--line);
+}
+.lx-stat b {
+  color: var(--ink);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 
-/* ---------- Frame + top bar ---------- */
+/* ---------- Frame + top bar: the window ground, one unified toolbar ---------- */
 .lx-frame {
   flex: 1;
   min-width: 0;
-  margin: 8px 8px 8px 0;
-  background: var(--surface);
-  border: 1px solid var(--frame-line);
-  border-radius: 10px;
+  background: var(--bg);
   display: flex;
   flex-direction: column;
   overflow: hidden;
   position: relative;
 }
 .lx-bar {
-  height: 44px;
+  height: 52px;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 0 14px 0 18px;
+  gap: 10px;
+  padding: 0 16px 0 24px;
   border-bottom: 1px solid var(--line);
   flex: none;
 }
@@ -269,27 +383,27 @@ a:hover {
 }
 .lx-crumb b {
   color: var(--ink);
-  font-weight: 500;
+  font-weight: 600;
 }
 .lx-crumb a {
   color: var(--muted);
 }
 .lx-muted {
-  font-size: 12.5px;
+  font-size: 13px;
   color: var(--muted);
 }
 .lx-acts {
   margin-left: auto;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   position: relative;
 }
 .lx-ib {
-  width: 28px;
-  height: 28px;
+  width: 30px;
+  height: 30px;
   border: 0;
-  border-radius: 6px;
+  border-radius: 8px;
   background: transparent;
   display: flex;
   align-items: center;
@@ -299,58 +413,58 @@ a:hover {
   flex: none;
 }
 .lx-ib:hover {
-  background: var(--line-3);
+  background: var(--fill);
   color: var(--ink);
 }
 
-/* ---------- Buttons ---------- */
+/* ---------- Buttons: filled, no outline. Primary, quiet, destructive ---------- */
 .lx-btn {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 28px;
-  padding: 0 10px;
-  border: 1px solid var(--line-2);
-  border-radius: 6px;
-  background: var(--surface);
-  font-size: 12.5px;
+  height: 32px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--fill);
+  font-size: 13px;
   font-weight: 500;
   cursor: pointer;
   white-space: nowrap;
-  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.03);
   color: var(--ink);
   text-decoration: none;
+  transition: background 120ms ease-out;
 }
 .lx-btn:hover {
-  background: var(--hover);
+  background: var(--fill-2);
   text-decoration: none;
 }
 .lx-btn.lx-pri {
   background: var(--accent);
-  border-color: var(--accent);
   color: #fff;
+  font-weight: 600;
 }
 .lx-btn.lx-pri:hover {
   background: var(--accent-hover);
 }
 .lx-btn.lx-dan {
+  background: transparent;
   color: var(--danger);
 }
 .lx-btn.lx-dan:hover {
-  border-color: var(--red-line);
   background: var(--red-soft);
 }
 .lx-btn.lx-danfill {
   background: var(--danger);
-  border-color: var(--danger);
   color: #fff;
+  font-weight: 600;
 }
 .lx-btn.lx-danfill:hover {
   background: var(--red-fg);
 }
 .lx-btn:disabled,
 .lx-btn[aria-disabled='true'] {
-  opacity: 0.5;
+  opacity: 0.45;
   cursor: not-allowed;
 }
 .lx-cc {
@@ -390,7 +504,7 @@ a:hover {
 .lx-av.lx-av-lg {
   width: 20px;
   height: 20px;
-  font-size: 10px;
+  font-size:12px;
 }
 .lx-spin {
   width: 12px;
@@ -408,7 +522,7 @@ a:hover {
   }
 }
 .lx-mono {
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-family: var(--mono);
   font-size: 12px;
 }
 .lx-hint {
@@ -423,7 +537,7 @@ a:hover {
   flex: none;
 }
 .lx-pill {
-  font-size: 11.5px;
+  font-size:12px;
   font-weight: 500;
   border-radius: 4px;
   padding: 1px 6px;
@@ -445,7 +559,7 @@ a:hover {
 }
 .lx-tag {
   display: inline-block;
-  font-size: 11px;
+  font-size:12px;
   font-weight: 500;
   color: var(--accent);
   background: var(--accent-soft);
@@ -454,7 +568,7 @@ a:hover {
   margin-left: 6px;
 }
 .lx-out {
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-family: var(--mono);
   font-size: 12px;
   line-height: 1.6;
   background: var(--hover);
@@ -597,7 +711,7 @@ a:hover {
   white-space: nowrap;
 }
 .lx-kind {
-  font-size: 11px;
+  font-size:12px;
   color: var(--faint);
   white-space: nowrap;
 }
@@ -647,7 +761,7 @@ a:hover {
   white-space: nowrap;
 }
 .lx-sys code {
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-family: var(--mono);
   font-size: 12px;
   color: var(--ink-2);
   background: var(--bg);
@@ -667,7 +781,7 @@ a:hover {
   min-width: 0;
 }
 .lx-tool code {
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-family: var(--mono);
   font-size: 12px;
   color: var(--ink-2);
   white-space: nowrap;
@@ -690,7 +804,7 @@ a:hover {
   color: var(--ink-2);
 }
 .lx-outline {
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-family: var(--mono);
   font-size: 12px;
   color: var(--ink-2);
   white-space: pre-wrap;
@@ -1139,7 +1253,7 @@ a:hover {
   color: var(--line-2);
   border-radius: 6px;
   padding: 9px 10px;
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-family: var(--mono);
   font-size: 12.5px;
 }
 .lx-cmd code {
@@ -1154,7 +1268,7 @@ a:hover {
   color: #fff;
   border-radius: 4px;
   padding: 2px 8px;
-  font-size: 11.5px;
+  font-size:12px;
   cursor: pointer;
   flex: none;
 }
@@ -1244,7 +1358,7 @@ a:hover {
   text-align: left;
 }
 .lx-id {
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-family: var(--mono);
   font-size: 12px;
   color: var(--muted);
   width: 80px;
@@ -1538,7 +1652,7 @@ a:hover {
   gap: 6px;
 }
 .lx-stop span {
-  font-size: 10px;
+  font-size:12px;
   color: var(--danger);
 }
 .lx-stop:hover {
@@ -1567,7 +1681,7 @@ a:hover {
   border: 1px solid var(--line);
 }
 .lx-memeta {
-  font-size: 11.5px;
+  font-size:12px;
   color: var(--faint);
   display: flex;
   gap: 6px;
@@ -1612,14 +1726,14 @@ a:hover {
 .ox-col{max-width:760px;margin:0 auto;display:flex;flex-direction:column;gap:24px}
 .ox-gh{margin:0 0 8px;padding:0 2px;font-size:12px;font-weight:500;color:var(--muted);display:flex;align-items:center;gap:8px}
 .ox-gh .ox-gn{color:var(--dim);font-weight:400}
-.ox-card{background:var(--surface);border:1px solid var(--frame-line);border-radius:8px;overflow:hidden}
+.ox-card{background:var(--surface);border:0;border-radius:14px;box-shadow:var(--shadow-card);overflow:hidden}
 .ox-irow{display:flex;align-items:flex-start;gap:12px;width:100%;padding:12px 14px;border:0;border-top:1px solid var(--line);background:transparent;text-align:left;cursor:pointer}
 .ox-irow:first-child{border-top:0}
 .ox-irow:hover{background:var(--hover)}
 .ox-iic{width:26px;height:26px;border-radius:6px;display:flex;align-items:center;justify-content:center;flex:none;margin-top:1px}
 .ox-imain{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
 .ox-iline{display:flex;align-items:center;gap:8px;min-width:0}
-.ox-id{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--muted);flex:none}
+.ox-id{font-family:var(--mono);font-size:12px;color:var(--muted);flex:none}
 .ox-iname{font-size:13.5px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ox-iwhat{font-size:13px;color:var(--ink-2);line-height:1.5}
 .ox-imeta{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--faint)}
@@ -1630,7 +1744,7 @@ a:hover {
 .ox-fbar{display:flex;align-items:center;gap:6px;padding:8px 18px;border-bottom:1px solid var(--line);flex:none}
 .ox-fchip{height:26px;padding:0 10px;border:1px solid var(--line-2);border-radius:999px;background:var(--surface);font-size:12.5px;font-weight:500;color:var(--ink-2);cursor:pointer;display:inline-flex;align-items:center;gap:6px}
 .lx .ox-fchip[aria-pressed="true"]{background:var(--solid);border-color:var(--solid);color:#FFFFFF}
-.ox-fn{font-size:11.5px;opacity:.65}
+.ox-fn{font-size:12px;opacity:.65}
 .ox-board{flex:1;overflow:auto;display:flex;gap:10px;padding:14px 14px 20px;background:var(--surface-2)}
 .ox-bcol{flex:1 1 0;min-width:148px;display:flex;flex-direction:column;gap:8px}
 .ox-bch{display:flex;align-items:center;gap:6px;height:26px;padding:0 2px;font-size:12.5px;font-weight:500;color:var(--ink-2);white-space:nowrap}
@@ -1665,12 +1779,12 @@ a:hover {
 .ox-tstep.ox-done::before,.ox-tstep.ox-cur::before{background:var(--accent)}
 .ox-tdot{width:20px;height:20px;border-radius:50%;border:2px solid var(--border-strong);background:var(--surface);position:relative;z-index:1;display:flex;align-items:center;justify-content:center;color:#FFFFFF}
 .ox-done .ox-tdot{background:var(--accent);border-color:var(--accent)}
-.ox-tname{font-size:11.5px;color:var(--faint);text-align:center;line-height:1.3;padding:0 3px}
+.ox-tname{font-size:12px;color:var(--faint);text-align:center;line-height:1.3;padding:0 3px}
 .ox-done .ox-tname{color:var(--ink-2)}
 .ox-cur .ox-tname{color:var(--ink);font-weight:600}
 .ox-now{margin:0;font-size:13.5px;line-height:1.6;color:var(--ink)}
 .ox-next{display:flex;gap:8px;font-size:13px;line-height:1.55;color:var(--ink-2)}
-.ox-k{flex:none;font-size:11.5px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;padding-top:2px;width:44px}
+.ox-k{flex:none;font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;padding-top:2px;width:44px}
 .ox-brow{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .ox-desc{margin:0;font-size:13.5px;line-height:1.65;color:var(--ink-2)}
 .ox-runh{display:grid;grid-template-columns:18px minmax(0,1fr) 116px 50px minmax(0,210px) 14px;align-items:center;gap:10px;width:100%;min-height:40px;padding:0 14px;border:0;border-top:1px solid var(--line);background:transparent;text-align:left;cursor:pointer;font-size:13px}
@@ -1679,9 +1793,9 @@ a:hover {
 .ox-rname{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ox-rwho{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--muted);white-space:nowrap}
 .ox-rdur{font-size:12px;color:var(--faint);text-align:right;white-space:nowrap}
-.ox-oc{justify-self:start;max-width:100%;overflow:hidden;text-overflow:ellipsis;font-size:11.5px;font-weight:500;padding:2px 8px;border-radius:4px;white-space:nowrap}
+.ox-oc{justify-self:start;max-width:100%;overflow:hidden;text-overflow:ellipsis;font-size:12px;font-weight:500;padding:2px 8px;border-radius:4px;white-space:nowrap}
 .ox-runb{padding:4px 14px 14px 42px;display:flex;flex-direction:column;gap:8px}
-.ox-pre{margin:0;font-family:'JetBrains Mono',monospace;font-size:12px;line-height:1.6;background:var(--hover);border:1px solid var(--line);border-radius:6px;padding:8px 10px;white-space:pre-wrap;color:var(--ink-2)}
+.ox-pre{margin:0;font-family:var(--mono);font-size:12px;line-height:1.6;background:var(--hover);border:1px solid var(--line);border-radius:6px;padding:8px 10px;white-space:pre-wrap;color:var(--ink-2)}
 .ox-urow{display:flex;align-items:flex-start;gap:10px;padding:10px 14px;border-top:1px solid var(--line);font-size:13px}
 .ox-urow:first-child{border-top:0}
 .ox-ukind{font-size:12px;color:var(--faint);white-space:nowrap}
@@ -1690,7 +1804,7 @@ a:hover {
 .ox-prop{display:grid;grid-template-columns:92px minmax(0,1fr);align-items:center;min-height:32px;font-size:13px}
 .ox-pk{color:var(--muted)}
 .ox-pv{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.ox-pvm{font-family:'JetBrains Mono',monospace;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ox-pvm{font-family:var(--mono);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ox-chatv{flex:1;display:flex;min-height:0}
 .ox-sess{flex:0 0 212px;border-right:1px solid var(--line);padding:12px 8px;overflow:auto;display:flex;flex-direction:column;gap:2px;background:var(--surface-2)}
 .ox-sessh{display:flex;align-items:center;font-size:12px;font-weight:500;color:var(--muted);padding:2px 2px 6px 8px}
@@ -1715,16 +1829,16 @@ a:hover {
 .ox-fold{display:flex;align-items:center;gap:6px;border:0;border-bottom:1px solid var(--line);background:transparent;padding:0 0 8px;font-size:13px;color:var(--muted);cursor:pointer;width:100%;text-align:left}
 .ox-fsum{margin-left:auto;font-size:12px;color:var(--dim);white-space:nowrap}
 .ox-wrow{display:flex;align-items:center;gap:8px;padding:5px 2px;font-size:13px;color:var(--muted)}
-.ox-wt{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ox-wt{font-family:var(--mono);font-size:12px;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ox-shine{background:linear-gradient(90deg,var(--muted) 0,var(--muted) 40%,var(--border-strong) 50%,var(--muted) 60%,var(--muted) 100%);background-size:9rem 100%;-webkit-background-clip:text;background-clip:text;color:transparent;animation:ox-shine 1.8s linear infinite}
 .ox-fcard{border:1px solid var(--frame-line);border-radius:10px;overflow:hidden}
 .ox-fch{display:flex;align-items:center;padding:8px 12px;font-size:12.5px;font-weight:500;background:var(--hover);border-bottom:1px solid var(--line)}
 .ox-frow{display:flex;align-items:center;gap:8px;width:100%;padding:7px 12px;border:0;border-top:1px solid var(--line-3);background:transparent;text-align:left;cursor:pointer;font-size:12px}
 .ox-frow:first-child{border-top:0}
 .ox-frow:hover{background:var(--hover)}
-.ox-fpath{font-family:'JetBrains Mono',monospace;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;direction:rtl;text-align:left}
-.ox-add{font-family:'JetBrains Mono',monospace;color:var(--green-fg);flex:none}
-.ox-del{font-family:'JetBrains Mono',monospace;color:var(--red-fg);flex:none}
+.ox-fpath{font-family:var(--mono);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;direction:rtl;text-align:left}
+.ox-add{font-family:var(--mono);color:var(--green-fg);flex:none}
+.ox-del{font-family:var(--mono);color:var(--red-fg);flex:none}
 .ox-compwrap{position:absolute;left:0;right:0;bottom:0;padding:0 20px 16px;pointer-events:none}
 .ox-composer{max-width:44rem;margin:0 auto;pointer-events:auto;border:1px solid var(--line-2);border-radius:16px;background:rgba(var(--surface-rgb), .86);backdrop-filter:blur(10px);box-shadow:0 8px 28px rgba(0,0,0,.08)}
 .ox-composer:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px rgba(94,106,210,.15),0 8px 28px rgba(0,0,0,.08)}
@@ -1739,19 +1853,19 @@ a:hover {
 .ox-gitc{padding:12px 14px 10px;display:flex;flex-direction:column;gap:2px;border-bottom:1px solid var(--line)}
 .ox-grow{display:grid;grid-template-columns:70px minmax(0,1fr) auto;align-items:center;gap:8px;min-height:28px;font-size:12.5px}
 .ox-gk{color:var(--muted)}
-.ox-gv{font-family:'JetBrains Mono',monospace;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ox-gv{font-family:var(--mono);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ox-gvp{font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.ox-gbtn{height:22px;padding:0 7px;border:1px solid var(--line-2);border-radius:5px;background:var(--surface);font-size:11.5px;font-weight:500;color:var(--ink-2);cursor:pointer;white-space:nowrap}
+.ox-gbtn{height:22px;padding:0 7px;border:1px solid var(--line-2);border-radius:5px;background:var(--surface);font-size:12px;font-weight:500;color:var(--ink-2);cursor:pointer;white-space:nowrap}
 .ox-gbtn:hover{background:var(--line-3)}
 .ox-gtabs{display:flex;gap:4px;padding:8px 10px;border-bottom:1px solid var(--line)}
 .ox-gbody{flex:1;overflow:auto;min-height:0}
 .ox-crow{display:flex;align-items:center;gap:8px;width:100%;padding:8px 14px;border:0;border-bottom:1px solid var(--line-3);background:transparent;text-align:left;cursor:pointer;font-size:12px}
 .ox-crow:hover{background:var(--line-3)}
 .ox-chk{display:flex;align-items:flex-start;gap:9px;padding:10px 14px;border-bottom:1px solid var(--line-3);font-size:12.5px}
-.ox-chkn{font-family:'JetBrains Mono',monospace;font-size:12px}
+.ox-chkn{font-family:var(--mono);font-size:12px}
 .ox-cmt{display:grid;grid-template-columns:58px minmax(0,1fr) auto;gap:8px;align-items:center;padding:8px 14px;border-bottom:1px solid var(--line-3);font-size:12.5px}
 .ox-dhead{display:flex;align-items:center;gap:6px;padding:6px 8px 6px 6px;border-bottom:1px solid var(--line);font-size:12px}
-.ox-diff{font-family:'JetBrains Mono',monospace;font-size:11.5px;line-height:1.7;padding:6px 0;overflow-x:auto}
+.ox-diff{font-family:var(--mono);font-size:12px;line-height:1.7;padding:6px 0;overflow-x:auto}
 .ox-dl{display:flex;white-space:pre;min-width:max-content}
 .ox-dn{flex:0 0 34px;text-align:right;padding-right:8px;color:var(--dim);user-select:none}
 .ox-dt{padding-right:12px}
@@ -1777,7 +1891,7 @@ a:hover {
 .ox-snav-set{padding-top:0}
 .ox-snq{position:sticky;top:0;z-index:1;background:var(--surface);padding:12px 2px 6px}
 .ox-snq .lx-input{height:28px;font-size:12.5px}
-.ox-sncat{padding:12px 10px 4px;font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--faint)}
+.ox-sncat{padding:12px 10px 4px;font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--faint)}
 .ox-snav>.ox-sncat:first-of-type{padding-top:2px}
 .ox-snitem{display:flex;align-items:center}
 /* Settings group: the heading, then cards. The gaps live here so no group sets its own. */
@@ -1811,7 +1925,7 @@ a:hover {
 .ox-rtext{font-size:13px;line-height:1.55;color:var(--ink-2)}
 .ox-runb .lx-dl{font-size:13px}
 .ox-runh svg{flex:none}
-.ox-fs{width:16px;height:16px;border-radius:4px;font-size:10px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;flex:none;background:var(--orange-soft);color:var(--orange-fg)}
+.ox-fs{width:16px;height:16px;border-radius:4px;font-size:12px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;flex:none;background:var(--orange-soft);color:var(--orange-fg)}
 .ox-fs-A{background:var(--green-soft);color:var(--green-fg)}
 .ox-fs-D{background:var(--red-soft);color:var(--red-fg)}
 .ox-unc{width:6px;height:6px;border-radius:50%;background:#E08A3C;flex:none}
@@ -1819,7 +1933,7 @@ a:hover {
 .ox-send{background:var(--accent)}
 .ox-send:disabled{background:var(--border-strong);cursor:default}
 .ox-send.ox-stopbtn{background:var(--red)}
-.ox-tag{display:block;font-size:11.5px;font-weight:500;color:var(--faint);margin-bottom:3px}
+.ox-tag{display:block;font-size:12px;font-weight:500;color:var(--faint);margin-bottom:3px}
 /* Files on a draft, and files on a message you sent. */
 .ox-chips{display:flex;flex-wrap:wrap;gap:6px;padding:12px 14px 0}
 .ox-chip{display:inline-flex;align-items:center;gap:7px;max-width:260px;height:34px;padding:0 4px 0 0;border:1px solid var(--line-2);border-radius:8px;background:var(--surface);font-size:12px;color:var(--ink-2);text-decoration:none;overflow:hidden}
@@ -1846,15 +1960,15 @@ a:hover {
 .ox-pcard .lx-dl{font-size:13px}
 .ox-diff .ox-dl:hover{filter:brightness(.98)}
 .ox-wfitem{display:flex;flex-direction:column;align-items:flex-start;justify-content:center;height:auto;padding:7px 10px;gap:1px}
-.ox-wffile{font-family:'JetBrains Mono',monospace;font-size:11.5px;color:var(--faint)}
+.ox-wffile{font-family:var(--mono);font-size:12px;color:var(--faint)}
 .ox-wfsteps{display:flex;flex-direction:column;gap:10px;margin-top:22px}
 .ox-wfstep{border:1px solid var(--frame-line);border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;background:var(--surface)}
 .ox-wfh{display:flex;align-items:center;gap:8px;font-size:13.5px;min-width:0}
 .ox-wfwhat{margin-left:auto;font-size:12.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;max-width:50%}
-.ox-wfprompt{font-family:'JetBrains Mono',monospace;font-size:12px;line-height:1.6;color:var(--ink-2);background:var(--hover);border:1px solid var(--line);border-radius:6px;padding:8px 10px;white-space:pre-wrap;max-height:96px;overflow:auto}
+.ox-wfprompt{font-family:var(--mono);font-size:12px;line-height:1.6;color:var(--ink-2);background:var(--hover);border:1px solid var(--line);border-radius:6px;padding:8px 10px;white-space:pre-wrap;max-height:96px;overflow:auto}
 .ox-wfon{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12.5px;color:var(--ink-2)}
 .ox-arrow{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
-.ox-arrowk{font-size:11.5px;font-weight:500;padding:1px 7px;border-radius:4px;background:var(--accent-soft);color:var(--accent-fg)}
+.ox-arrowk{font-size:12px;font-weight:500;padding:1px 7px;border-radius:4px;background:var(--accent-soft);color:var(--accent-fg)}
 .ox-arrow-inbox{color:var(--faint)}
 .ox-arrow-inbox .ox-arrowk{background:var(--purple-soft);color:var(--purple-fg)}
 .ox-yaml{margin-top:22px;max-height:none}
@@ -1874,10 +1988,10 @@ a:hover {
 .wf-node{width:210px;height:78px;box-sizing:border-box;padding:9px 12px 10px;background:var(--surface);border:1px solid var(--line-2);border-left:3px solid var(--accent);border-radius:8px;box-shadow:0 1px 2px rgba(20,20,30,.05);display:flex;flex-direction:column;gap:3px;cursor:pointer}
 .wf-node:hover{border-color:var(--border-strong)}
 .wf-head{display:flex;align-items:center;gap:6px}
-.wf-kind{font-size:10.5px;font-weight:600;padding:1px 6px;border-radius:4px}
-.wf-start{font-size:10.5px;color:var(--faint)}
+.wf-kind{font-size:12px;font-weight:600;padding:1px 6px;border-radius:4px}
+.wf-start{font-size:12px;color:var(--faint)}
 .wf-title{font-weight:500;font-size:13px;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.wf-sub{font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wf-sub{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .wf-end{width:64px;height:34px;box-sizing:border-box;display:flex;align-items:center;justify-content:center;border-radius:999px;background:var(--surface);border:1px solid var(--line-2);color:var(--muted);font-size:12px}
 .wf-node .react-flow__handle,.wf-end .react-flow__handle{width:6px;height:6px;background:var(--border-stronger);border:0}
 .wf-detail{margin:0;padding:10px;background:var(--hover);border:1px solid var(--line);border-radius:6px;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;word-break:break-word;max-height:240px;overflow:auto}
@@ -1902,19 +2016,19 @@ a:hover {
 .wf-field{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted)}
 .wf-field input,.wf-field textarea,.wf-field select,.wf-arow input,.wf-arow select{width:100%;border:1px solid var(--line-2);border-radius:6px;padding:6px 8px;background:var(--surface);color:var(--ink);font-size:13px}
 .wf-field textarea{resize:vertical;line-height:1.45}
-.wf-sec{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--faint);margin-top:6px}
+.wf-sec{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--faint);margin-top:6px}
 .wf-arrow{display:flex;flex-direction:column;gap:5px;padding:8px;border:1px solid var(--line);border-radius:8px}
 .wf-arrow-sel{border-color:var(--accent);background:var(--accent-soft)}
 .wf-arow{display:flex;align-items:center;gap:6px}
 .wf-arow .wf-max{width:76px;flex:none}
-.wf-warn{font-size:11.5px;color:#b4531b}
+.wf-warn{font-size:12px;color:#b4531b}
 .wf-hr{border:0;border-top:1px solid var(--line);width:100%;margin:4px 0}
 .wf-del{color:var(--danger)}
 .wf-node.wf-selected{box-shadow:0 0 0 2px var(--accent)}
 .wf-node{cursor:grab}
 .wf-node:active{cursor:grabbing}
 /* Arrow labels sit on the arrow; the pill hides the line behind the text. */
-.wf-elabel{position:absolute;pointer-events:none;font-size:11px;line-height:1.2;padding:2px 6px;border-radius:4px;background:var(--surface-2);color:var(--muted);white-space:nowrap}
+.wf-elabel{position:absolute;pointer-events:none;font-size:12px;line-height:1.2;padding:2px 6px;border-radius:4px;background:var(--surface-2);color:var(--muted);white-space:nowrap}
 .wf-elabel-sel{color:var(--accent-fg)}
 /* ---- Chief of staff (cs- classes, from the design mock) ---- */
 .cs-body{flex:1;display:flex;min-height:0}
@@ -1937,7 +2051,7 @@ a:hover {
 .cs-pstate{margin-left:auto;font-size:12px;font-weight:500}
 .cs-pstep{display:flex;gap:10px;padding:9px 12px;font-size:13.5px;line-height:1.5;border-top:1px solid var(--line-3)}
 .cs-cardh + .cs-pstep{border-top:0}
-.cs-pn{width:20px;height:20px;border-radius:50%;flex:none;display:inline-flex;align-items:center;justify-content:center;font-size:11.5px;font-weight:600;margin-top:1px;background:var(--line-3);color:var(--grey-fg)}
+.cs-pn{width:20px;height:20px;border-radius:50%;flex:none;display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;margin-top:1px;background:var(--line-3);color:var(--grey-fg)}
 .cs-pfoot{display:flex;align-items:center;gap:8px;padding:10px 12px;border-top:1px solid var(--line);background:var(--surface-2)}
 .cs-pfoot .ox-muted{flex:1}
 .cs-did{display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border:1px solid var(--frame-line);border-radius:10px;background:var(--surface-2)}
@@ -2011,15 +2125,60 @@ a:hover {
 .ox-md hr{border:0;border-top:1px solid var(--line)}
 .ox-md strong{font-weight:600}
 .ox-md img{max-width:100%}
-.ox-md :not(pre)>code{font-family:'JetBrains Mono',ui-monospace,monospace;font-size:.86em;background:var(--hover);border:1px solid var(--line);border-radius:4px;padding:1px 4px}
+.ox-md :not(pre)>code{font-family:var(--mono);font-size:.86em;background:var(--hover);border:1px solid var(--line);border-radius:4px;padding:1px 4px}
 /* A fenced block: the language on top, the code scrolling sideways under it. */
 .ox-mdcode{border:1px solid var(--line);border-radius:6px;background:var(--hover);overflow:hidden}
-.ox-mdlang{display:block;padding:4px 10px;border-bottom:1px solid var(--line);font-family:'JetBrains Mono',ui-monospace,monospace;font-size:11px;color:var(--faint)}
+.ox-mdlang{display:block;padding:4px 10px;border-bottom:1px solid var(--line);font-family:var(--mono);font-size:12px;color:var(--faint)}
 .ox-mdcode pre{margin:0;padding:8px 10px;overflow-x:auto;white-space:pre}
-.ox-mdcode code{font-family:'JetBrains Mono',ui-monospace,monospace;font-size:12px;line-height:1.6;color:var(--ink-2)}
+.ox-mdcode code{font-family:var(--mono);font-size:12px;line-height:1.6;color:var(--ink-2)}
 /* A wide table scrolls inside the message, so it never stretches the page. */
 .ox-mdtable{max-width:100%;overflow-x:auto;border:1px solid var(--line);border-radius:6px}
 .ox-mdtable table{border-collapse:collapse;width:max-content;min-width:100%;font-size:13px}
 .ox-md :is(th,td){border-left:1px solid var(--line);border-top:1px solid var(--line);padding:5px 9px;text-align:left;vertical-align:top}
 .ox-md tr>:first-child{border-left:0}
 .ox-md thead :is(th,td){border-top:0;font-weight:600;background:var(--hover)}
+
+/* ---- Inbox view of Tasks: the list on the left, the selected task on the right ---- */
+.ox-isplit{flex:1;min-height:0;display:flex}
+.ox-ilist{flex:none;width:400px;overflow:auto;padding:28px 16px 24px 22px;border-right:1px solid var(--line);display:flex;flex-direction:column;gap:22px}
+.ox-ilist .ox-h1{font-size:28px;line-height:34px;font-weight:700;letter-spacing:-0.02em;margin:0}
+.ox-ipane{flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden}
+.ox-irow[aria-current='true']{background:var(--accent-soft)}
+.ox-irow[aria-current='true']:hover{background:var(--accent-soft)}
+.ox-segn{margin-left:6px;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--accent);color:#fff;font-size:12px;font-weight:600;display:inline-grid;place-items:center}
+
+/* ---- Task page: attempts, what changed under a decision, the budget bar ---- */
+.ox-agh{display:flex;align-items:center;gap:8px;width:100%;padding:10px 14px;border:0;border-top:1px solid var(--line);background:transparent;text-align:left;font-size:12px;color:var(--muted);cursor:pointer}
+.ox-agh:first-child{border-top:0}
+.ox-agh:hover{background:var(--hover)}
+.ox-agh b{font-weight:600}
+.ox-dfiles{margin-top:10px;display:flex;flex-direction:column;padding:6px 14px;border-radius:12px;background:var(--surface);box-shadow:var(--shadow-card)}
+.ox-dfiles a{display:flex;align-items:center;gap:10px;padding:7px 0;font-size:13px;color:var(--ink);text-decoration:none;border-top:1px solid var(--line)}
+.ox-dfiles a:first-child{border-top:0}
+.ox-dfiles a:hover .lx-mono{text-decoration:underline}
+.ox-fs{flex:none;width:12px;font-weight:600;font-size:12px;color:var(--orange-fg)}
+.ox-fs-A{color:var(--green-fg)}
+.ox-fs-D{color:var(--red-fg)}
+.ox-plus{margin-left:auto;color:var(--green-fg);font-size:12px}
+.ox-minus{color:var(--red-fg);font-size:12px}
+.ox-tests{padding:8px 0 4px;font-size:13px;border-top:1px solid var(--line)}
+.ox-tests-ok{color:var(--green-fg)}
+.ox-tests-bad{color:var(--red-fg)}
+.ox-budget{display:flex;align-items:center;gap:8px}
+.ox-bar{flex:1;min-width:40px;height:5px;border-radius:3px;background:var(--fill);overflow:hidden;display:block}
+.ox-bar i{display:block;height:100%;border-radius:3px;background:var(--accent)}
+
+/* ---- Chat: the transcript never collapses. It keeps 380 px at least; the worktree panel gives way first ---- */
+.ox-chat{min-width:380px;background:var(--bg)}
+.ox-sess{background:transparent}
+.ox-git{flex-shrink:1;min-width:260px;background:transparent}
+.ox-pcard{border:0;background:var(--surface);box-shadow:var(--shadow-card);border-radius:12px}
+.ox-ended{border:0;background:var(--fill)}
+@media (max-width: 1180px){.ox-sess{flex-basis:188px}.ox-git{flex-basis:280px}}
+@media (max-width: 1000px){.ox-git{display:none}}
+@media (max-width: 860px){.ox-sess{display:none}}
+
+/* ---- Focus: a field inside a box that shows its own focus ring gets no second ring ---- */
+.lx .ox-composer :is(textarea, input):focus-visible,
+.lx .lx-box :is(textarea, input):focus-visible{box-shadow:none;outline:none}
+.ox-composer:focus-within{border-color:var(--accent);box-shadow:var(--ring),var(--shadow)}

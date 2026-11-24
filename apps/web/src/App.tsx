@@ -8,7 +8,6 @@ import { useLiveConnected, useLiveResource } from './lib/live';
 import { href, useRoute } from './lib/router';
 import { STATE, taskState } from './lib/taskState';
 import { CosPage } from './pages/Cos';
-import { InboxPage } from './pages/Inbox';
 import { SettingsPage } from './pages/Settings';
 import { TaskPage } from './pages/TaskPage';
 import { TasksPage } from './pages/Tasks';
@@ -38,6 +37,9 @@ function Shell() {
 
   const count = (group: string) => tasks.data?.filter((t) => STATE[taskState(t)].group === group).length ?? 0;
   const inboxCount = count('needs');
+  const running = tasks.data?.filter((t) => taskState(t) === 'running') ?? [];
+  // Cost changes when a run ends a turn; a slow refresh is enough for the sidebar.
+  const settings = useLiveResource('nav:settings', api.settings, undefined, 5000);
   const openNew = () => setNewTask(true);
 
   useEffect(() => {
@@ -46,11 +48,10 @@ function Shell() {
 
   return (
     <div className="lx">
-      <Sidebar route={route} inboxCount={inboxCount} runningCount={count('running')} queuedCount={count('queued')} connected={connected} />
+      <Sidebar route={route} needsCount={inboxCount} running={running} queuedCount={count('queued')} costToday={settings.data?.cost?.today ?? null} connected={connected} />
       <div className="lx-frame">
         {route.name === 'cos' && <CosPage />}
-        {route.name === 'inbox' && <InboxPage />}
-        {route.name === 'tasks' && <TasksPage onNewTask={openNew} />}
+        {route.name === 'tasks' && <TasksPage onNewTask={openNew} inbox={!!route.inbox} sel={route.sel} selView={route.selView} />}
         {route.name === 'task' && <TaskPage key={route.id} id={route.id} view={route.view} runId={route.runId} />}
         {route.name === 'workflows' && <WorkflowsPage file={route.file} />}
         {route.name === 'settings' && <SettingsPage group={route.group} />}

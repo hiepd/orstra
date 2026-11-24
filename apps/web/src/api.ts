@@ -137,6 +137,8 @@ export interface TaskDetail extends TaskSummary {
   awaiting?: Awaiting | null;
   workingRunId?: string | null;
   events: TaskEvent[];
+  /** The workflow's budget_usd: agent work stops when the task's cost reaches it. */
+  budgetUsd?: number | null;
   /** A cleanup removed the worktree; the path stays for the record. */
   worktreeGone?: boolean;
   /** Set when `events` holds only the events after this id. */

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { Fragment, useCallback, useMemo, useState } from 'react';
 import { api, errorMessage, taskLoader, type GitView, type RunView, type TaskDetail } from '../api';
 import { ClaudeCodeModal } from '../components/ClaudeCodeModal';
 import { AwaitingCard, DecisionCard, PermissionCard, RetryModal, StopModal, StuckBanner } from '../components/Decision';
@@ -17,7 +17,7 @@ import { defaultSession, runName, TaskChat } from './TaskChat';
 
 type ModalState = { kind: 'retry'; stepId?: string } | { kind: 'stop' } | { kind: 'cc'; run: RunView } | { kind: 'note'; stepId: string; title: string } | { kind: 'cleanup' } | null;
 
-export function TaskPage({ id, view, runId }: { id: string; view: TaskViewName; runId?: string }) {
+export function TaskPage({ id, view, runId, embedded }: { id: string; view: TaskViewName; runId?: string; embedded?: boolean }) {
   // Each refetch asks only for the events the page has not seen yet.
   const load = useMemo(() => taskLoader(id), [id]);
   const res = useLiveResource(`task:${id}`, load, (taskId) => taskId === id);
@@ -48,11 +48,11 @@ export function TaskPage({ id, view, runId }: { id: string; view: TaskViewName; 
       </>
     );
   }
-  return <TaskView task={task} view={view} runId={runId} />;
+  return <TaskView task={task} view={view} runId={runId} embedded={embedded} />;
 }
 
 /** One task, two views: Overview (where it is and what happened) and Chat (the agent sessions and the worktree). */
-function TaskView({ task, view, runId }: { task: TaskDetail; view: TaskViewName; runId?: string }) {
+function TaskView({ task, view, runId, embedded }: { task: TaskDetail; view: TaskViewName; runId?: string; embedded?: boolean }) {
   const toast = useToast();
   useNow(15_000);
   const git = useGit(task.id);
@@ -71,6 +71,45 @@ function TaskView({ task, view, runId }: { task: TaskDetail; view: TaskViewName;
       toast('Couldn’t copy to the clipboard', { error: true });
     }
   };
+
+  if (embedded) {
+    // In the Inbox pane: the task's name and state, the Overview / Chat switch, and a way to open it in full.
+    return (
+      <>
+        <div className="lx-bar">
+          <span className="ox-id">{taskLabel(task)}</span>
+          <b className="ox-trunc" style={{ fontWeight: 600 }}>
+            {task.title}
+          </b>
+          <span className="ox-pill" style={{ background: STATE[state].bg, color: STATE[state].fg }}>
+            <span className={`ox-sd${state === 'running' ? ' ox-live' : ''}`} style={{ background: STATE[state].fg }} />
+            {STATE[state].label}
+          </span>
+          <div className="lx-acts">
+            <div className="ox-seg" role="group" aria-label="Task view">
+              <a href={href.inboxTask(task.id)} aria-current={view === 'overview' ? 'page' : undefined}>
+                Overview
+              </a>
+              <a href={href.inboxTask(task.id, 'chat')} aria-current={view === 'chat' ? 'page' : undefined}>
+                Chat
+              </a>
+            </div>
+            <a className="lx-btn" href={view === 'chat' ? href.chat(task.id) : href.task(task.id)}>
+              Open task
+            </a>
+          </div>
+        </div>
+        {view === 'overview' ? (
+          <Overview task={task} git={git} onModal={setModal} embedded />
+        ) : (
+          <TaskChat task={task} runId={runId} git={git} openPath={openPath} onOpenPath={setOpenPath} embedded />
+        )}
+        {modal?.kind === 'retry' && <RetryModal task={task} stepId={modal.stepId} onClose={() => setModal(null)} />}
+        {modal?.kind === 'stop' && <StopModal task={task} onClose={() => setModal(null)} />}
+        {modal?.kind === 'note' && <NoteModal task={task} stepId={modal.stepId} title={modal.title} onClose={() => setModal(null)} />}
+      </>
+    );
+  }
 
   return (
     <>
@@ -171,18 +210,35 @@ function outcomeBadge(task: TaskDetail, r: RunView): { text: string; tone: keyof
   return { text, tone: r.kind === 'switch' ? 'plain' : 'ok' };
 }
 
-function Overview({ task, git, onModal }: { task: TaskDetail; git: Resource<GitView>; onModal: (m: ModalState) => void }) {
+function Overview({ task, git, onModal, embedded }: { task: TaskDetail; git: Resource<GitView>; onModal: (m: ModalState) => void; embedded?: boolean }) {
   const state = taskState(task);
   const { now, next } = describeTask(task);
   const cur = currentRun(task);
   const active = task.status === 'running' || task.status === 'needs_you';
   const lastIdx = task.runs.length - 1;
+  // Group the runs into attempts: each run of the first step starts a new one. Older attempts fold
+  // into one line, so the latest attempt is what you read first.
+  const firstStep = task.steps[0]?.id;
+  const groupsRaw: { n: number; runs: { r: RunView; i: number }[] }[] = [];
+  task.runs.forEach((r, i) => {
+    if (!groupsRaw.length || r.stepId === firstStep) groupsRaw.push({ n: r.stepId === firstStep ? r.attempt : 1, runs: [] });
+    groupsRaw[groupsRaw.length - 1].runs.push({ r, i });
+  });
+  const [openGroups, setOpenGroups] = useState<Record<number, boolean>>({});
+  const groups = groupsRaw.map((g, gi) => {
+    const last = gi === groupsRaw.length - 1;
+    const groupOpen = groupsRaw.length === 1 || (openGroups[gi] ?? last);
+    const cost = g.runs.reduce((x, { r }) => x + (r.costUsd ?? 0), 0);
+    const summary = g.runs.map(({ r }) => `${r.stepTitle} ${humanize(r.outcome ?? r.status).toLowerCase()}`).join(', ') + (cost ? ` · ${money(cost)}` : '');
+    return { key: gi, label: `Attempt ${g.n}`, multi: groupsRaw.length > 1, open: groupOpen, summary, runs: g.runs, toggle: () => setOpenGroups((m) => ({ ...m, [gi]: !groupOpen })) };
+  });
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const isOpen = (r: RunView, i: number) => open[r.id] ?? i === lastIdx;
 
   // Steps that haven't run yet in this pass, plus the current one while it is still queued: these can take a note.
   const upcoming = task.track.filter((s) => s.state === 'todo' || (s.state === 'current' && cur?.status === 'queued'));
   const agentRun = [...task.runs].reverse().find((r) => r.kind === 'agent');
+  const lastGate = [...task.runs].reverse().find((r) => r.kind === 'gate' && r.status !== 'running' && r.status !== 'queued');
   const g = git.data;
 
   /** What a non-agent run did, in a sentence, from the task's events. */
@@ -191,7 +247,7 @@ function Overview({ task, git, onModal }: { task: TaskDetail; git: Resource<GitV
     if (r.status === 'waiting' && r.kind === 'agent') return 'The session is open and waiting for you.';
     if (r.kind === 'human') {
       const d = task.events.find((e) => e.runId === r.id && e.kind === 'you' && e.mode === 'decision');
-      if (d && d.kind === 'you') return `${d.via === 'cos' ? 'Your chief of staff chose (with your OK)' : 'You chose'} “${humanize(d.choice ?? r.outcome ?? '').toLowerCase()}”.` + (d.text ? ` Comment: “${d.text}”` : '');
+      if (d && d.kind === 'you') return `${d.via === 'cos' ? 'Your assistant chose (with your OK)' : 'You chose'} “${humanize(d.choice ?? r.outcome ?? '').toLowerCase()}”.` + (d.text ? ` Comment: “${d.text}”` : '');
       return r.status === 'waiting' ? 'Waiting for your decision.' : null;
     }
     if (r.kind === 'switch' || r.kind === 'action') {
@@ -241,9 +297,26 @@ function Overview({ task, git, onModal }: { task: TaskDetail; git: Resource<GitV
             <div>
               <DecisionCard task={task} />
               {g && g.files.length > 0 && (
-                <a className="ox-link" style={{ display: 'inline-block', marginTop: 8 }} href={href.chat(task.id)}>
-                  See what it changed ({g.files.length} {g.files.length === 1 ? 'file' : 'files'}) in Chat →
-                </a>
+                <div className="ox-dfiles">
+                  {g.files.slice(0, 5).map((f) => (
+                    <a key={f.path} href={href.chat(task.id)} title="See the diff in Chat">
+                      <span className={`ox-fs ox-fs-${f.status}`}>{f.status}</span>
+                      <span className="ox-trunc lx-mono">{f.path}</span>
+                      <span className="ox-plus">+{f.add}</span>
+                      <span className="ox-minus">−{f.del}</span>
+                    </a>
+                  ))}
+                  {g.files.length > 5 && (
+                    <a href={href.chat(task.id)} className="ox-link">
+                      and {g.files.length - 5} more in Chat →
+                    </a>
+                  )}
+                  {lastGate && (
+                    <span className={lastGate.outcome === 'pass' ? 'ox-tests ox-tests-ok' : 'ox-tests ox-tests-bad'}>
+                      {lastGate.outcome === 'pass' ? '✓ Tests pass' : '✕ Tests failed'} · {task.runs.length} runs · {money(task.cost.usd)}
+                    </span>
+                  )}
+                </div>
               )}
             </div>
           )}
@@ -280,12 +353,21 @@ function Overview({ task, git, onModal }: { task: TaskDetail; git: Resource<GitV
             </h2>
             {task.runs.length > 0 ? (
               <div className="ox-card">
-                {task.runs.map((r, i) => {
+                {groups.map((gr) => (
+                  <Fragment key={gr.key}>
+                    {gr.multi && (
+                      <button className="ox-agh" aria-expanded={gr.open} onClick={gr.toggle}>
+                        <ChevronRight open={gr.open} size={11} />
+                        <b>{gr.label}</b>
+                        {!gr.open && <span>· {gr.summary}</span>}
+                      </button>
+                    )}
+                    {gr.open && gr.runs.map(({ r, i }) => {
                   const badge = outcomeBadge(task, r);
                   const text = runText(r);
                   const o = isOpen(r, i);
                   const byCos = task.events.some((e) => e.runId === r.id && e.kind === 'you' && e.mode === 'decision' && e.via === 'cos');
-                  const who = r.kind === 'agent' || r.kind === 'gate' ? agentOf(r).name : r.kind === 'human' ? (byCos ? 'Chief of staff' : 'You') : 'Orstra';
+                  const who = r.kind === 'agent' || r.kind === 'gate' ? agentOf(r).name : r.kind === 'human' ? (byCos ? 'Assistant' : 'You') : 'Orstra';
                   return (
                     <div key={r.id} className="ox-run">
                       <button className="ox-runh" aria-expanded={o} onClick={() => setOpen((m) => ({ ...m, [r.id]: !o }))}>
@@ -327,6 +409,8 @@ function Overview({ task, git, onModal }: { task: TaskDetail; git: Resource<GitV
                     </div>
                   );
                 })}
+                  </Fragment>
+                ))}
               </div>
             ) : (
               <div className="ox-calm">No runs yet. The first step starts when a slot is free.</div>
@@ -374,8 +458,8 @@ function Overview({ task, git, onModal }: { task: TaskDetail; git: Resource<GitV
         </div>
       </div>
 
+      {!embedded && (
       <aside className="ox-props" aria-label="Task details">
-        <Prop k="Status" v={STATE[state].label} />
         <Prop k="Step" v={stepLabel({ ...task, run: cur ? { status: cur.status, attempt: cur.attempt, kind: cur.kind } : null })} />
         <div className="ox-prop">
           <span className="ox-pk">Workflow</span>
@@ -403,6 +487,17 @@ function Overview({ task, git, onModal }: { task: TaskDetail; git: Resource<GitV
           v={task.cost.usd || task.cost.tokensIn ? `${money(task.cost.usd)} · ${tokens(task.cost.tokensIn + task.cost.tokensOut)} tokens` : 'Nothing yet'}
           title="Claude Code's own estimate. Codex reports tokens only."
         />
+        {task.budgetUsd ? (
+          <div className="ox-prop">
+            <span className="ox-pk">Budget</span>
+            <span className="ox-pv ox-budget" title={`budget_usd in ${task.workflowFile}`}>
+              <span className="ox-bar">
+                <i style={{ width: `${Math.max(2, Math.min(100, (task.cost.usd / task.budgetUsd) * 100))}%` }} />
+              </span>
+              {money(task.cost.usd)} of {money(task.budgetUsd)}
+            </span>
+          </div>
+        ) : null}
         <Prop k="Started" v={ago(task.createdAt)} title={new Date(task.createdAt).toLocaleString()} />
         <Prop k="Updated" v={ago(task.updatedAt)} title={new Date(task.updatedAt).toLocaleString()} />
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 14 }}>
@@ -439,6 +534,7 @@ function Overview({ task, git, onModal }: { task: TaskDetail; git: Resource<GitV
           </div>
         )}
       </aside>
+      )}
     </div>
   );
 }

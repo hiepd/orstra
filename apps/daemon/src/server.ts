@@ -174,6 +174,7 @@ const path = taskPath(wf, runs.map((r) => r.stepId), t.current_step);
     return {
       ...taskSummary(t), description: t.description, worktree: t.worktree, steps, track, notes, runs, human, awaiting, workingRunId: working?.id ?? null,
       worktreeGone: !!t.worktree && !existsSync(t.worktree),
+      budgetUsd: (() => { try { return runner.workflowFor(t).budgetUsd ?? null; } catch { return null; } })(),
       events, eventsAfter: opts.after ?? null, workflowChanged: runner.workflowChanged(t), permission: permissionView(t.id),
       lastSystem: (() => { const e = store.lastTaskEvent(t.id, 'system'); return e ? (JSON.parse(e.payload).text as string) : null; })(),
     };
@@ -330,7 +331,7 @@ export function buildApi(store: Store, runner: Runner, cos?: ChiefOfStaff, trigg
         return send(res, w ? 200 : 404, w ?? { error: 'No such workflow' }), true;
       }
       if (p.startsWith('/api/cos')) {
-        if (!cos) return send(res, 404, { error: 'The chief of staff isn’t running.' }), true;
+        if (!cos) return send(res, 404, { error: 'The assistant isn’t running.' }), true;
         if (req.method === 'GET' && p === '/api/cos') return send(res, 200, cos.view()), true;
         if (req.method === 'POST' && p === '/api/cos/messages') {
           const b = await readJson(req);

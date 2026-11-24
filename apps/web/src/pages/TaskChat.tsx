@@ -30,7 +30,7 @@ export function defaultSession(task: TaskDetail): RunView | undefined {
  * The agent view of a task: its sessions on the left (you can collapse them), the chat with the
  * selected one in the middle, and the worktree (branch, PR, changes, checks, commits) on the right.
  */
-export function TaskChat({ task, runId, git, openPath, onOpenPath }: { task: TaskDetail; runId?: string; git: Resource<GitView>; openPath: string | null; onOpenPath: (p: string | null) => void }) {
+export function TaskChat({ task, runId, git, openPath, onOpenPath, embedded }: { task: TaskDetail; runId?: string; git: Resource<GitView>; openPath: string | null; onOpenPath: (p: string | null) => void; embedded?: boolean }) {
   const sessions = sessionsOf(task);
   const run = sessions.find((r) => r.id === runId) ?? defaultSession(task);
   const [reopened, setReopened] = useState<Record<string, boolean>>({});
@@ -52,7 +52,7 @@ export function TaskChat({ task, runId, git, openPath, onOpenPath }: { task: Tas
 
   return (
     <div className="ox-chatv">
-      {sessionsOpen && (
+      {sessionsOpen && !embedded && (
         <nav className="ox-sess" aria-label="Sessions">
           <div className="ox-sessh">
             Sessions
@@ -142,7 +142,7 @@ export function TaskChat({ task, runId, git, openPath, onOpenPath }: { task: Tas
         )}
       </section>
 
-      <GitPanel task={task} git={git} openPath={openPath} onOpenPath={onOpenPath} />
+      {!embedded && <GitPanel task={task} git={git} openPath={openPath} onOpenPath={onOpenPath} />}
     </div>
   );
 }
