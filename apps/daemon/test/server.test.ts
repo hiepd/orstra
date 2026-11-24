@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
@@ -154,5 +155,35 @@ describe('cleanup', () => {
     r.cleanup(id, { force: true });
     expect(seen).toEqual([true]);
     expect(existsSync(own)).toBe(false);
+  });
+});
+
+describe('worktree files the agent wrote elsewhere', () => {
+  it('serves a file from a repository the task\'s agent edited in, and nothing else there', async () => {
+    const other = mkdtempSync(join(tmpdir(), 'orstra-elsewhere-'));
+    execFileSync('git', ['init', '-q'], { cwd: other });
+    writeFileSync(join(other, 'design.md'), '# Design\n');
+    expect((await fetch(`${base}/api/tasks/${taskId}/file?path=design.md`)).status).toBe(404);
+    store.addEvent(taskId, null, 'tool', { name: 'Write', summary: join(other, 'design.md') });
+    const r = await fetch(`${base}/api/tasks/${taskId}/file?path=design.md`);
+    expect(r.status).toBe(200);
+    expect(await r.text()).toBe('# Design\n');
+    expect((await fetch(`${base}/api/tasks/${taskId}/file?path=${encodeURIComponent('/etc/hosts')}`)).status).toBe(404);
+  });
+});
+
+describe('the repository the agent used last wins', () => {
+  it('reads a path from the newest repository when 2 have it', async () => {
+    const mk = (text: string) => {
+      const d = mkdtempSync(join(tmpdir(), 'orstra-repo-'));
+      execFileSync('git', ['init', '-q'], { cwd: d });
+      writeFileSync(join(d, 'same.md'), text);
+      return d;
+    };
+    const older = mk('old\n');
+    const newer = mk('new\n');
+    store.addEvent(taskId, null, 'tool', { name: 'Read', summary: join(older, 'same.md') });
+    store.addEvent(taskId, null, 'tool', { name: 'Edit', summary: join(newer, 'same.md') });
+    expect(await (await fetch(`${base}/api/tasks/${taskId}/file?path=same.md`)).text()).toBe('new\n');
   });
 });
