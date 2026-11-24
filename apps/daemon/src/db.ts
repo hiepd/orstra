@@ -68,6 +68,12 @@ export interface RunRow {
   agent_pid: number | null;
   agent_boot_id: string | null;
   agent_started_at: string | null;
+  /**
+   * The worktree's commit when this run started, and when it ended. A run Orstra lost track of
+   * still leaves a readable range, so you can see what its agent had already committed.
+   */
+  head_before: string | null;
+  head_after: string | null;
 }
 
 export interface EventRow {
@@ -154,7 +160,8 @@ export class Store {
     const want: Record<string, Record<string, string>> = {
       tasks: { stopped_at: 'INTEGER', workflow_yaml: 'TEXT', pr_url: 'TEXT', source: 'TEXT', archived_at: 'INTEGER' },
       runs: { last_turn_at: 'INTEGER', wait_reason: 'TEXT', routed: 'TEXT', cost_usd: 'REAL', tokens_in: 'INTEGER', tokens_out: 'INTEGER',
-        agent_pid: 'INTEGER', agent_boot_id: 'TEXT', agent_started_at: 'TEXT' },
+        agent_pid: 'INTEGER', agent_boot_id: 'TEXT', agent_started_at: 'TEXT',
+        head_before: 'TEXT', head_after: 'TEXT' },
     };
     const added: string[] = [];
     for (const [table, columns] of Object.entries(want)) {

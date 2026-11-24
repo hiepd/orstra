@@ -9,6 +9,7 @@ import { locateWorkflow } from './workflows.ts';
 import { projectTask, rebuildAll } from './project.ts';
 import { runAction } from './actions.ts';
 import { cleanupWorktree } from './cleanup.ts';
+import { gitCommitsBetween, gitHead } from './git.ts';
 import { isSameProcess, realProcessEnv, stampOf, stopProcess, type ProcessEnv, type ProcessStamp, type StopResult } from './process.ts';
 
 export interface StartTaskInput {
@@ -209,10 +210,18 @@ export class Runner extends EventEmitter {
       if (r.kind === 'agent' && r.session_id) {
         const stray = this.strayProcess(r);
         if (stray) void this.sweep(r, stray);
-        this.store.updateRun(r.id, { status: 'waiting', wait_reason: 'paused', agent_pid: null, agent_boot_id: null, agent_started_at: null });
+        const task = this.store.task(r.task_id);
+        const head = task?.worktree ? gitHead(task.worktree) : null;
+        this.store.updateRun(r.id, {
+          status: 'waiting', wait_reason: 'paused', agent_pid: null, agent_boot_id: null, agent_started_at: null,
+          head_after: head,
+        });
+        // What the lost turn had already committed. Without this the restart says nothing about it.
+        const gained = task?.worktree ? gitCommitsBetween(task.worktree, r.head_before, head) : null;
+        const left = gained ? ` It left ${gained} commit${gained === 1 ? '' : 's'} on the branch.` : '';
         const text = stray
-          ? `Orstra restarted mid-run. ${agentName(r)} was still working, so Orstra stopped it (pid ${stray.pid}). Message the session to pick it back up, or retry the step.`
-          : `Orstra restarted mid-run. Message ${agentName(r)} to pick the session back up, or retry the step.`;
+          ? `Orstra restarted mid-run. ${agentName(r)} was still working, so Orstra stopped it (pid ${stray.pid}).${left} Message the session to pick it back up, or retry the step.`
+          : `Orstra restarted mid-run.${left} Message ${agentName(r)} to pick the session back up, or retry the step.`;
         this.store.addEvent(r.task_id, r.id, 'system', { text });
       } else {
         this.store.updateRun(r.id, { status: 'failed', outcome: 'interrupted', ended_at: Date.now(), routed: 'block:interrupted' });
@@ -274,7 +283,7 @@ export class Runner extends EventEmitter {
       id: id('r'), task_id: task.id, step_id: stepId, kind: step.use, attempt, status: 'queued', outcome: null,
       agent: step.use === 'agent' ? step.agent ?? 'claude-code' : null, session_id: null, progress: null, output: null,
       created_at: Date.now(), started_at: null, ended_at: null, last_turn_at: null, wait_reason: null, routed: null,
-      cost_usd: null, tokens_in: null, tokens_out: null, agent_pid: null, agent_boot_id: null, agent_started_at: null,
+      cost_usd: null, tokens_in: null, tokens_out: null, agent_pid: null, agent_boot_id: null, agent_started_at: null, head_before: null, head_after: null,
     };
     this.store.insertRun(run);
     this.project(task.id);
@@ -699,7 +708,7 @@ export class Runner extends EventEmitter {
     if (step.use === 'agent') {
       if (this.overBudget(task.id)) return this.finish(task.id, run.id, 'over_budget');
       const sessionId = randomUUID();
-      this.store.updateRun(run.id, { session_id: sessionId });
+      this.store.updateRun(run.id, { session_id: sessionId, head_before: task.worktree ? gitHead(task.worktree) : null });
       const live = this.openSession(task, { ...run, session_id: sessionId }, { sessionId, resume: false, routes: true, model: step.model });
       this.arm(task.id, run.id, step);
       live.session.send(this.buildPrompt(task, wf, step, run));
@@ -839,7 +848,7 @@ export class Runner extends EventEmitter {
     const run: RunRow = {
       id: id('r'), task_id: task.id, step_id: target.step_id, kind: target.kind, attempt, status: 'running', outcome: null,
       agent: target.agent, session_id: target.session_id, progress: null, output: null, created_at: now, started_at: now, ended_at: null,
-      last_turn_at: null, wait_reason: null, routed: null, cost_usd: null, tokens_in: null, tokens_out: null, agent_pid: null, agent_boot_id: null, agent_started_at: null,
+      last_turn_at: null, wait_reason: null, routed: null, cost_usd: null, tokens_in: null, tokens_out: null, agent_pid: null, agent_boot_id: null, agent_started_at: null, head_before: null, head_after: null,
     };
     this.store.insertRun(run);
     return run;

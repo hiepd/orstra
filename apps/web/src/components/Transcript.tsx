@@ -10,6 +10,24 @@ import { findRefs, type Ref } from '../lib/refs';
 import { ProgressList } from './ProgressList';
 
 type ToolEvent = Extract<TaskEvent, { kind: 'tool' }>;
+type ToolResultEvent = Extract<TaskEvent, { kind: 'tool_result' }>;
+/** How a tool call ended, by its call id. A call with no entry here has not come back yet. */
+export type ToolResults = Map<string, ToolResultEvent>;
+
+/** Pair each tool call with its result. */
+export function toolResults(events: TaskEvent[]): ToolResults {
+  const by: ToolResults = new Map();
+  for (const e of events) if (e.kind === 'tool_result') by.set(e.callId, e);
+  return by;
+}
+
+/** Did this call finish, and did it work? `running` while its result is still out. */
+export function toolState(t: ToolEvent, results: ToolResults): 'running' | 'ok' | 'failed' {
+  // A call Orstra recorded before it tracked ids never gets a result, so it reads as finished.
+  if (!t.callId) return 'ok';
+  const r = results.get(t.callId);
+  return r === undefined ? 'running' : r.ok ? 'ok' : 'failed';
+}
 
 const READ = /^(read|glob|grep|ls|notebookread|webfetch|websearch|toolsearch)/i;
 const EDIT = /^(edit|write|multiedit|notebookedit)/i;
@@ -22,15 +40,28 @@ const kindOf = (name: string) => (READ.test(name) ? 'read' : EDIT.test(name) ? '
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
 /** "Read 2 files, ran 1 command and changed 2 files" */
-function summarize(tools: ToolEvent[]): string {
+function summarize(tools: ToolEvent[], results: ToolResults): string {
   const count = { read: 0, edit: 0, cmd: 0 };
   tools.forEach((t) => count[kindOf(t.name)]++);
   const parts = [count.read && `read ${plural(count.read, 'file', 'files')}`, count.cmd && `ran ${plural(count.cmd, 'command', 'commands')}`, count.edit && `changed ${plural(count.edit, 'file', 'files')}`].filter(Boolean) as string[];
   const s = parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts[0] ?? '';
-  return s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
+  const text = s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
+  const failed = tools.filter((t) => toolState(t, results) === 'failed').length;
+  return failed ? `${text}${text ? ' · ' : ''}${failed} failed` : text;
 }
 
-function WorkFold({ tools, from, to, live }: { tools: ToolEvent[]; from: number; to: number; live: boolean }) {
+/** A tick for a call that worked, a cross for one that failed, nothing while it still runs. */
+function ToolMark({ state }: { state: 'running' | 'ok' | 'failed' }) {
+  if (state === 'running') return <span className="ox-wt" aria-label="still running">…</span>;
+  const failed = state === 'failed';
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={failed ? 'var(--red-fg, #DC2626)' : 'currentColor'} strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" style={{ flex: 'none', opacity: failed ? 1 : 0.5 }} aria-label={failed ? 'failed' : 'done'}>
+      <path d={failed ? 'M18 6 6 18M6 6l12 12' : 'M20 6 9 17l-5-5'} />
+    </svg>
+  );
+}
+
+function WorkFold({ tools, results, from, to, live }: { tools: ToolEvent[]; results: ToolResults; from: number; to: number; live: boolean }) {
   const [open, setOpen] = useState(false);
   useNow(live ? 1000 : 3_600_000);
   const last = tools[tools.length - 1];
@@ -40,19 +71,24 @@ function WorkFold({ tools, from, to, live }: { tools: ToolEvent[]; from: number;
         {live && <span className="ox-sd ox-live" style={{ background: 'var(--accent)', width: 6, height: 6 }} />}
         <span>{live ? `Working for ${duration(from, Date.now())}` : `Worked for ${duration(from, to)}`}</span>
         <ChevronRight open={open} size={11} />
-        <span className="ox-fsum">{summarize(tools)}</span>
+        <span className="ox-fsum">{summarize(tools, results)}</span>
       </button>
       {open && (
         <div style={{ paddingTop: 6 }}>
-          {tools.map((t) => (
-            <div key={String(t.id)} className="ox-wrow" title={`${t.name} ${t.summary}`}>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flex: 'none' }} aria-hidden="true">
-                <path d={ICON[kindOf(t.name)]} />
-              </svg>
-              <span>{t.name}</span>
-              <span className="ox-wt">{t.summary}</span>
-            </div>
-          ))}
+          {tools.map((t) => {
+            const state = toolState(t, results);
+            const r = t.callId ? results.get(t.callId) : undefined;
+            return (
+              <div key={String(t.id)} className="ox-wrow" title={`${t.name} ${t.summary}${r?.summary ? `\n${r.summary}` : ''}`}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flex: 'none' }} aria-hidden="true">
+                  <path d={ICON[kindOf(t.name)]} />
+                </svg>
+                <span>{t.name}</span>
+                <span className="ox-wt">{t.summary}</span>
+                <ToolMark state={state} />
+              </div>
+            );
+          })}
         </div>
       )}
       {live && (
@@ -92,12 +128,14 @@ export function Transcript({
   worktree?: string | null;
 }) {
   const mine = events.filter((e) => e.runId === run.id && !(hideAsides && (e.kind === 'aside' || (e.kind === 'you' && e.mode === 'ask'))));
+  // How each tool call ended. A call with no entry is still running.
+  const results = useMemo(() => toolResults(mine), [mine]);
   const onLink = useMemo(() => (onOpenRef ? (href: string) => onOpenRef(findRefs(href)[0] ?? { kind: 'link', target: href, label: href }) : undefined), [onOpenRef]);
   const items: { key: string; node: ReactNode }[] = [];
   let tools: ToolEvent[] = [];
   let since = run.startedAt ?? run.createdAt;
   const flush = (until: number, live: boolean) => {
-    if (tools.length || live) items.push({ key: `w${tools[0]?.id ?? 'live'}`, node: <WorkFold tools={tools} from={since} to={until} live={live} /> });
+    if (tools.length || live) items.push({ key: `w${tools[0]?.id ?? 'live'}`, node: <WorkFold tools={tools} results={results} from={since} to={until} live={live} /> });
     tools = [];
     since = until;
   };
@@ -107,7 +145,7 @@ export function Transcript({
       tools.push(e);
       continue;
     }
-    if (e.kind === 'output') continue;
+    if (e.kind === 'output' || e.kind === 'tool_result') continue;
     flush(e.ts, false);
     const key = String(e.id);
     if (e.kind === 'message')

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { execFileSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -40,8 +41,15 @@ function idleExecutors(pid?: number) {
  * A daemon that started an agent and then died, and the daemon that comes up next over the same
  * database. `before` is the machine the first one ran on, `after` the machine the second sees.
  */
-async function restart(opts: { before: ProcessEnv; after: ProcessEnv }) {
+async function restart(opts: { before: ProcessEnv; after: ProcessEnv; git?: boolean }) {
   const dir = mkdtempSync(join(tmpdir(), 'orstra-rec-'));
+  if (opts.git) {
+    const run = (...a: string[]) => execFileSync('git', ['-C', dir, ...a], { stdio: 'ignore' });
+    run('init', '-q');
+    writeFileSync(join(dir, 'a.txt'), 'one');
+    run('add', '-A');
+    run('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'first');
+  }
   const wf = join(dir, 'wf.yaml');
   writeFileSync(wf, WF);
   const store = new Store(':memory:');
@@ -159,5 +167,47 @@ describe('a message to a session a stray process still holds', () => {
     await t.runner.message(t.taskId, 'carry on', 'chat');
     expect(t.opened.length).toBe(1);
     expect(t.opened[0]).toMatchObject({ sessionId, resume: true });
+  });
+});
+
+describe('the commit range a run leaves', () => {
+  it('records the worktree\u2019s commit when the run starts, and when a restart finds it open', async () => {
+    const t = await restart({ ...sameBox, git: true });
+    const before = t.store.run(t.runId)!.head_before;
+    expect(before).toMatch(/^[0-9a-f]{40}$/);
+    expect(t.store.run(t.runId)!.head_after).toBeNull();
+
+    t.runner.recover();
+    const run = t.store.run(t.runId)!;
+    // Nothing was committed while the agent worked, so the range is empty, and it is readable.
+    expect(run.head_after).toBe(before);
+  });
+
+  it('records nothing for a worktree that is not a repository', async () => {
+    const t = await restart(sameBox);
+    expect(t.store.run(t.runId)!.head_before).toBeNull();
+    t.runner.recover();
+    expect(t.store.run(t.runId)!.head_after).toBeNull();
+  });
+});
+
+describe('what the restart says about the lost turn', () => {
+  it('names the commits the agent had already made', async () => {
+    const t = await restart({ ...sameBox, git: true });
+    // The agent committed while it worked, then the daemon died.
+    const dir = t.store.task(t.taskId)!.worktree!;
+    const git = (...a: string[]) => execFileSync('git', ['-C', dir, ...a], { stdio: 'ignore' });
+    writeFileSync(join(dir, 'b.txt'), 'two');
+    git('add', '-A');
+    git('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'the work');
+
+    t.runner.recover();
+    expect(systemText(t.store, t.taskId)).toContain('It left 1 commit on the branch');
+  });
+
+  it('says nothing about commits when the agent made none', async () => {
+    const t = await restart({ ...sameBox, git: true });
+    t.runner.recover();
+    expect(systemText(t.store, t.taskId)).not.toContain('on the branch');
   });
 });

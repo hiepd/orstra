@@ -44,6 +44,23 @@ function git(dir: string, args: string[]): string | null {
 const lines = (s: string | null) => (s ? s.split('\n').filter(Boolean) : []);
 
 /**
+ * The commit a worktree is on, or null when it has none and when the folder is not a repository.
+ * A run records this when it starts and again when it ends, so the work of a run that Orstra lost
+ * track of is still a commit range you can read.
+ */
+export function gitHead(dir: string): string | null {
+  if (!existsSync(dir)) return null;
+  return git(dir, ['rev-parse', '--verify', '-q', 'HEAD']);
+}
+
+/** How many commits the worktree gained between 2 commits. null when there is nothing to say. */
+export function gitCommitsBetween(dir: string, from: string | null, to: string | null): number | null {
+  if (!from || !to || from === to || !existsSync(dir)) return null;
+  const n = Number(git(dir, ['rev-list', '--count', `${from}..${to}`]));
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
+/**
  * What the task's work is compared with. A git worktree off a repository compares with the commit it
  * branched from (the merge-base with the main checkout). A scratch folder compares with nothing.
  */

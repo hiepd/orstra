@@ -116,7 +116,9 @@ export type TaskEvent = EventBase &
   (
     | { kind: 'system'; text: string }
     | { kind: 'message'; text: string }
-    | { kind: 'tool'; name: string; summary: string }
+    | { kind: 'tool'; name: string; summary: string; callId?: string }
+    /** How a tool call ended. `callId` matches the `tool` event's, so the chat pairs them. */
+    | { kind: 'tool_result'; callId: string; ok: boolean; summary: string }
     | { kind: 'output'; text: string }
     | ({ kind: 'progress' } & Progress)
     // 'steer' is a legacy mode from older events; treat it like 'chat'.

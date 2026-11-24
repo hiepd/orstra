@@ -30,6 +30,13 @@ export interface CodexHandlers {
   onFailed: (message: string) => void;
 }
 
+/** Item types whose `item.started` reports a tool call, so their `item.completed` reports its end. */
+const PAIRED = new Set(['command_execution', 'mcp_tool_call']);
+/** Codex items carry an id, so a call and its end can be paired. */
+const idOf = (it: any) => (typeof it.id === 'string' ? { callId: it.id } : {});
+/** Did the call work? Codex reports an exit code for a command, and a status for the rest. */
+const succeeded = (it: any) => (typeof it.exit_code === 'number' ? it.exit_code === 0 : it.status !== 'failed');
+
 /** Read one line of `codex exec --json` output. */
 export function readCodexLine(line: string, h: CodexHandlers) {
   let msg: any;
@@ -45,14 +52,17 @@ export function readCodexLine(line: string, h: CodexHandlers) {
         h.onMessage(it.text.trim());
         h.onEvent({ kind: 'message', text: it.text.trim() });
       } else if (it.type === 'command_execution' && msg.type === 'item.started') {
-        h.onEvent({ kind: 'tool', name: 'Shell', summary: String(it.command ?? '').slice(0, 140) });
+        h.onEvent({ kind: 'tool', ...idOf(it), name: 'Shell', summary: String(it.command ?? '').slice(0, 140) });
       } else if (it.type === 'file_change' && msg.type === 'item.completed') {
         const paths = (it.changes ?? []).map((c: any) => c.path).filter(Boolean).join(', ');
         h.onEvent({ kind: 'tool', name: 'Edit', summary: paths.slice(0, 140) });
       } else if (it.type === 'mcp_tool_call' && msg.type === 'item.started') {
-        h.onEvent({ kind: 'tool', name: `${it.server ?? 'mcp'}.${it.tool ?? ''}`, summary: '' });
+        h.onEvent({ kind: 'tool', ...idOf(it), name: `${it.server ?? 'mcp'}.${it.tool ?? ''}`, summary: '' });
       } else if (it.type === 'web_search' && msg.type === 'item.started') {
         h.onEvent({ kind: 'tool', name: 'WebSearch', summary: String(it.query ?? '').slice(0, 140) });
+      } else if (msg.type === 'item.completed' && PAIRED.has(it.type) && typeof it.id === 'string') {
+        // The other half of a call that `item.started` already reported.
+        h.onEvent({ kind: 'tool_result', callId: it.id, ok: succeeded(it), summary: String(it.aggregated_output ?? it.output ?? '').replace(/\s+/g, ' ').trim().slice(0, 140) });
       }
       return;
     }
