@@ -1,6 +1,6 @@
 import type { RunView, TaskDetail } from '../api';
 import { AGENTS, reasonText } from './format';
-import { taskState } from './taskState';
+import { taskState, type TaskState } from './taskState';
 import { ago } from './time';
 
 const joinSteps = (names: string[]) => (names.length <= 2 ? names.join(', then ') : `${names[0]}, then ${names[1]}, then ${names.length - 2} more`);
@@ -14,6 +14,18 @@ export function currentRun(task: TaskDetail): RunView | undefined {
     (task.currentStep ? [...task.runs].reverse().find((r) => r.stepId === task.currentStep) : undefined) ??
     task.runs[task.runs.length - 1]
   );
+}
+
+/**
+ * The heading of the card an agent run puts on the task page. A session you stopped and a session
+ * that died with the daemon both wait on you with the reason `paused`; only the state tells them apart.
+ */
+export function awaitingTitle(state: TaskState, reason: string | null): string {
+  if (state === 'paused') return 'Claude Code’s session is closed';
+  if (reason === 'question') return 'Claude Code is asking';
+  if (reason === 'reply') return 'Claude Code replied';
+  if (reason === 'paused') return 'You stopped Claude Code';
+  return 'Claude Code is waiting for you';
 }
 
 /** Two plain sentences for the top of a task: what is happening now, and what comes next. */

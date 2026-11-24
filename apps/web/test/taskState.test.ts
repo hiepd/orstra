@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { TaskDetail, TaskSummary } from '../src/api';
-import { describeTask } from '../src/lib/describe';
+import { awaitingTitle, describeTask } from '../src/lib/describe';
 import { STATE, stepLabel, taskState, type TaskState } from '../src/lib/taskState';
 
 const ALL: TaskState[] = ['queued', 'working', 'checks', 'waiting_you', 'paused', 'decision', 'blocked', 'done', 'stopped'];
@@ -49,6 +49,13 @@ describe('describeTask after a chat sent the task back', () => {
   it('says you stopped it when you interrupted the turn', () => {
     const stopped = { ...task, state: 'waiting_you', stateReason: 'paused' } as unknown as TaskDetail;
     expect(describeTask(stopped).now).toContain('You stopped');
+  });
+
+  it('tells a session you stopped apart from one that died with the daemon', () => {
+    expect(awaitingTitle('waiting_you', 'paused')).toBe('You stopped Claude Code');
+    expect(awaitingTitle('paused', null)).toBe('Claude Code’s session is closed');
+    expect(awaitingTitle('waiting_you', 'question')).toBe('Claude Code is asking');
+    expect(awaitingTitle('waiting_you', 'reply')).toBe('Claude Code replied');
   });
 
   it('says the session is closed when the run is paused', () => {

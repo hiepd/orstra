@@ -1,6 +1,8 @@
 import { useState, type ReactNode } from 'react';
 import { api, errorMessage, type TaskDetail } from '../api';
+import { awaitingTitle } from '../lib/describe';
 import { humanize, reasonText, taskLabel } from '../lib/format';
+import { taskState } from '../lib/taskState';
 import { StopIcon, StuckCircle, WaitCircle } from './Icons';
 import { Modal, useToast } from './Overlay';
 import { ProgressList } from './ProgressList';
@@ -139,19 +141,12 @@ function rank(c: string) {
   return 1;
 }
 
-const AWAITING_TITLE: Record<string, string> = {
-  question: 'Claude Code is asking',
-  reply: 'Claude Code replied',
-  paused: 'You stopped Claude Code',
-  restarted: 'Orstra restarted mid-run',
-};
-
 /** An agent run waiting on you. Answer it with the chat composer. */
 export function AwaitingCard({ task, children }: { task: TaskDetail; children?: ReactNode }) {
   const a = task.awaiting;
   if (!a) return null;
   const run = task.runs.find((r) => r.id === a.runId);
-  const title = AWAITING_TITLE[a.reason ?? ''] ?? 'Claude Code is waiting for you';
+  const title = awaitingTitle(taskState(task), a.reason);
   return (
     <section className="lx-card lx-await" aria-label={title}>
       <div className="lx-card-h">
@@ -165,7 +160,7 @@ export function AwaitingCard({ task, children }: { task: TaskDetail; children?: 
         )}
       </div>
       {a.text && <p className="lx-awaittext">{a.text}</p>}
-      {a.reason === 'restarted' && !a.text && <p className="lx-awaittext">Send a message to pick the session up where it left off.</p>}
+      {taskState(task) === 'paused' && !a.text && <p className="lx-awaittext">Send a message to pick the session up where it left off.</p>}
       {children}
     </section>
   );
