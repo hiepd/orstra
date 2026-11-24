@@ -110,10 +110,10 @@ function TaskRows({ title, ids, tasks }: { title: string; ids: string[]; tasks: 
       <div className="cs-cardh">{title}</div>
       {rows.map((t) => {
         const s = taskState(t);
-        const what = s === 'running' || s === 'queued' ? stepLabel(t) : s === 'done' || s === 'stopped' ? t.workflow : `${stepLabel(t)} · ${STATE[s].label}`;
+        const what = s === 'working' || s === 'checks' || s === 'queued' ? stepLabel(t) : s === 'done' || s === 'stopped' ? t.workflow : `${stepLabel(t)} · ${STATE[s].label}`;
         return (
-          <a key={t.id} className="cs-trow" href={s === 'question' ? href.chat(t.id) : href.task(t.id)}>
-            <span className={`ox-sd${s === 'running' ? ' ox-live' : ''}`} style={{ background: STATE[s].fg }} />
+          <a key={t.id} className="cs-trow" href={s === 'waiting_you' || s === 'paused' ? href.chat(t.id) : href.task(t.id)}>
+            <span className={`ox-sd${s === 'working' ? ' ox-live' : ''}`} style={{ background: STATE[s].fg }} />
             <span className="ox-id">{taskLabel(t)}</span>
             <span className="cs-tmain">
               <span className="cs-tt">{t.title}</span>

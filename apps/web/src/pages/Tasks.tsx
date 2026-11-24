@@ -25,10 +25,10 @@ const LIST_GROUPS: { group: StateGroup; name: string; color: string }[] = [
 
 function StatusText({ t }: { t: TaskSummary }) {
   const s = taskState(t);
-  const attempt = t.run && t.run.attempt > 1 && (s === 'running' || s === 'stuck') ? ` · attempt ${t.run.attempt}` : '';
+  const attempt = t.run && t.run.attempt > 1 && (s === 'working' || s === 'blocked' || s === 'paused') ? ` · attempt ${t.run.attempt}` : '';
   return (
     <span className="ox-st" style={{ color: STATE[s].fg }}>
-      <span className={`ox-sd${s === 'running' ? ' ox-live' : ''}`} style={{ background: STATE[s].fg }} />
+      <span className={`ox-sd${s === 'working' ? ' ox-live' : ''}`} style={{ background: STATE[s].fg }} />
       {STATE[s].short}
       {attempt}
     </span>
@@ -175,7 +175,7 @@ export function TasksPage({ onNewTask }: { onNewTask: () => void }) {
                       const a = agentMeta(t);
                       return (
                         <a key={t.id} className="ox-lrow" href={href.task(t.id)}>
-                          <span className={`ox-sd${s === 'running' ? ' ox-live' : ''}`} style={{ background: STATE[s].fg }} title={STATE[s].label} />
+                          <span className={`ox-sd${s === 'working' ? ' ox-live' : ''}`} style={{ background: STATE[s].fg }} title={STATE[s].label} />
                           <span className="ox-id">{taskLabel(t)}</span>
                           <span className="ox-trunc">{t.title}</span>
                           <span className="ox-lstep">

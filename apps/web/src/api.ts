@@ -4,6 +4,11 @@ export type Progress = { did: string; decided?: string; left?: string; avoid?: s
 
 export type TaskStatus = 'running' | 'needs_you' | 'done' | 'stopped';
 export type RunStatus = 'queued' | 'running' | 'waiting' | 'done' | 'failed' | 'stopped';
+/**
+ * Where a task stands, as the daemon works it out from the task's runs. Declared again here because
+ * the web app does not depend on @orstra/core; `taskState` falls back when the 2 lists drift.
+ */
+export type TaskState = 'queued' | 'working' | 'checks' | 'waiting_you' | 'paused' | 'decision' | 'blocked' | 'done' | 'stopped';
 export type StepKind = 'agent' | 'gate' | 'human' | 'switch' | 'action' | 'workflow';
 export type AgentName = 'claude-code' | 'codex';
 export type MessageMode = 'chat' | 'note' | 'ask';
@@ -14,6 +19,11 @@ export interface TaskSummary {
   title: string;
   workflow: string;
   status: TaskStatus;
+  state: TaskState;
+  /** The wait reason or the block reason behind `state`. */
+  stateReason: string | null;
+  /** When the agent's turn last ended on the open run. */
+  lastTurnAt: number | null;
   currentStep: string | null;
   currentStepTitle: string | null;
   inboxReason: string | null;

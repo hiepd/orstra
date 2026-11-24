@@ -9,8 +9,9 @@ import { ago } from '../lib/time';
 
 const GROUPS: { state: TaskState; name: string; icon: ReactNode }[] = [
   { state: 'decision', name: 'Decide', icon: <WaitCircle label="Decision" /> },
-  { state: 'question', name: 'Agents waiting for you', icon: <WaitCircle label="Waiting for you" /> },
-  { state: 'stuck', name: 'Stuck', icon: <StuckCircle /> },
+  { state: 'waiting_you', name: 'Agents waiting for you', icon: <WaitCircle label="Waiting for you" /> },
+  { state: 'paused', name: 'Sessions that closed', icon: <StuckCircle /> },
+  { state: 'blocked', name: 'Stuck', icon: <StuckCircle /> },
 ];
 
 const firstLine = (s: string) => s.split('\n').find((l) => l.trim()) ?? '';
@@ -18,8 +19,9 @@ const firstLine = (s: string) => s.split('\n').find((l) => l.trim()) ?? '';
 /** What a task needs from you, in one line. */
 function what(t: TaskDetail, state: TaskState): string {
   if (state === 'decision') return t.human?.question ?? 'Waiting for your decision';
-  if (state === 'question') return t.awaiting?.text ? `“${firstLine(t.awaiting.text)}”` : reasonText(t.inboxReason);
-  return reasonText(t.inboxReason);
+  if (state === 'waiting_you') return t.awaiting?.text ? `“${firstLine(t.awaiting.text)}”` : reasonText(t.stateReason);
+  if (state === 'paused') return 'Its session is closed. Message it and it picks the work back up.';
+  return reasonText(t.stateReason);
 }
 
 /** Every task that needs you. Rows only open the task; you act there. */
@@ -68,7 +70,7 @@ export function InboxPage() {
                 {g.items.map((t) => {
                   const a = AGENTS[t.agent ?? 'claude-code'];
                   return (
-                    <a key={t.id} className="ox-irow" href={g.state === 'question' ? href.chat(t.id) : href.task(t.id)}>
+                    <a key={t.id} className="ox-irow" href={g.state === 'waiting_you' || g.state === 'paused' ? href.chat(t.id) : href.task(t.id)}>
                       <span className="ox-iic" style={{ background: STATE[g.state].bg }}>
                         {g.icon}
                       </span>

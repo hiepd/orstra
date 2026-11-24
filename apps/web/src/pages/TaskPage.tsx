@@ -80,7 +80,7 @@ function TaskView({ task, view, runId }: { task: TaskDetail; view: TaskViewName;
           <b className="ox-trunc">{task.title}</b>
         </div>
         <span className="ox-pill" style={{ background: STATE[state].bg, color: STATE[state].fg }}>
-          <span className={`ox-sd${state === 'running' ? ' ox-live' : ''}`} style={{ background: STATE[state].fg }} />
+          <span className={`ox-sd${state === 'working' ? ' ox-live' : ''}`} style={{ background: STATE[state].fg }} />
           {STATE[state].label}
         </span>
         <div className="ox-seg" role="group" aria-label="Task view" style={{ marginLeft: 10 }}>
