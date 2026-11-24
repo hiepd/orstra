@@ -2177,3 +2177,8 @@ a:hover {
 @media (max-width: 1180px){.ox-sess{flex-basis:188px}.ox-git{flex-basis:280px}}
 @media (max-width: 1000px){.ox-git{display:none}}
 @media (max-width: 860px){.ox-sess{display:none}}
+
+/* ---- Focus: a field inside a box that shows its own focus ring gets no second ring ---- */
+.lx .ox-composer :is(textarea, input):focus-visible,
+.lx .lx-box :is(textarea, input):focus-visible{box-shadow:none;outline:none}
+.ox-composer:focus-within{border-color:var(--accent);box-shadow:var(--ring),var(--shadow)}
