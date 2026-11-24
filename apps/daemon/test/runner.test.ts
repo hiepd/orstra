@@ -612,6 +612,23 @@ steps:
     expect(store.task(task.id)).toMatchObject({ status: before.status, inbox_reason: before.inbox_reason, current_step: before.current_step });
   });
 
+  it('answers with the live state, computed at the read', async () => {
+    const { store, runner, wfPath, fake, dir } = setup(LOOP, () => 'Need input\n\nOUTCOME: needs_you');
+    const task = runner.startTask({ workflowPath: wfPath, title: 'live read' });
+    await runner.idle();
+
+    const views = makeViews(store, runner);
+    expect(views.taskSummary(store.task(task.id)!)).toMatchObject({ state: 'waiting_you', stateReason: 'question' });
+    expect(views.taskSummary(store.task(task.id)!).lastTurnAt).toBeGreaterThan(Date.now() - 2000);
+
+    // A second Runner has no live sessions. The same rows now read as paused, and no row is written.
+    const before = store.task(task.id)!.updated_at;
+    const views2 = makeViews(store, new Runner(store, fake.exec, { slots: 2, createWorktree: () => dir, turnGraceMs: 0 }));
+    expect(views2.taskSummary(store.task(task.id)!).state).toBe('paused');
+    expect(store.task(task.id)!.updated_at).toBe(before);
+    expect(store.task(task.id)!.inbox_reason).toBe('question');
+  });
+
   it('has no writer of the task state but the projector', () => {
     const dir = join(import.meta.dirname, '../src');
     const writers = readdirSync(dir)

@@ -2,12 +2,13 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { existsSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { basename, extname, join, resolve } from 'node:path';
-import { applyEdits, parseWorkflow, taskPath, type EditGraph, type Progress, type Workflow } from '@orstra/core';
+import { applyEdits, deriveState, parseWorkflow, taskPath, type EditGraph, type Progress, type Workflow } from '@orstra/core';
 import { MAX_FILE_BYTES, checkAttachments, cosFiles, mb, readAttachment, saveAttachment, taskFiles, type AttachStore } from './attachments.ts';
 import type { EventRow, RunRow, Store, TaskRow } from './db.ts';
 import type { Runner } from './runner.ts';
 import type { ChiefOfStaff } from './cos.ts';
 import { gitDiff, gitInfo } from './git.ts';
+import { taskFacts } from './project.ts';
 import { listWorkflows, resolveWorkflow } from './workflows.ts';
 export { listWorkflows, resolveWorkflow };
 import { AGENT_IDS, EFFORTS, PERMISSION_MODES, loadAgentConfig, saveAgentSettings, type AgentId } from './agentConfig.ts';
@@ -105,8 +106,12 @@ export function makeViews(store: Store, runner: Runner) {
     // The run that says where the task is: the latest one at its current step, else its latest run.
     const cur = (t.current_step ? [...runs].reverse().find((r) => r.step_id === t.current_step) : undefined) ?? runs[runs.length - 1];
     const lastAgent = [...runs].reverse().find((r) => r.kind === 'agent');
+    // Worked out at the read, with the sessions this process holds, so a screen is right the moment
+    // one dies. The stored columns carry the same answer, minus what only memory knows.
+    const d = deriveState(taskFacts(store, (id) => runner.isLive(id), t, runs));
     return {
       id: t.id, ref: t.ref, title: t.title, workflow: t.workflow_name, workflowFile: basename(t.workflow_path), status: t.status, currentStep: t.current_step,
+      state: d.state, stateReason: d.reason, lastTurnAt: d.lastTurnAt,
       currentStepTitle: t.current_step ? stepTitle(t, t.current_step) : null, inboxReason: t.inbox_reason,
       run: cur ? { status: cur.status, attempt: cur.attempt, kind: cur.kind } : null, agent: lastAgent?.agent ?? null,
       createdAt: t.created_at, updatedAt: t.updated_at,

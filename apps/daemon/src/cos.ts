@@ -390,7 +390,7 @@ export class ChiefOfStaff extends EventEmitter {
         return json(
           this.store.tasks().map((t) => {
             const s = this.views.taskSummary(t);
-            return { task: label(t), id: t.id, title: t.title, workflow: t.workflow_name, status: t.status, waitingFor: t.status === 'needs_you' ? t.inbox_reason : undefined, step: s.currentStepTitle, attempt: s.run?.attempt, runStatus: s.run?.status, updated: new Date(t.updated_at).toISOString() };
+            return { task: label(t), id: t.id, title: t.title, workflow: t.workflow_name, status: t.status, state: s.state, waitingFor: t.status === 'needs_you' ? t.inbox_reason : undefined, step: s.currentStepTitle, attempt: s.run?.attempt, runStatus: s.run?.status, updated: new Date(t.updated_at).toISOString() };
           }),
         );
       case 'get_task': {
@@ -398,7 +398,7 @@ export class ChiefOfStaff extends EventEmitter {
         const d = this.views.taskDetail(t);
         const said = d.events.filter((e: any) => e.kind === 'message').slice(-5).map((e: any) => clip(String(e.text), 1200));
         return json({
-          task: label(t), id: t.id, title: t.title, description: t.description, workflow: t.workflow_name, status: t.status, waitingFor: t.inbox_reason, currentStep: d.currentStepTitle,
+          task: label(t), id: t.id, title: t.title, description: t.description, workflow: t.workflow_name, status: t.status, state: d.state, waitingFor: t.inbox_reason, currentStep: d.currentStepTitle,
           steps: d.steps.map((s) => ({ id: s.id, title: s.title, kind: s.kind, on: s.on })),
           path: d.track.map((s) => `${s.title}: ${s.state}`),
           runs: d.runs.map((r) => ({ step: r.stepTitle, attempt: r.attempt, kind: r.kind, agent: r.agent, status: r.status, outcome: r.outcome, progress: r.progress, output: r.output ? clip(r.output.trim().split('\n').slice(-25).join('\n'), 1500) : undefined, started: r.startedAt ? new Date(r.startedAt).toISOString() : undefined, ended: r.endedAt ? new Date(r.endedAt).toISOString() : undefined })),
