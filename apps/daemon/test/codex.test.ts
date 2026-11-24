@@ -76,7 +76,7 @@ describe('codexSession', () => {
     s.send('Fix the bug');
     await until(() => turns.length === 1);
     expect(ids).toEqual(['th-1']);
-    expect(events).toContainEqual({ kind: 'tool', name: 'Shell', summary: 'npm test' });
+    expect(events).toContainEqual({ kind: 'tool', callId: 'i0', name: 'Shell', summary: 'npm test' });
     expect(turns[0]).toMatchObject({ text: 'Done.\n\nOUTCOME: done', isError: false, usage: { tokensIn: 120, tokensOut: 7 } });
     expect(fake.log()).toContain('Fix the bug');
     s.end();

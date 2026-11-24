@@ -8,7 +8,9 @@ import { codexSession } from './codex.ts';
 /** Something the run streamed: agent text, a tool call, or a line of command output. */
 export type StreamEvent =
   | { kind: 'message'; text: string }
-  | { kind: 'tool'; name: string; summary: string }
+  | { kind: 'tool'; name: string; summary: string; callId?: string }
+  /** How a tool call ended. `callId` matches the `tool` event's, so the chat can pair them. */
+  | { kind: 'tool_result'; callId: string; ok: boolean; summary: string }
   | { kind: 'output'; text: string };
 
 /** One finished turn of a live session: the agent's final text, or an interrupt. */
@@ -67,6 +69,12 @@ export interface LiveSession {
   end(): void;
   kill(): void;
   closed: Promise<{ ok: boolean; error?: string }>;
+  /**
+   * The agent's process id, so a restart can find a process that outlived the daemon. Claude Code
+   * keeps one process for the whole session. Codex starts one per turn, so this changes, and it is
+   * undefined between turns, and for a session that has no process of its own.
+   */
+  readonly pid?: number;
 }
 
 export interface GateRequest {
@@ -153,6 +161,62 @@ export function claudeArgs(opts: Pick<SessionOptions, 'sessionId' | 'resume' | '
   return args;
 }
 
+/** The short text a tool reported back. The body is a string, or a list of content blocks. */
+function toolResultText(body: unknown): string {
+  const s = typeof body === 'string'
+    ? body
+    : Array.isArray(body)
+      ? body.map((b) => (typeof b === 'string' ? b : typeof (b as any)?.text === 'string' ? (b as any).text : '')).filter(Boolean).join(' ')
+      : '';
+  const one = s.replace(/\s+/g, ' ').trim();
+  return one.length > 140 ? one.slice(0, 140) + '…' : one;
+}
+
+export interface ClaudeHandlers {
+  onEvent: (e: StreamEvent) => void;
+  /** The agent's latest text block. The session keeps it, for a turn whose result carries none. */
+  onText: (text: string) => void;
+  onResult: (r: { result: string | null; isError: boolean; subtype: string | null; usage?: TurnUsage }) => void;
+}
+
+/**
+ * Read one line of Claude Code's `stream-json` output.
+ *
+ * A tool call arrives as a `tool_use` block on an assistant message. Its result comes back later as
+ * a `tool_result` block on a *user* message, carrying the same id. Both halves are reported, so the
+ * chat can show a call that is still running apart from one that finished or failed.
+ */
+export function readClaudeLine(line: string, h: ClaudeHandlers): void {
+  let msg: any;
+  try { msg = JSON.parse(line); } catch { return; }
+  if (msg.type === 'assistant' && Array.isArray(msg.message?.content)) {
+    for (const c of msg.message.content) {
+      if (c.type === 'text' && c.text?.trim()) {
+        h.onText(c.text.trim());
+        h.onEvent({ kind: 'message', text: c.text.trim() });
+      }
+      if (c.type === 'tool_use') h.onEvent({ kind: 'tool', ...(typeof c.id === 'string' ? { callId: c.id } : {}), name: c.name, summary: summarizeTool(c.name, c.input ?? {}) });
+    }
+    return;
+  }
+  if (msg.type === 'user' && Array.isArray(msg.message?.content)) {
+    for (const c of msg.message.content) {
+      if (c.type === 'tool_result' && typeof c.tool_use_id === 'string') {
+        h.onEvent({ kind: 'tool_result', callId: c.tool_use_id, ok: !c.is_error, summary: toolResultText(c.content) });
+      }
+    }
+    return;
+  }
+  if (msg.type === 'result') {
+    h.onResult({
+      result: typeof msg.result === 'string' && msg.result ? msg.result : null,
+      isError: !!msg.is_error,
+      subtype: typeof msg.subtype === 'string' ? msg.subtype : null,
+      usage: usageOf(msg),
+    });
+  }
+}
+
 /** Claude Code in streaming-input mode: stdin stays open, so we can message and interrupt it while it works. */
 function claudeSession(opts: SessionOptions): LiveSession {
   const cfg = loadAgentConfig()['claude-code'];
@@ -168,24 +232,18 @@ function claudeSession(opts: SessionOptions): LiveSession {
     child.stdin.write(JSON.stringify(obj) + '\n');
   };
 
-  createInterface({ input: child.stdout }).on('line', (line) => {
-    let msg: any;
-    try { msg = JSON.parse(line); } catch { return; }
-    if (msg.type === 'assistant' && Array.isArray(msg.message?.content)) {
-      for (const c of msg.message.content) {
-        if (c.type === 'text' && c.text?.trim()) {
-          lastText = c.text.trim();
-          opts.onEvent({ kind: 'message', text: lastText });
-        }
-        if (c.type === 'tool_use') opts.onEvent({ kind: 'tool', name: c.name, summary: summarizeTool(c.name, c.input ?? {}) });
-      }
-    } else if (msg.type === 'result') {
-      const interrupted = interruptPending || msg.subtype === 'error_during_execution';
-      interruptPending = false;
-      opts.onTurn({ text: typeof msg.result === 'string' && msg.result ? msg.result : lastText, interrupted, isError: !!msg.is_error && !interrupted, usage: usageOf(msg) });
-      lastText = '';
-    }
-  });
+  createInterface({ input: child.stdout }).on('line', (line) =>
+    readClaudeLine(line, {
+      onEvent: opts.onEvent,
+      onText: (t) => { lastText = t; },
+      onResult: (r) => {
+        const interrupted = interruptPending || r.subtype === 'error_during_execution';
+        interruptPending = false;
+        opts.onTurn({ text: r.result ?? lastText, interrupted, isError: r.isError && !interrupted, usage: r.usage });
+        lastText = '';
+      },
+    }),
+  );
   child.stderr.on('data', (d) => { stderr += String(d); });
 
   const closed = new Promise<{ ok: boolean; error?: string }>((resolve) => {
@@ -194,6 +252,9 @@ function claudeSession(opts: SessionOptions): LiveSession {
   });
 
   return {
+    get pid() {
+      return child.pid;
+    },
     send(text) {
       write({ type: 'user', message: { role: 'user', content: text } });
     },

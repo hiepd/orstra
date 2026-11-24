@@ -60,6 +60,20 @@ export interface RunRow {
   /** Tokens the session read (input, cache reads and cache writes) and wrote. */
   tokens_in: number | null;
   tokens_out: number | null;
+  /**
+   * The agent process this run has open, as a stamp that survives a daemon restart: see process.ts.
+   * Set while a session runs, and cleared when it ends. A restart reads it to tell an agent that is
+   * still working from one that died with the daemon.
+   */
+  agent_pid: number | null;
+  agent_boot_id: string | null;
+  agent_started_at: string | null;
+  /**
+   * The worktree's commit when this run started, and when it ended. A run Orstra lost track of
+   * still leaves a readable range, so you can see what its agent had already committed.
+   */
+  head_before: string | null;
+  head_after: string | null;
 }
 
 export interface EventRow {
@@ -145,7 +159,9 @@ export class Store {
   private migrate(): string[] {
     const want: Record<string, Record<string, string>> = {
       tasks: { stopped_at: 'INTEGER', workflow_yaml: 'TEXT', pr_url: 'TEXT', source: 'TEXT', archived_at: 'INTEGER' },
-      runs: { last_turn_at: 'INTEGER', wait_reason: 'TEXT', routed: 'TEXT', cost_usd: 'REAL', tokens_in: 'INTEGER', tokens_out: 'INTEGER' },
+      runs: { last_turn_at: 'INTEGER', wait_reason: 'TEXT', routed: 'TEXT', cost_usd: 'REAL', tokens_in: 'INTEGER', tokens_out: 'INTEGER',
+        agent_pid: 'INTEGER', agent_boot_id: 'TEXT', agent_started_at: 'TEXT',
+        head_before: 'TEXT', head_after: 'TEXT' },
     };
     const added: string[] = [];
     for (const [table, columns] of Object.entries(want)) {
