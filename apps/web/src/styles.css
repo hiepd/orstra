@@ -1693,7 +1693,11 @@ a:hover {
 .ox-pvm{font-family:'JetBrains Mono',monospace;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ox-chatv{flex:1;display:flex;min-height:0}
 .ox-sess{flex:0 0 212px;border-right:1px solid var(--line);padding:12px 8px;overflow:auto;display:flex;flex-direction:column;gap:2px;background:var(--surface-2)}
-.ox-sessh{font-size:12px;font-weight:500;color:var(--muted);padding:2px 8px 6px}
+.ox-sessh{display:flex;align-items:center;font-size:12px;font-weight:500;color:var(--muted);padding:2px 2px 6px 8px}
+.ox-sessb{margin-left:auto;width:22px;height:22px}
+/* The way back when the panel is collapsed: a button in a gutter at the left edge of the chat. */
+.ox-sessx{position:absolute;top:10px;left:8px;z-index:1}
+.ox-chatx .ox-cscroll{padding-left:46px}
 .ox-srow{display:grid;grid-template-columns:10px minmax(0,1fr);column-gap:8px;row-gap:1px;align-items:center;width:100%;padding:7px 8px;border:0;border-radius:6px;background:transparent;text-align:left;cursor:pointer}
 .ox-srow:hover{background:var(--line-3)}
 .lx .ox-srow[aria-current="true"]{background:var(--accent-line)}
@@ -1980,3 +1984,42 @@ a:hover {
 /* Settings: per-agent controls */
 .ox-ctl{width:220px;flex:none;margin-left:auto}
 .ox-actions{justify-content:flex-end;background:var(--bg)}
+
+/* ---------- Markdown in a chat message (ox-md) ---------- */
+/* The body text keeps the size and the colour of the message around it: only blocks get a look
+   of their own. Markdown makes its own paragraphs, so this drops the pre-wrap of .ox-ai. */
+.ox-md{white-space:normal;overflow-wrap:anywhere}
+/* :where() carries no weight, so the gap rules below still win. */
+.ox-md :where(p,ul,ol,li,blockquote,pre,table,hr,h1,h2,h3,h4,h5,h6){margin:0}
+.ox-md>*{margin-top:10px}
+.ox-md>*:first-child{margin-top:0}
+.ox-md>:is(h1,h2,h3,h4,h5,h6){margin-top:16px}
+.ox-md :is(h1,h2,h3,h4,h5,h6){font-weight:600;line-height:1.35}
+.ox-md h1{font-size:17px}
+.ox-md h2{font-size:15.5px}
+.ox-md h3{font-size:14.5px}
+.ox-md :is(h4,h5,h6){font-size:14px}
+/* A quote, a list item or a cell can hold blocks of its own. */
+.ox-md :is(blockquote,li,td,th)>*+*{margin-top:6px}
+.ox-md :is(ul,ol){padding-left:21px}
+.ox-md li+li,.ox-md li>:is(ul,ol){margin-top:3px}
+.ox-md li::marker{color:var(--faint)}
+/* A task list from GFM: the box replaces the bullet. */
+.ox-md li:has(>input[type="checkbox"]){list-style:none;margin-left:-19px}
+.ox-md li>input[type="checkbox"]{margin:0 6px 0 0;vertical-align:baseline}
+.ox-md blockquote{border-left:2px solid var(--line-2);padding-left:12px;color:var(--muted)}
+.ox-md hr{border:0;border-top:1px solid var(--line)}
+.ox-md strong{font-weight:600}
+.ox-md img{max-width:100%}
+.ox-md :not(pre)>code{font-family:'JetBrains Mono',ui-monospace,monospace;font-size:.86em;background:var(--hover);border:1px solid var(--line);border-radius:4px;padding:1px 4px}
+/* A fenced block: the language on top, the code scrolling sideways under it. */
+.ox-mdcode{border:1px solid var(--line);border-radius:6px;background:var(--hover);overflow:hidden}
+.ox-mdlang{display:block;padding:4px 10px;border-bottom:1px solid var(--line);font-family:'JetBrains Mono',ui-monospace,monospace;font-size:11px;color:var(--faint)}
+.ox-mdcode pre{margin:0;padding:8px 10px;overflow-x:auto;white-space:pre}
+.ox-mdcode code{font-family:'JetBrains Mono',ui-monospace,monospace;font-size:12px;line-height:1.6;color:var(--ink-2)}
+/* A wide table scrolls inside the message, so it never stretches the page. */
+.ox-mdtable{max-width:100%;overflow-x:auto;border:1px solid var(--line);border-radius:6px}
+.ox-mdtable table{border-collapse:collapse;width:max-content;min-width:100%;font-size:13px}
+.ox-md :is(th,td){border-left:1px solid var(--line);border-top:1px solid var(--line);padding:5px 9px;text-align:left;vertical-align:top}
+.ox-md tr>:first-child{border-left:0}
+.ox-md thead :is(th,td){border-top:0;font-weight:600;background:var(--hover)}

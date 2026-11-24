@@ -2,10 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import {
-  ATTACH_DIR, MAX_FILE_BYTES, attachPath, checkAttachments, cosFiles, excludeFromGit, humanBytes, mimeOf,
-  readAttachment, readRule, safeName, saveAttachment, taskFiles, withFiles,
+  ATTACH_DIR, MAX_FILE_BYTES, attachPath, attachRoot, checkAttachments, cosFiles, excludeFromGit, humanBytes,
+  mimeOf, readAttachment, safeName, saveAttachment, taskFiles, withFiles,
 } from '../src/attachments.ts';
 
 /** A worktree-like folder with git in it, as a task gets from `createWorktree`. */
@@ -169,9 +169,11 @@ describe('the chief of staff folder', () => {
     expect(attachPath(files, 'attachments/../../mcp.json')).toBeNull();
   });
 
-  it('gives Claude Code a Read rule for that folder and nothing else', () => {
+  it('sits inside the chief of staff workspace, so its session can open what you attach', () => {
+    // cli.ts gives that session ~/.orstra as a working folder, and this folder is under it.
     const { dir, files } = cos();
-    expect(readRule(files)).toBe(`Read(/${dir}/attachments/**)`);
-    expect(readRule(files).startsWith('Read(//')).toBe(true);
+    const a = saveAttachment(files, { name: 'image.png', data: PNG });
+    expect(attachRoot(files)).toBe(join(dir, 'attachments'));
+    expect(join(dir, a.path).startsWith(attachRoot(files) + sep)).toBe(true);
   });
 });

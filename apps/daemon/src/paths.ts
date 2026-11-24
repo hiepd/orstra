@@ -15,7 +15,7 @@ export const WORKFLOW_DIRS = [WORKFLOWS_DIR];
 export const WEB_DIST = join(REPO_ROOT, 'apps/web/dist');
 export const PORT = Number(process.env.ORSTRA_PORT ?? 4317);
 export const SLOTS = Number(process.env.ORSTRA_SLOTS ?? 4);
-/** Where the chief of staff's Claude Code session runs (it has no files to work on; this keeps it out of any repo). */
+/** Where the chief of staff's Claude Code session runs; this keeps its own notes out of any repo. */
 export const COS_DIR = join(HOME, 'cos');
 export const TSX = join(REPO_ROOT, 'node_modules/.bin/tsx');
 

@@ -2,7 +2,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { ChiefOfStaff, COS_ID, cosToolArgs } from '../src/cos.ts';
+import { ChiefOfStaff, COS_ID } from '../src/cos.ts';
 import { handle, setWriter } from '../src/cos-mcp.ts';
 import { COS_TOOLS } from '../src/cos-tools.ts';
 import { Store } from '../src/db.ts';
@@ -192,25 +192,6 @@ describe('ChiefOfStaff', () => {
     cos.say('and this?');
     expect(toCos[1]).toBe('and this?');
     expect(() => cos.say('')).toThrow('Say something.');
-  });
-});
-
-describe('what the chief of staff session may do', () => {
-  const args = cosToolArgs('/home/.orstra/cos/mcp.json', '/home/.orstra/cos');
-  const after = (flag: string) => args[args.indexOf(flag) + 1];
-
-  it('has Orstra’s tools and Read, and no shell', () => {
-    expect(after('--tools')).toBe('Read');
-    expect(args).toContain('mcp__orstra');
-    expect(args.filter((a) => /^(Bash|Edit|Write|WebFetch|Glob|Grep)$/.test(a))).toEqual([]);
-  });
-
-  it('holds Read inside its own folder, and asks for any other path', () => {
-    // --restricted confines the file tools to the working folder; the rule is what stops a question
-    // about the attachments folder, which nobody is there to answer.
-    expect(args).toContain('--restricted');
-    expect(args).toContain('Read(//home/.orstra/cos/attachments/**)');
-    expect(after('--permission-mode')).toBe('default');
   });
 });
 

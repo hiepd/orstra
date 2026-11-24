@@ -6,6 +6,7 @@ import { withFiles, type Attachment } from './attachments.ts';
 import type { Executors, LiveSession, StreamEvent, TurnEnd } from './executors.ts';
 import type { RunRow, Store, TaskRow } from './db.ts';
 import { locateWorkflow } from './workflows.ts';
+import { runAction } from './actions.ts';
 
 export interface StartTaskInput {
   workflowPath: string;
@@ -340,8 +341,10 @@ export class Runner extends EventEmitter {
       }
 
       if (step.use === 'action') {
-        this.event(task.id, run.id, 'system', { text: `Action "${step.action ?? 'none'}" isn't built yet; treated as ok.` });
-        return this.finish(task.id, run.id, 'ok');
+        const res = runAction(step.action, { cwd, input: step.with ?? {} });
+        this.store.updateRun(run.id, { output: res.text });
+        this.event(task.id, run.id, 'system', { text: res.text });
+        return this.finish(task.id, run.id, res.outcome);
       }
 
       this.event(task.id, run.id, 'system', { text: `Step type "${step.use}" isn't built yet.` });

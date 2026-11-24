@@ -35,7 +35,7 @@ One node in a workflow. Each step has a kind:
 | `gate` | Runs shell commands, such as tests | `pass`, `fail` |
 | `human` | Waits for your decision | one outcome per choice (`approved`, `changes_requested`, `rejected`, …) |
 | `switch` | Picks a branch from the task's data | the matching case |
-| `action` | Calls a service (Linear, GitHub, Slack) | `ok`, `error` |
+| `action` | Runs one named action, such as `git.merge` | `ok`, `error`, `conflict` |
 
 Arrows say where each outcome goes. Backward arrows (retries) must have a cap: `{ goto: impl, max: 3 }`.
 
@@ -92,6 +92,15 @@ Your answer at a `human` step. You see what you're deciding (e.g. the spec, the 
 ### Worktree
 The task's own working copy: `git worktree` on branch `orstra/<task>`. All of a task's runs work in it, one after another.
 
+### Merge
+The `git.merge` action, the last step of the Simple workflow. When you close a task, it merges the task's branch into the branch the repository has checked out.
+
+- Local only. It never pushes, and it never forces a merge.
+- It does nothing when the task branch has no new commit, or when the task has its own scratch repository (a task started without a repo).
+- It refuses to start when the main checkout has uncommitted changes. The task goes to the Inbox and tells you to commit or stash them.
+- On a conflict it runs `git merge --abort`, so the repository is as it was, and the task goes to the Inbox.
+- The worktree and the branch are kept either way, so the task's diffs and any uncommitted work stay readable. Remove them by hand when you are done: `git worktree remove <path>`.
+
 ### Agent
 A coding CLI Orstra can drive: Claude Code today, Codex next. Configured in Settings (command, model, limits, which of your skills and MCP servers it gets).
 
@@ -101,10 +110,11 @@ How many runs can work at the same time on this machine (default 4). Agent and g
 ### Chief of staff
 **One ongoing conversation with an agent that sees every task.** It briefs you, answers questions about any task, and acts for you through Orstra: it messages a task's agent, leaves notes, starts, retries or stops tasks, answers decisions, and **watches** tasks to follow up later ("retry HUB-405 when HUB-432 is done").
 
-- It is Claude Code with Orstra's tools only: it can't run commands or edit code. To change code it talks to a task's agent or starts a task.
-- The one file tool it has is `Read`, held inside its own folder (`~/.orstra/cos/`), so it can open the files you attach to a message and nothing else on the machine.
-- **Orstra, not the model, decides what needs your OK.** Actions that need it become a **plan**: a card with Do it / Not now. Messaging agents is allowed by default; starting and retrying tasks asks by default; decisions and stopping always ask.
-- Everything it does is recorded on the task, marked as done by your chief of staff.
+- It is Claude Code with Orstra's tools **and** its own: Bash, Read, Edit, Write, the web tools, and whatever else Claude Code gives your machine. So it can read a file, change a file and run a command itself. Nothing limits it: no tool list, no path check, no permission question. Its working folders are `~/.orstra` (the database, the workflow files, every task worktree) and the Orstra checkout, and those are where it works, not a fence. It can reach any path you can.
+- It opens a file you **attach** to a message the same way, by the path Orstra puts at the end of your message. That folder, `~/.orstra/cos/attachments/`, is inside its workspace.
+- **Orstra, not the model, decides what needs your OK** for Orstra's own actions. Actions that need it become a **plan**: a card with Do it / Not now. Messaging agents is allowed by default; starting and retrying tasks asks by default; decisions and stopping always ask.
+- **A file or a command of its own has no plan card and no review step.** Work on a task still belongs to the task's agent: only then does the change land on the task's branch and go through the workflow. Ask it for a small fix or a quick look; ask a task for the work.
+- Everything it does through Orstra's tools is recorded on the task, marked as done by your chief of staff. Its own files and commands show in the conversation only.
 
 ## Screens (one home per concept)
 

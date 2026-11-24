@@ -47,7 +47,7 @@ const OUTCOMES: Record<StepKind, string[]> = {
   gate: ['pass', 'fail'],
   human: ['approved', 'changes_requested', 'rejected'],
   switch: ['default'],
-  action: ['ok', 'error'],
+  action: ['ok', 'error', 'conflict'],
   workflow: ['started'],
 };
 const ADDABLE: StepKind[] = ['agent', 'gate', 'human', 'switch', 'action'];

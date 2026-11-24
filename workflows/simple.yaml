@@ -16,13 +16,24 @@ steps:
     use: human
     question: Is the work good?
     on:
-      approved: done
+      approved: merge
       changes_requested: work
+
+  # Merges the task branch into the branch the repository has checked out. Local only; it never pushes.
+  # It runs as soon as you approve, so no click merges the work.
+  # It does nothing when the task has no commits or its own scratch repository.
+  # "conflict" and "error" have no arrow on purpose: the task goes to the Inbox with that reason,
+  # and nothing is merged.
+  merge:
+    title: Merge
+    use: action
+    action: git.merge
+    next: done
 
   done:
     title: Done
     use: human
-    question: The work is finished. Close it, or reopen it to ask for more changes.
+    question: The work is merged. Close it, or reopen it to ask for more changes.
     choices:
       - close
       - reopen

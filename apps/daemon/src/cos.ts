@@ -2,8 +2,8 @@ import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { cosFiles, readRule, withFiles, type Attachment } from './attachments.ts';
-import { COS_PROMPT, WATCH_UNTIL, type WatchUntil } from './cos-tools.ts';
+import { withFiles, type Attachment } from './attachments.ts';
+import { WATCH_UNTIL, type WatchUntil } from './cos-tools.ts';
 import type { Store, TaskRow, WatchRow } from './db.ts';
 import type { Executors, LiveSession } from './executors.ts';
 import { gitDiff } from './git.ts';
@@ -28,29 +28,9 @@ const GATE: Record<string, Permission | 'always'> = {
 
 export interface CosOptions {
   cwd: string;
-  /** Claude Code flags that give it Orstra's tools and nothing else. */
+  /** Claude Code flags for its tools and folders; see cosToolArgs in cos-tools.ts. */
   toolArgs: string[];
   model?: string;
-}
-
-/**
- * The Claude Code flags for the chief of staff session.
- *
- * It gets Orstra's tools and `Read`, and nothing else: no shell, no edits, no web. `--restricted`
- * holds the file tools inside the working folder, which is `cosDir`, so `Read` can open the files
- * you attach and nothing else on the machine. The rule in `--allowedTools` is what keeps the
- * attachments folder from a permission question that nobody is there to answer.
- */
-export function cosToolArgs(mcpConfig: string, cosDir: string): string[] {
-  return [
-    '--restricted',
-    '--tools', 'Read',
-    '--mcp-config', mcpConfig,
-    '--strict-mcp-config',
-    '--allowedTools', 'mcp__orstra', readRule(cosFiles(cosDir)),
-    '--permission-mode', 'default',
-    '--append-system-prompt', COS_PROMPT,
-  ];
 }
 
 export interface PlanAction {

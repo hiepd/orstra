@@ -22,6 +22,8 @@ const REASONS: Record<string, string> = {
   needs_you: 'Needs you: the agent asked for help',
   cant_do: 'The agent couldn’t do it',
   loop_exhausted: 'Retries used up',
+  conflict: 'The merge conflicts; nothing was merged',
+  error: 'The step couldn’t finish',
   interrupted: 'Orstra restarted mid-run',
   timeout: 'The step timed out',
   fail: 'The step failed with nowhere to go',

@@ -174,12 +174,6 @@ export function checkAttachments(store: AttachStore, raw: unknown): Attachment[]
   return files;
 }
 
-/**
- * The Claude Code permission rule that lets a session open the files you attached, and nothing else.
- * A rule is 1 argv entry, so a folder with a space in it stays whole. `//` starts an absolute path.
- */
-export const readRule = (store: AttachStore) => `Read(/${attachRoot(store)}/**)`;
-
 /** The lines Orstra adds to your message, so the agent knows where to look. */
 export function filesBlock(files: Attachment[]): string {
   return [
