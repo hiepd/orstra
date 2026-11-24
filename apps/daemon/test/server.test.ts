@@ -76,3 +76,10 @@ describe('worktree files', () => {
     expect((await fetch(`${base}/api/tasks/nope/file?path=note.md`)).status).toBe(404);
   });
 });
+
+describe('link info', () => {
+  it('refuses a link that is not http or https', async () => {
+    const r = await fetch(`${base}/api/link-info?url=${encodeURIComponent('file:///etc/hosts')}`);
+    expect(r.status).toBe(400);
+  });
+});

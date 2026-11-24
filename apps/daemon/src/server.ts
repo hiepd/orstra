@@ -10,6 +10,7 @@ import type { ChiefOfStaff } from './cos.ts';
 import type { Triggers } from './triggers.ts';
 import { gitDiff, gitInfo } from './git.ts';
 import { listFiles, readWorktreeFile } from './files.ts';
+import { linkInfo } from './linkInfo.ts';
 import { listWorkflows, resolveWorkflow } from './workflows.ts';
 export { listWorkflows, resolveWorkflow };
 import { AGENT_IDS, EFFORTS, PERMISSION_MODES, loadAgentConfig, saveAgentSettings, type AgentId } from './agentConfig.ts';
@@ -332,6 +333,7 @@ export function buildApi(store: Store, runner: Runner, cos?: ChiefOfStaff, trigg
         // The agent may change the file at any time, so the browser asks again each time.
         return sendBytes(res, hit, 'no-store');
       }
+      if (req.method === 'GET' && p === '/api/link-info') return send(res, 200, await linkInfo(url.searchParams.get('url') ?? '')), true;
       if ((mm = m(/^\/api\/workflows\/([^/]+)$/)) && req.method === 'PUT') {
         const file = decodeURIComponent(mm[1]);
         const hit = listWorkflows().find((w) => w.file === file);
