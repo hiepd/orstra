@@ -9,6 +9,7 @@ import type { Runner } from './runner.ts';
 import type { ChiefOfStaff } from './cos.ts';
 import type { Triggers } from './triggers.ts';
 import { gitDiff, gitInfo } from './git.ts';
+import { listFiles, readWorktreeFile } from './files.ts';
 import { listWorkflows, resolveWorkflow } from './workflows.ts';
 export { listWorkflows, resolveWorkflow };
 import { AGENT_IDS, EFFORTS, PERMISSION_MODES, loadAgentConfig, saveAgentSettings, type AgentId } from './agentConfig.ts';
@@ -28,10 +29,15 @@ function send(res: ServerResponse, code: number, body: unknown) {
 function sendAttachment(res: ServerResponse, store: AttachStore | null, path: string): boolean {
   const hit = store ? readAttachment(store, path) : null;
   if (!hit) return send(res, 404, { error: 'No such file' }), true;
+  return sendBytes(res, hit);
+}
+
+/** Bytes from outside Orstra (an attachment, a worktree file), sent so that they can never run. */
+function sendBytes(res: ServerResponse, hit: { body: Buffer; mime: string; name: string }, cache = 'private, max-age=86400'): boolean {
   res.writeHead(200, {
     'content-type': hit.mime, 'content-length': hit.body.length,
-    'content-disposition': `inline; filename="${hit.name}"`,
-    'cache-control': 'private, max-age=86400',
+    'content-disposition': `inline; filename*=UTF-8''${encodeURIComponent(hit.name)}`,
+    'cache-control': cache,
     // The bytes came from outside Orstra: never sniff them, never let an SVG run anything.
     'x-content-type-options': 'nosniff', 'content-security-policy': "default-src 'none'; sandbox",
   });
@@ -312,6 +318,19 @@ export function buildApi(store: Store, runner: Runner, cos?: ChiefOfStaff, trigg
         const t = store.task(mm[1]);
         const d = t?.worktree ? gitDiff(t.worktree, url.searchParams.get('path') ?? '') : null;
         return send(res, d ? 200 : 404, d ?? { error: 'No diff for that file' }), true;
+      }
+      // The side viewer: the worktree's files, and one file's bytes.
+      if ((mm = m(/^\/api\/tasks\/([\w-]+)\/files$/)) && req.method === 'GET') {
+        const t = store.task(mm[1]);
+        if (!t?.worktree || !existsSync(t.worktree)) return send(res, 404, { error: 'This task has no worktree now.' }), true;
+        return send(res, 200, listFiles(t.worktree)), true;
+      }
+      if ((mm = m(/^\/api\/tasks\/([\w-]+)\/file$/)) && req.method === 'GET') {
+        const t = store.task(mm[1]);
+        const hit = t?.worktree ? readWorktreeFile(t.worktree, url.searchParams.get('path') ?? '') : null;
+        if (!hit) return send(res, 404, { error: 'No such file in the worktree' }), true;
+        // The agent may change the file at any time, so the browser asks again each time.
+        return sendBytes(res, hit, 'no-store');
       }
       if ((mm = m(/^\/api\/workflows\/([^/]+)$/)) && req.method === 'PUT') {
         const file = decodeURIComponent(mm[1]);

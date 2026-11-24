@@ -14,10 +14,11 @@ let base: string;
 let store: Store;
 let runner: Runner;
 let taskId: string;
+let dir: string;
 const json = { 'content-type': 'application/json' };
 
 beforeAll(async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'orstra-srv-'));
+  dir = mkdtempSync(join(tmpdir(), 'orstra-srv-'));
   const wf = join(dir, 'wf.yaml');
   writeFileSync(wf, 'name: X\nsteps:\n  review:\n    use: human\n    question: ok?\n    on: { approved: end }\n');
   store = new Store(':memory:');
@@ -57,5 +58,21 @@ describe('task API', () => {
     expect((await post(`/api/tasks/${taskId}/archive`)).status).toBe(200);
     expect(await get('/api/tasks')).toHaveLength(0);
     expect(await get('/api/tasks?archived=1')).toHaveLength(1);
+  });
+});
+
+describe('worktree files', () => {
+  it('sends a file in the worktree with headers that keep it inert', async () => {
+    writeFileSync(join(dir, 'note.md'), '# Note\n');
+    const r = await fetch(`${base}/api/tasks/${taskId}/file?path=note.md`);
+    expect(r.status).toBe(200);
+    expect(r.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(r.headers.get('content-security-policy')).toContain('sandbox');
+    expect(await r.text()).toBe('# Note\n');
+  });
+
+  it('answers 404 for a path out of the worktree', async () => {
+    expect((await fetch(`${base}/api/tasks/${taskId}/file?path=..%2Fwf.yaml`)).status).toBe(404);
+    expect((await fetch(`${base}/api/tasks/nope/file?path=note.md`)).status).toBe(404);
   });
 });
