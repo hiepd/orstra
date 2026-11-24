@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { Fragment, useCallback, useMemo, useState } from 'react';
 import { api, errorMessage, taskLoader, type GitView, type RunView, type TaskDetail } from '../api';
 import { ClaudeCodeModal } from '../components/ClaudeCodeModal';
 import { AwaitingCard, DecisionCard, PermissionCard, RetryModal, StopModal, StuckBanner } from '../components/Decision';
@@ -216,12 +216,29 @@ function Overview({ task, git, onModal, embedded }: { task: TaskDetail; git: Res
   const cur = currentRun(task);
   const active = task.status === 'running' || task.status === 'needs_you';
   const lastIdx = task.runs.length - 1;
+  // Group the runs into attempts: each run of the first step starts a new one. Older attempts fold
+  // into one line, so the latest attempt is what you read first.
+  const firstStep = task.steps[0]?.id;
+  const groupsRaw: { n: number; runs: { r: RunView; i: number }[] }[] = [];
+  task.runs.forEach((r, i) => {
+    if (!groupsRaw.length || r.stepId === firstStep) groupsRaw.push({ n: r.stepId === firstStep ? r.attempt : 1, runs: [] });
+    groupsRaw[groupsRaw.length - 1].runs.push({ r, i });
+  });
+  const [openGroups, setOpenGroups] = useState<Record<number, boolean>>({});
+  const groups = groupsRaw.map((g, gi) => {
+    const last = gi === groupsRaw.length - 1;
+    const groupOpen = groupsRaw.length === 1 || (openGroups[gi] ?? last);
+    const cost = g.runs.reduce((x, { r }) => x + (r.costUsd ?? 0), 0);
+    const summary = g.runs.map(({ r }) => `${r.stepTitle} ${humanize(r.outcome ?? r.status).toLowerCase()}`).join(', ') + (cost ? ` · ${money(cost)}` : '');
+    return { key: gi, label: `Attempt ${g.n}`, multi: groupsRaw.length > 1, open: groupOpen, summary, runs: g.runs, toggle: () => setOpenGroups((m) => ({ ...m, [gi]: !groupOpen })) };
+  });
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const isOpen = (r: RunView, i: number) => open[r.id] ?? i === lastIdx;
 
   // Steps that haven't run yet in this pass, plus the current one while it is still queued: these can take a note.
   const upcoming = task.track.filter((s) => s.state === 'todo' || (s.state === 'current' && cur?.status === 'queued'));
   const agentRun = [...task.runs].reverse().find((r) => r.kind === 'agent');
+  const lastGate = [...task.runs].reverse().find((r) => r.kind === 'gate' && r.status !== 'running' && r.status !== 'queued');
   const g = git.data;
 
   /** What a non-agent run did, in a sentence, from the task's events. */
@@ -280,9 +297,26 @@ function Overview({ task, git, onModal, embedded }: { task: TaskDetail; git: Res
             <div>
               <DecisionCard task={task} />
               {g && g.files.length > 0 && (
-                <a className="ox-link" style={{ display: 'inline-block', marginTop: 8 }} href={href.chat(task.id)}>
-                  See what it changed ({g.files.length} {g.files.length === 1 ? 'file' : 'files'}) in Chat →
-                </a>
+                <div className="ox-dfiles">
+                  {g.files.slice(0, 5).map((f) => (
+                    <a key={f.path} href={href.chat(task.id)} title="See the diff in Chat">
+                      <span className={`ox-fs ox-fs-${f.status}`}>{f.status}</span>
+                      <span className="ox-trunc lx-mono">{f.path}</span>
+                      <span className="ox-plus">+{f.add}</span>
+                      <span className="ox-minus">−{f.del}</span>
+                    </a>
+                  ))}
+                  {g.files.length > 5 && (
+                    <a href={href.chat(task.id)} className="ox-link">
+                      and {g.files.length - 5} more in Chat →
+                    </a>
+                  )}
+                  {lastGate && (
+                    <span className={lastGate.outcome === 'pass' ? 'ox-tests ox-tests-ok' : 'ox-tests ox-tests-bad'}>
+                      {lastGate.outcome === 'pass' ? '✓ Tests pass' : '✕ Tests failed'} · {task.runs.length} runs · {money(task.cost.usd)}
+                    </span>
+                  )}
+                </div>
               )}
             </div>
           )}
@@ -319,7 +353,16 @@ function Overview({ task, git, onModal, embedded }: { task: TaskDetail; git: Res
             </h2>
             {task.runs.length > 0 ? (
               <div className="ox-card">
-                {task.runs.map((r, i) => {
+                {groups.map((gr) => (
+                  <Fragment key={gr.key}>
+                    {gr.multi && (
+                      <button className="ox-agh" aria-expanded={gr.open} onClick={gr.toggle}>
+                        <ChevronRight open={gr.open} size={11} />
+                        <b>{gr.label}</b>
+                        {!gr.open && <span>· {gr.summary}</span>}
+                      </button>
+                    )}
+                    {gr.open && gr.runs.map(({ r, i }) => {
                   const badge = outcomeBadge(task, r);
                   const text = runText(r);
                   const o = isOpen(r, i);
@@ -366,6 +409,8 @@ function Overview({ task, git, onModal, embedded }: { task: TaskDetail; git: Res
                     </div>
                   );
                 })}
+                  </Fragment>
+                ))}
               </div>
             ) : (
               <div className="ox-calm">No runs yet. The first step starts when a slot is free.</div>
@@ -415,7 +460,6 @@ function Overview({ task, git, onModal, embedded }: { task: TaskDetail; git: Res
 
       {!embedded && (
       <aside className="ox-props" aria-label="Task details">
-        <Prop k="Status" v={STATE[state].label} />
         <Prop k="Step" v={stepLabel({ ...task, run: cur ? { status: cur.status, attempt: cur.attempt, kind: cur.kind } : null })} />
         <div className="ox-prop">
           <span className="ox-pk">Workflow</span>
@@ -443,6 +487,17 @@ function Overview({ task, git, onModal, embedded }: { task: TaskDetail; git: Res
           v={task.cost.usd || task.cost.tokensIn ? `${money(task.cost.usd)} · ${tokens(task.cost.tokensIn + task.cost.tokensOut)} tokens` : 'Nothing yet'}
           title="Claude Code's own estimate. Codex reports tokens only."
         />
+        {task.budgetUsd ? (
+          <div className="ox-prop">
+            <span className="ox-pk">Budget</span>
+            <span className="ox-pv ox-budget" title={`budget_usd in ${task.workflowFile}`}>
+              <span className="ox-bar">
+                <i style={{ width: `${Math.max(2, Math.min(100, (task.cost.usd / task.budgetUsd) * 100))}%` }} />
+              </span>
+              {money(task.cost.usd)} of {money(task.budgetUsd)}
+            </span>
+          </div>
+        ) : null}
         <Prop k="Started" v={ago(task.createdAt)} title={new Date(task.createdAt).toLocaleString()} />
         <Prop k="Updated" v={ago(task.updatedAt)} title={new Date(task.updatedAt).toLocaleString()} />
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 14 }}>

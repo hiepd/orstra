@@ -174,6 +174,7 @@ const path = taskPath(wf, runs.map((r) => r.stepId), t.current_step);
     return {
       ...taskSummary(t), description: t.description, worktree: t.worktree, steps, track, notes, runs, human, awaiting, workingRunId: working?.id ?? null,
       worktreeGone: !!t.worktree && !existsSync(t.worktree),
+      budgetUsd: (() => { try { return runner.workflowFor(t).budgetUsd ?? null; } catch { return null; } })(),
       events, eventsAfter: opts.after ?? null, workflowChanged: runner.workflowChanged(t), permission: permissionView(t.id),
       lastSystem: (() => { const e = store.lastTaskEvent(t.id, 'system'); return e ? (JSON.parse(e.payload).text as string) : null; })(),
     };

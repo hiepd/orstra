@@ -89,22 +89,22 @@ export function Sidebar({
               </svg>
             </button>
           </div>
-          <a className="lx-srow" href={href.inbox}>
+          <a className="lx-stat" href={href.inbox}>
             <i style={{ background: 'var(--purple-fg)' }} />
             <span>Needs you</span>
             <b>{needsCount}</b>
           </a>
-          <a className="lx-srow" href={href.tasks}>
+          <a className="lx-stat" href={href.tasks}>
             <i style={{ background: 'var(--accent)' }} />
             <span>Running</span>
             <b>{running.length}</b>
           </a>
-          <a className="lx-srow" href={href.tasks}>
+          <a className="lx-stat" href={href.tasks}>
             <i style={{ background: 'var(--dim)' }} />
             <span>Queued</span>
             <b>{queuedCount}</b>
           </a>
-          <a className="lx-srow" href={href.settingsGroup('usage')}>
+          <a className="lx-stat" href={href.settingsGroup('usage')}>
             <i style={{ background: 'transparent' }} />
             <span>Cost today</span>
             <b>{costToday === null ? '—' : `$${costToday.toFixed(2)}`}</b>

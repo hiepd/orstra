@@ -3,6 +3,7 @@ import { api, errorMessage, type TaskDetail } from '../api';
 import { agentOf, humanize, reasonText, taskLabel } from '../lib/format';
 import { StopIcon, StuckCircle, WaitCircle } from './Icons';
 import { Modal, useToast } from './Overlay';
+import { href } from '../lib/router';
 import { ProgressList } from './ProgressList';
 
 const CHOICE_LABEL: Record<string, string> = {
@@ -246,6 +247,8 @@ export function StuckBanner({ task, onDone }: { task: TaskDetail; onDone?: () =>
   const fromEvents = [...task.events].reverse().find((e) => e.kind === 'system');
   const lastText = fromEvents && fromEvents.kind === 'system' ? fromEvents.text : task.lastSystem ?? null;
   const lastRun = [...task.runs].reverse().find((r) => r.stepId === task.currentStep) ?? task.runs[task.runs.length - 1];
+  const lastFail = [...task.runs].reverse().find((r) => r.kind === 'gate' && r.outcome === 'fail' && r.output);
+  const lastAgent = [...task.runs].reverse().find((r) => r.kind === 'agent');
   return (
     <section className="lx-card lx-stuck" aria-label="Needs you">
       <div className="lx-card-h">
@@ -253,6 +256,15 @@ export function StuckBanner({ task, onDone }: { task: TaskDetail; onDone?: () =>
         <span style={{ color: 'var(--red-fg)', fontWeight: 500 }}>{reasonText(task.inboxReason)}</span>
       </div>
       {lastText && <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.55 }}>{lastText}</p>}
+      {lastFail?.output && (
+        <div>
+          <div className="lx-hint" style={{ marginBottom: 6 }}>
+            What failed · {lastFail.stepTitle}
+            {lastFail.attempt > 1 ? ` · attempt ${lastFail.attempt}` : ''}
+          </div>
+          <pre className="ox-pre">{lastFail.output.trim().split('\n').slice(-8).join('\n')}</pre>
+        </div>
+      )}
       {lastRun?.progress && (
         <div>
           <div className="lx-hint" style={{ marginBottom: 6 }}>
@@ -265,6 +277,11 @@ export function StuckBanner({ task, onDone }: { task: TaskDetail; onDone?: () =>
       <div className="lx-card-f">
         <span className="lx-hint">{task.currentStepTitle ? `Stuck at ${task.currentStepTitle}` : ''}</span>
         <div className="lx-push">
+          {lastAgent?.sessionId && (
+            <a className="lx-btn" href={href.chat(task.id, lastAgent.id)}>
+              Ask {agentOf(lastAgent).name} why
+            </a>
+          )}
           <button className="lx-btn lx-dan" onClick={() => setModal('stop')}>
             Stop
           </button>

@@ -324,7 +324,7 @@ a:hover {
   place-items: center;
   cursor: pointer;
 }
-.lx-srow {
+.lx-stat {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -335,20 +335,20 @@ a:hover {
   color: var(--muted);
   text-decoration: none;
 }
-.lx-srow:hover {
+.lx-stat:hover {
   background: var(--fill);
   text-decoration: none;
 }
-.lx-srow i {
+.lx-stat i {
   flex: none;
   width: 6px;
   height: 6px;
   border-radius: 50%;
 }
-.lx-srow span {
+.lx-stat span {
   flex: 1;
 }
-.lx-srow b {
+.lx-stat b {
   color: var(--ink);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
@@ -2146,3 +2146,34 @@ a:hover {
 .ox-irow[aria-current='true']{background:var(--accent-soft)}
 .ox-irow[aria-current='true']:hover{background:var(--accent-soft)}
 .ox-segn{margin-left:6px;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--accent);color:#fff;font-size:12px;font-weight:600;display:inline-grid;place-items:center}
+
+/* ---- Task page: attempts, what changed under a decision, the budget bar ---- */
+.ox-agh{display:flex;align-items:center;gap:8px;width:100%;padding:10px 14px;border:0;border-top:1px solid var(--line);background:transparent;text-align:left;font-size:12px;color:var(--muted);cursor:pointer}
+.ox-agh:first-child{border-top:0}
+.ox-agh:hover{background:var(--hover)}
+.ox-agh b{font-weight:600}
+.ox-dfiles{margin-top:10px;display:flex;flex-direction:column;padding:6px 14px;border-radius:12px;background:var(--surface);box-shadow:var(--shadow-card)}
+.ox-dfiles a{display:flex;align-items:center;gap:10px;padding:7px 0;font-size:13px;color:var(--ink);text-decoration:none;border-top:1px solid var(--line)}
+.ox-dfiles a:first-child{border-top:0}
+.ox-dfiles a:hover .lx-mono{text-decoration:underline}
+.ox-fs{flex:none;width:12px;font-weight:600;font-size:12px;color:var(--orange-fg)}
+.ox-fs-A{color:var(--green-fg)}
+.ox-fs-D{color:var(--red-fg)}
+.ox-plus{margin-left:auto;color:var(--green-fg);font-size:12px}
+.ox-minus{color:var(--red-fg);font-size:12px}
+.ox-tests{padding:8px 0 4px;font-size:13px;border-top:1px solid var(--line)}
+.ox-tests-ok{color:var(--green-fg)}
+.ox-tests-bad{color:var(--red-fg)}
+.ox-budget{display:flex;align-items:center;gap:8px}
+.ox-bar{flex:1;min-width:40px;height:5px;border-radius:3px;background:var(--fill);overflow:hidden;display:block}
+.ox-bar i{display:block;height:100%;border-radius:3px;background:var(--accent)}
+
+/* ---- Chat: the transcript never collapses. It keeps 380 px at least; the worktree panel gives way first ---- */
+.ox-chat{min-width:380px;background:var(--bg)}
+.ox-sess{background:transparent}
+.ox-git{flex-shrink:1;min-width:260px;background:transparent}
+.ox-pcard{border:0;background:var(--surface);box-shadow:var(--shadow-card);border-radius:12px}
+.ox-ended{border:0;background:var(--fill)}
+@media (max-width: 1180px){.ox-sess{flex-basis:188px}.ox-git{flex-basis:280px}}
+@media (max-width: 1000px){.ox-git{display:none}}
+@media (max-width: 860px){.ox-sess{display:none}}
