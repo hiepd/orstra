@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { FINISH_INSTRUCTIONS, parseAgentResult, parseWorkflow, renderTemplate, route, stripProgressBlock, type Progress, type Step, type Workflow } from '@orstra/core';
+import { FINISH_INSTRUCTIONS, parseAgentResult, parseWorkflow, renderTemplate, route, stripProgressBlock, switchCase, type Progress, type Step, type Workflow } from '@orstra/core';
 import { withFiles, type Attachment } from './attachments.ts';
 import type { Executors, LiveSession, StreamEvent, TurnEnd } from './executors.ts';
 import type { RunRow, Store, TaskRow } from './db.ts';
@@ -30,7 +30,18 @@ export interface RunnerOptions {
   createWorktree: (taskId: string, repo?: string) => string;
   /** After an agent finishes a turn with an outcome, wait this long for a follow-up message before closing it. */
   turnGraceMs?: number;
+  /** How long a step may work when it sets no `timeout:`. 0 = no limit. */
+  defaultTimeoutMs?: { agent?: number; gate?: number };
 }
+
+/** The limits when a step sets no `timeout:`: ORSTRA_AGENT_TIMEOUT_MIN (120) and ORSTRA_GATE_TIMEOUT_MIN (30). */
+export function defaultTimeoutsFromEnv(): { agent: number; gate: number } {
+  const min = (v: string | undefined, d: number) => (v === undefined || v === '' ? d : Number(v)) * 60_000;
+  return { agent: min(process.env.ORSTRA_AGENT_TIMEOUT_MIN, 120), gate: min(process.env.ORSTRA_GATE_TIMEOUT_MIN, 30) };
+}
+
+/** Sent once when an agent ends a turn with no OUTCOME line, before the task goes to the Inbox. */
+export const NUDGE = 'Your last message had no OUTCOME line, so Orstra cannot tell if the step is finished. If you are finished, reply with only the "## Progress" block and the OUTCOME line. If you are not finished, continue the work and end with them.';
 
 interface Live {
   session: LiveSession;
@@ -39,6 +50,8 @@ interface Live {
   humanSpoke: boolean;
   sendSeq: number;
   finished: boolean;
+  /** Orstra already asked for the missing OUTCOME line once. */
+  nudged: boolean;
 }
 
 const id = (p: string) => `${p}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
@@ -49,6 +62,10 @@ export class Runner extends EventEmitter {
   private controllers = new Map<string, AbortController>();
   private live = new Map<string, Live>();
   private timers = 0;
+  /** Run id -> the timer that stops it when it works longer than its timeout. */
+  private deadlines = new Map<string, NodeJS.Timeout>();
+  /** Runs that hit their timeout, so the gate's abort reads as a timeout and not as a stop. */
+  private timedOut = new Set<string>();
 
   constructor(private store: Store, private exec: Executors, private opts: RunnerOptions) {
     super();
@@ -224,7 +241,7 @@ export class Runner extends EventEmitter {
       }
       this.event(task.id, run.id, e.kind, e);
     };
-    const live: Live = { session: null as unknown as LiveSession, routes: opts.routes, humanSpoke: false, sendSeq: 0, finished: false };
+    const live: Live = { session: null as unknown as LiveSession, routes: opts.routes, humanSpoke: false, sendSeq: 0, finished: false, nudged: false };
     live.session = this.exec.session((run.agent as 'claude-code' | 'codex') ?? 'claude-code', {
       cwd: task.worktree ?? process.cwd(), sessionId: opts.sessionId, resume: opts.resume, model: opts.model,
       onEvent, onTurn: (t) => this.onTurn(task.id, run.id, t),
@@ -262,6 +279,17 @@ export class Runner extends EventEmitter {
       // It answered you mid-conversation without finishing the step: wait for your reply.
       return this.markWaiting(taskId, runId, 'reply');
     }
+    if (!parsed.hasOutcome) {
+      // No OUTCOME line: a cut-off reply or a forgotten block. Never read that as done.
+      if (!live.nudged) {
+        live.nudged = true;
+        this.event(taskId, runId, 'system', { text: 'Claude Code ended its turn with no OUTCOME line. Orstra asked it to finish the step.' });
+        live.session.send(NUDGE);
+        return;
+      }
+      this.event(taskId, runId, 'system', { text: 'Still no OUTCOME line. Tell Claude Code what to do next, or retry the step.' });
+      return this.markWaiting(taskId, runId, 'no_outcome');
+    }
     // A question isn't progress: record the entry only when the step actually ends.
     if (parsed.outcome === 'needs_you') return this.markWaiting(taskId, runId, 'question');
     this.store.updateRun(runId, { progress: JSON.stringify(parsed.progress) });
@@ -283,7 +311,8 @@ export class Runner extends EventEmitter {
     }, this.opts.turnGraceMs ?? 1500);
   }
 
-  private markWaiting(taskId: string, runId: string, reason: 'question' | 'reply' | 'paused') {
+  private markWaiting(taskId: string, runId: string, reason: 'question' | 'reply' | 'paused' | 'no_outcome' | 'permission') {
+    this.disarm(runId);
     this.store.updateRun(runId, { status: 'waiting' });
     this.store.updateTask(taskId, { status: 'needs_you', inbox_reason: reason });
     this.changed(taskId);
@@ -302,6 +331,40 @@ export class Runner extends EventEmitter {
     this.finish(taskId, runId, 'cant_do');
   }
 
+  /** Start the clock on a run. It stops the run and sends the task to the Inbox (`timeout`) when it runs out. */
+  private arm(taskId: string, runId: string, step: Step) {
+    this.disarm(runId);
+    const fallback = step.use === 'gate' ? this.opts.defaultTimeoutMs?.gate : this.opts.defaultTimeoutMs?.agent;
+    const ms = step.timeoutMinutes !== undefined ? step.timeoutMinutes * 60_000 : fallback ?? 0;
+    if (!ms) return;
+    const t = setTimeout(() => this.onTimeout(taskId, runId, ms), ms);
+    t.unref?.();
+    this.deadlines.set(runId, t);
+  }
+
+  private disarm(runId: string) {
+    const t = this.deadlines.get(runId);
+    if (t) clearTimeout(t);
+    this.deadlines.delete(runId);
+  }
+
+  private onTimeout(taskId: string, runId: string, ms: number) {
+    this.deadlines.delete(runId);
+    const run = this.store.run(runId);
+    if (!run || run.status !== 'running') return;
+    const mins = Math.round(ms / 60_000);
+    this.timedOut.add(runId);
+    this.event(taskId, runId, 'system', { text: `This step worked longer than its timeout (${mins ? `${mins} min` : `${ms} ms`}), so Orstra stopped it.` });
+    const live = this.live.get(runId);
+    if (live) {
+      live.finished = true;
+      live.session.kill();
+      return this.finish(taskId, runId, 'timeout');
+    }
+    // A gate: abort its command; execute() sees the timeout and finishes the run.
+    this.controllers.get(runId)?.abort();
+  }
+
   private async execute(task: TaskRow, run: RunRow) {
     const wf = this.workflow(task.workflow_path);
     const step = wf.steps[run.step_id];
@@ -311,6 +374,7 @@ export class Runner extends EventEmitter {
       const sessionId = randomUUID();
       this.store.updateRun(run.id, { session_id: sessionId });
       const live = this.openSession(task, { ...run, session_id: sessionId }, { sessionId, resume: false, routes: true, model: step.model });
+      this.arm(task.id, run.id, step);
       live.session.send(this.buildPrompt(task, wf, step, run));
       return;
     }
@@ -320,7 +384,13 @@ export class Runner extends EventEmitter {
     const onEvent = (e: StreamEvent) => this.event(task.id, run.id, e.kind, e);
     try {
       if (step.use === 'gate') {
+        this.arm(task.id, run.id, step);
         const res = await this.exec.gate({ commands: step.run ?? [], cwd, onEvent, signal: ctrl.signal });
+        this.disarm(run.id);
+        if (this.timedOut.delete(run.id)) {
+          this.store.updateRun(run.id, { output: res.output });
+          return this.finish(task.id, run.id, 'timeout');
+        }
         if (ctrl.signal.aborted) return;
         this.store.updateRun(run.id, { output: res.output });
         return this.finish(task.id, run.id, res.pass ? 'pass' : 'fail');
@@ -334,10 +404,10 @@ export class Runner extends EventEmitter {
       }
 
       if (step.use === 'switch') {
-        const value = renderTemplate(step.value ?? '', this.context(task)).toLowerCase();
-        const match = Object.keys(step.on).find((k) => k !== 'default' && value.includes(k.toLowerCase()));
-        this.event(task.id, run.id, 'system', { text: `Took the ${match ?? 'default'} branch` });
-        return this.finish(task.id, run.id, match ?? 'default');
+        const value = renderTemplate(step.value ?? '', this.context(task));
+        const match = switchCase(Object.keys(step.on), value);
+        this.event(task.id, run.id, 'system', { text: `Took the ${match} branch` });
+        return this.finish(task.id, run.id, match);
       }
 
       if (step.use === 'action') {
@@ -356,6 +426,8 @@ export class Runner extends EventEmitter {
 
   /** Record a run's outcome and follow the matching arrow. */
   private finish(taskId: string, runId: string, outcome: string) {
+    this.disarm(runId);
+    this.timedOut.delete(runId);
     const run = this.store.run(runId);
     const task = this.store.task(taskId);
     if (!run || !task || task.status === 'stopped') return;
@@ -441,10 +513,12 @@ export class Runner extends EventEmitter {
       this.store.updateTask(taskId, { status: 'running', inbox_reason: null, current_step: target.step_id });
     }
     let live = this.live.get(target.id);
+    const step = this.workflow(task.workflow_path).steps[target.step_id];
     if (!live) {
-      const step = this.workflow(task.workflow_path).steps[target.step_id];
       live = this.openSession(task, target, { sessionId: target.session_id, resume: true, routes: owns && task.status !== 'stopped', model: step?.model });
     }
+    // The run works again, so its clock starts again.
+    if (live.routes && owns && task.status !== 'stopped' && step) this.arm(taskId, target.id, step);
     live.humanSpoke = true;
     live.sendSeq++;
     live.session.send(body);
@@ -462,6 +536,7 @@ export class Runner extends EventEmitter {
 
   private closeLive(taskId: string) {
     for (const r of this.store.runsForTask(taskId)) {
+      this.disarm(r.id);
       const live = this.live.get(r.id);
       if (live) {
         live.finished = true;

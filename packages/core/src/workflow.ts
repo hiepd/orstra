@@ -16,6 +16,13 @@ export const SUCCESS_OUTCOME: Record<StepKind, string> = {
 
 export const END = 'end';
 
+/**
+ * The actions an `action` step can name. The daemon runs them (apps/daemon/src/actions.ts) and a test
+ * keeps the two lists equal. A name outside this list is a parse error, so a typo never passes silently.
+ */
+export const ACTION_NAMES = ['git.merge', 'github.pr', 'git.cleanup'] as const;
+export type ActionName = (typeof ACTION_NAMES)[number];
+
 export interface Target {
   goto: string;
   /** How many times this arrow may be followed for one task. Unset = unlimited. */
@@ -145,6 +152,12 @@ export function parseWorkflow(source: string): Workflow {
     }
     if (step.use === 'agent' && !step.prompt) throw new Error(`Agent step "${step.id}" needs a prompt.`);
     if (step.use === 'gate' && !step.run?.length) throw new Error(`Gate step "${step.id}" needs run commands.`);
+    if (step.use === 'action') {
+      if (!step.action) throw new Error(`Action step "${step.id}" needs an action: ${ACTION_NAMES.join(', ')}.`);
+      if (!(ACTION_NAMES as readonly string[]).includes(step.action)) {
+        throw new Error(`Action step "${step.id}" names "${step.action}", which Orstra does not have. Use one of: ${ACTION_NAMES.join(', ')}.`);
+      }
+    }
   }
 
   return {

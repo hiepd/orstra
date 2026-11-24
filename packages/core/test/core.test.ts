@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyEdits, parseWorkflow, route, renderTemplate, parseAgentResult, stripProgressBlock, taskPath } from '../src/index.ts';
+import { applyEdits, parseWorkflow, route, renderTemplate, parseAgentResult, stripProgressBlock, switchCase, taskPath } from '../src/index.ts';
 
 const YAML = `
 name: Linear ticket to PR
@@ -189,5 +189,31 @@ describe('applyEdits', () => {
     g.steps[0].on = [];
     const out = applyEdits(SRC, { ...g, steps: g.steps.slice(0, 1) });
     expect(Object.keys(parseWorkflow(out).steps)).toEqual(['a']);
+  });
+});
+
+describe('switchCase', () => {
+  const cases = ['pass', 'fail', 'bug', 'default'];
+  it('takes an exact match, without regard to case or outer spaces', () => {
+    expect(switchCase(cases, ' PASS ')).toBe('pass');
+  });
+  it('takes a case that is a whole word of the value', () => {
+    expect(switchCase(cases, 'labels: bug, ui')).toBe('bug');
+  });
+  it('does not match part of a word', () => {
+    expect(switchCase(cases, 'unpassed')).toBe('default');
+    expect(switchCase(cases, 'debugger')).toBe('default');
+  });
+  it('takes the default when the value names two cases', () => {
+    expect(switchCase(cases, 'pass or fail')).toBe('default');
+  });
+});
+
+describe('action steps', () => {
+  it('refuses an action Orstra does not have', () => {
+    expect(() => parseWorkflow('name: X\nsteps:\n  m:\n    use: action\n    action: git.mrege\n    next: end\n')).toThrow(/git.mrege/);
+  });
+  it('accepts a known action', () => {
+    expect(parseWorkflow('name: X\nsteps:\n  m:\n    use: action\n    action: git.merge\n    next: end\n').steps.m.action).toBe('git.merge');
   });
 });

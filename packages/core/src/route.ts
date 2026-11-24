@@ -29,3 +29,18 @@ export function route(wf: Workflow, stepId: string, outcome: string, edgeCounts:
   }
   return { type: 'goto', step: target.goto, edge };
 }
+
+/**
+ * The case a switch step takes for `value`. An exact match (case and outer spaces ignored) wins. Else a
+ * case that is a whole word of the value wins, but only when exactly one case is: "unpassed" does not
+ * match "pass", and a value that names two cases takes the default. No match also takes the default.
+ */
+export function switchCase(cases: string[], value: string): string {
+  const v = value.trim().toLowerCase();
+  const names = cases.filter((k) => k !== 'default');
+  const exact = names.find((k) => k.toLowerCase() === v);
+  if (exact) return exact;
+  const esc = (k: string) => k.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const words = names.filter((k) => new RegExp(`(^|[^\\w])${esc(k)}($|[^\\w])`).test(v));
+  return words.length === 1 ? words[0] : 'default';
+}

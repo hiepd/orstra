@@ -26,9 +26,9 @@ export const ACTIONS: Record<string, (ctx: ActionContext) => ActionResult> = {
   },
 };
 
-/** Run a named action. An unknown name passes, so a workflow that names an action we don't have yet still moves. */
+/** Run a named action. The parser refuses an unknown name; if one gets here anyway, it is an error, never a pass. */
 export function runAction(name: string | undefined, ctx: ActionContext): ActionResult {
   const action = name && ACTIONS[name];
-  if (!action) return { outcome: 'ok', text: `Action "${name ?? 'none'}" isn't built yet; treated as ok.` };
+  if (!action) return { outcome: 'error', text: `Orstra has no action "${name ?? 'none'}", so nothing ran.` };
   return action(ctx);
 }

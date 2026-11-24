@@ -173,9 +173,9 @@ describe('runAction', () => {
     expect(runAction('git.merge', { cwd: wt, input: {} }).outcome).toBe('ok'); // merged
   });
 
-  it('passes an action it does not have, so the workflow still moves', () => {
+  it('never passes an action it does not have', () => {
     const res = runAction('linear.comment', { cwd: tmpdir(), input: {} });
-    expect(res.outcome).toBe('ok');
-    expect(res.text).toContain("isn't built yet");
+    expect(res.outcome).toBe('error');
+    expect(res.text).toContain('no action');
   });
 });

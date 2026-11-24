@@ -4,7 +4,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from '../src/db.ts';
-import { Runner } from '../src/runner.ts';
+import { NUDGE, Runner } from '../src/runner.ts';
 import type { Executors, LiveSession, SessionOptions } from '../src/executors.ts';
 
 interface Sent { sessionId: string; resume: boolean; text: string }
@@ -98,6 +98,14 @@ steps:
     action: git.merge
     next: end
 `;
+
+async function waitFor(ok: () => boolean, ms = 2000) {
+  const end = Date.now() + ms;
+  while (!ok()) {
+    if (Date.now() > end) throw new Error('waitFor timed out');
+    await new Promise((r) => setTimeout(r, 5));
+  }
+}
 
 const done = (did: string) => `## Progress\nDid: ${did}\nDecided: nothing\nLeft: nothing\nAvoid: nothing\n\nOUTCOME: done`;
 
@@ -329,5 +337,44 @@ steps:
     await runner.idle();
     expect(prompts()[1]).toContain('Use the shared EmptyState from ui/');
     expect(store.events(task.id).some((e) => e.kind === 'you')).toBe(true);
+  });
+
+  it('asks once for a missing OUTCOME line, and reads the answer', async () => {
+    const { store, runner, wfPath, fake } = setup(LOOP, (text, n) => (n === 1 ? 'I changed the file.' : done('changed the file')));
+    const task = runner.startTask({ workflowPath: wfPath, title: 'x' });
+    await runner.idle();
+    expect(fake.sent[1].text).toBe(NUDGE);
+    expect(store.task(task.id)!.status).toBe('done');
+  });
+
+  it('never reads a reply without an OUTCOME line as done', async () => {
+    const { store, runner, wfPath } = setup(LOOP, () => 'I changed the fi');
+    const task = runner.startTask({ workflowPath: wfPath, title: 'x' });
+    await waitFor(() => store.task(task.id)!.status === 'needs_you');
+    expect(store.task(task.id)!.inbox_reason).toBe('no_outcome');
+    expect(store.runsForTask(task.id).filter((r) => r.step_id === 'verify')).toHaveLength(0);
+  });
+
+  it('stops an agent step that works longer than its timeout and sends the task to the inbox', async () => {
+    const { store, runner, wfPath } = setup(LOOP.replace('next: verify', 'next: verify\n    timeout: 0.0005'), () => null);
+    const task = runner.startTask({ workflowPath: wfPath, title: 'x' });
+    await waitFor(() => store.task(task.id)!.status === 'needs_you');
+    const t = store.task(task.id)!;
+    expect(t.inbox_reason).toBe('timeout');
+    expect(store.runsForTask(task.id)[0].outcome).toBe('timeout');
+  });
+
+  it('stops a gate that hangs, using the default gate timeout', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'orstra-test-'));
+    const wfPath = join(dir, 'wf.yaml');
+    writeFileSync(wfPath, 'name: G\nsteps:\n  check:\n    use: gate\n    run: [sleep 100]\n    on: { pass: end }\n');
+    const exec = {
+      gate: ({ signal }: { signal: AbortSignal }) => new Promise((r) => signal.addEventListener('abort', () => r({ pass: false, output: 'killed' }))),
+    } as unknown as Executors;
+    const store = new Store(':memory:');
+    const runner = new Runner(store, exec, { slots: 1, createWorktree: () => dir, defaultTimeoutMs: { gate: 20 } });
+    const task = runner.startTask({ workflowPath: wfPath, title: 'x' });
+    await waitFor(() => store.task(task.id)!.status === 'needs_you');
+    expect(store.task(task.id)!.inbox_reason).toBe('timeout');
   });
 });

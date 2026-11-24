@@ -40,7 +40,7 @@ async function main() {
     case 'serve': {
       ensureDirs();
       const { Store } = await import('./db.ts');
-      const { Runner } = await import('./runner.ts');
+      const { Runner, defaultTimeoutsFromEnv } = await import('./runner.ts');
       const { realExecutors } = await import('./executors.ts');
       const { createWorktree } = await import('./worktree.ts');
       const { startServer } = await import('./server.ts');
@@ -48,7 +48,7 @@ async function main() {
       const { migrateWorkflowPaths } = await import('./workflows.ts');
       const moved = migrateWorkflowPaths(store);
       if (moved) console.log(`Re-pointed ${moved} task(s) at their workflow in the workflow folder.`);
-      const runner = new Runner(store, realExecutors, { slots: SLOTS, createWorktree });
+      const runner = new Runner(store, realExecutors, { slots: SLOTS, createWorktree, defaultTimeoutMs: defaultTimeoutsFromEnv() });
       runner.recover();
 
       // The chief of staff: Claude Code with Orstra's tools (served by cos-mcp.ts) and every tool of its own.
