@@ -249,6 +249,7 @@ export class Runner extends EventEmitter {
   private onTurn(taskId: string, runId: string, t: TurnEnd) {
     const live = this.live.get(runId);
     if (!live || live.finished) return;
+    this.store.updateRun(runId, { last_turn_at: Date.now() });
 
     if (t.interrupted) {
       this.event(taskId, runId, 'system', { text: 'Stopped. Tell Claude Code what to do next.' });
@@ -294,7 +295,7 @@ export class Runner extends EventEmitter {
   }
 
   private markWaiting(taskId: string, runId: string, reason: 'question' | 'reply' | 'paused') {
-    this.store.updateRun(runId, { status: 'waiting' });
+    this.store.updateRun(runId, { status: 'waiting', wait_reason: reason });
     this.store.updateTask(taskId, { status: 'needs_you', inbox_reason: reason });
     this.changed(taskId);
     this.pump();
@@ -370,11 +371,14 @@ export class Runner extends EventEmitter {
     const task = this.store.task(taskId);
     if (!run || !task || task.status === 'stopped') return;
     const okOutcomes = new Set(['done', 'pass', 'ok', 'approved', 'started']);
-    this.store.updateRun(runId, { status: okOutcomes.has(outcome) || run.kind === 'switch' || run.kind === 'human' ? 'done' : 'failed', outcome, ended_at: Date.now() });
-
     const wf = this.workflow(task.workflow_path);
     const counts = JSON.parse(task.edge_counts) as Record<string, number>;
     const next = route(wf, run.step_id, outcome, counts);
+    // What the router decided is stored on the run, so a later read never has to ask the workflow
+    // file again. An edit to that file cannot change what the board says about a task that ended.
+    const routed = next.type === 'goto' ? `goto:${next.step}` : next.type === 'end' ? 'end' : `block:${next.reason}`;
+    this.store.updateRun(runId, { status: okOutcomes.has(outcome) || run.kind === 'switch' || run.kind === 'human' ? 'done' : 'failed', outcome, ended_at: Date.now(), routed });
+
     if (next.type === 'goto') {
       counts[next.edge] = (counts[next.edge] ?? 0) + 1;
       this.store.updateTask(taskId, { edge_counts: JSON.stringify(counts) });
@@ -428,10 +432,9 @@ export class Runner extends EventEmitter {
    */
   private sendBack(task: TaskRow, target: RunRow): RunRow {
     const title = this.stepTitle(task, target.step_id);
-    for (const r of this.store.runsForTask(task.id)) {
-      if (r.id === target.id || r.status !== 'waiting') continue;
-      this.killLive(r.id);
-      this.store.updateRun(r.id, { status: 'stopped', outcome: 'reopened', ended_at: Date.now() });
+    const closing = this.store.openRuns().filter((r) => r.task_id === task.id && r.id !== target.id);
+    this.closeOpenRuns(task.id, 'reopened', target.id);
+    for (const r of closing) {
       this.event(task.id, r.id, 'system', { text: `${r.kind === 'human' ? 'This decision closed' : 'This step closed'} without an answer: your message sent ${title} back to the agent.` });
     }
     this.killLive(target.id);
@@ -554,16 +557,28 @@ export class Runner extends EventEmitter {
     for (const r of this.store.runsForTask(taskId)) this.killLive(r.id);
   }
 
+  /**
+   * End every run that still holds the task, so only 1 ever does. `queued` counts: a run that never
+   * started still holds the task, and the database refuses a second open run beside it.
+   */
+  private closeOpenRuns(taskId: string, outcome: string | null, exceptRunId?: string) {
+    for (const r of this.store.openRuns()) {
+      if (r.task_id !== taskId || r.id === exceptRunId) continue;
+      this.killLive(r.id);
+      this.controllers.get(r.id)?.abort();
+      this.store.updateRun(r.id, { status: 'stopped', ended_at: Date.now(), ...(outcome ? { outcome } : {}) });
+    }
+  }
+
   /** Run a step again (default: where the task is now) as a fresh session. */
   retry(taskId: string, stepId?: string, note?: string, via?: Via) {
     const task = this.store.task(taskId);
     if (!task) throw new Error('No such task.');
     const step = stepId ?? task.current_step;
     if (!step) throw new Error('Nothing to retry.');
-    this.closeLive(taskId);
-    for (const r of this.store.runsForTask(taskId)) {
-      if (r.status === 'waiting' || r.status === 'running') this.store.updateRun(r.id, { status: 'stopped', ended_at: Date.now() });
-    }
+    this.closeOpenRuns(taskId, null);
+    // A re-run is how you start a stopped task again, so it lifts the stop.
+    this.store.updateTask(taskId, { stopped_at: null });
     if (note) this.store.addEvent(taskId, null, 'note', { text: note, step });
     this.event(taskId, null, 'system', { text: `Retrying ${this.workflow(task.workflow_path).steps[step]?.title ?? step}${byCos(via)}` });
     this.queueStep(task, step);
@@ -571,14 +586,8 @@ export class Runner extends EventEmitter {
   }
 
   stop(taskId: string, via?: Via) {
-    this.closeLive(taskId);
-    for (const r of this.store.runsForTask(taskId)) {
-      if (r.status === 'running' || r.status === 'queued' || r.status === 'waiting') {
-        this.controllers.get(r.id)?.abort();
-        this.store.updateRun(r.id, { status: 'stopped', ended_at: Date.now() });
-      }
-    }
-    this.store.updateTask(taskId, { status: 'stopped' });
+    this.closeOpenRuns(taskId, null);
+    this.store.updateTask(taskId, { status: 'stopped', stopped_at: Date.now() });
     this.event(taskId, null, 'system', { text: `Stopped${byCos(via)}` });
     this.pump();
   }

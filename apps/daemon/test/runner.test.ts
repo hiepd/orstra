@@ -53,13 +53,13 @@ function fakeExecutors(reply: (text: string, n: number, opts: SessionOptions) =>
   return { exec, sent, sessions };
 }
 
-function setup(yaml: string, reply: (text: string, n: number, opts: SessionOptions) => string | null, gate: (n: number) => boolean = () => true, worktree?: string) {
+function setup(yaml: string, reply: (text: string, n: number, opts: SessionOptions) => string | null, gate: (n: number) => boolean = () => true, worktree?: string, slots = 2) {
   const dir = mkdtempSync(join(tmpdir(), 'orstra-test-'));
   const wfPath = join(dir, 'wf.yaml');
   writeFileSync(wfPath, yaml);
   const fake = fakeExecutors(reply, gate);
   const store = new Store(':memory:');
-  const runner = new Runner(store, fake.exec, { slots: 2, createWorktree: () => worktree ?? dir, turnGraceMs: 0 });
+  const runner = new Runner(store, fake.exec, { slots, createWorktree: () => worktree ?? dir, turnGraceMs: 0 });
   const prompts = () => fake.sent.filter((s, i) => fake.sent.findIndex((x) => x.sessionId === s.sessionId) === i && !s.resume).map((s) => s.text);
   return { store, runner, wfPath, prompts, fake, dir };
 }
@@ -466,6 +466,77 @@ steps:
     expect(store.runsForTask(task.id)).toHaveLength(before);
     expect(fake.sent[fake.sent.length - 1].text).toContain('one more thing');
     expect(store.events(task.id).some((e) => e.kind === 'system' && String(JSON.parse(e.payload).text).includes('finished'))).toBe(true);
+  });
+
+  it('records what the router decided on the run that ended', async () => {
+    const { store, runner, wfPath } = setup(REVIEW, () => done('first pass'));
+    const task = runner.startTask({ workflowPath: wfPath, title: 'routed' });
+    await runner.idle();
+    expect(store.runsForTask(task.id)[0].routed).toBe('goto:review');
+
+    const review = store.runsForTask(task.id).find((r) => r.status === 'waiting')!;
+    runner.decide(review.id, 'close');
+    await runner.idle();
+    expect(store.run(review.id)!.routed).toBe('end');
+  });
+
+  it('records a block on the run whose outcome had no arrow', async () => {
+    const { store, runner, wfPath } = setup(LOOP, () => done('tried'), () => false);
+    const task = runner.startTask({ workflowPath: wfPath, title: 'no arrow' });
+    await runner.idle();
+    const last = store.runsForTask(task.id).at(-1)!;
+    expect(last.step_id).toBe('verify');
+    expect(last.routed).toBe('block:loop_exhausted');
+  });
+
+  it('writes the time a turn ended on the run', async () => {
+    const { store, runner, wfPath } = setup(LOOP, () => 'Which timezone?\n\nOUTCOME: needs_you');
+    const task = runner.startTask({ workflowPath: wfPath, title: 'turn' });
+    await runner.idle();
+    const impl = store.runsForTask(task.id)[0];
+    expect(impl.last_turn_at).toBeGreaterThan(Date.now() - 2000);
+    expect(impl.last_turn_at).toBeLessThanOrEqual(Date.now());
+  });
+
+  it('writes the wait reason on the run, not only on the task', async () => {
+    const { store, runner, wfPath } = setup(LOOP, (text, n) => (n === 1 ? 'Which one?\n\nOUTCOME: needs_you' : text.includes('why') ? 'Because the ticket says so.' : done('ok')));
+    const task = runner.startTask({ workflowPath: wfPath, title: 'reasons' });
+    await runner.idle();
+    const impl = store.runsForTask(task.id)[0];
+    expect(store.run(impl.id)!.wait_reason).toBe('question');
+
+    await runner.message(task.id, 'why do you ask?', 'chat');
+    await runner.idle();
+    expect(store.run(impl.id)!.wait_reason).toBe('reply');
+  });
+
+  // Review Focus: retry used to leave a queued run open, which the 1 open run index now refuses.
+  it('re-runs a step that was queued without breaking the 1 open run rule', async () => {
+    const { store, runner, wfPath } = setup(LOOP, () => done('ok'), () => true, undefined, 0);
+    const task = runner.startTask({ workflowPath: wfPath, title: 'queued' });
+    expect(store.openRun(task.id)!.status).toBe('queued');
+
+    expect(() => runner.retry(task.id)).not.toThrow();
+    expect(store.runsForTask(task.id).filter((r) => r.status === 'queued')).toHaveLength(1);
+    expect(store.openRuns().filter((r) => r.task_id === task.id)).toHaveLength(1);
+  });
+
+  // Review Focus 4: the product tells you to re-run a stopped task, so a re-run must lift the stop.
+  it('clears the stop when you re-run a stopped task', async () => {
+    const { store, runner, wfPath } = setup(LOOP, (text, n) => (n === 1 ? 'Which one?\n\nOUTCOME: needs_you' : done('ok')));
+    const task = runner.startTask({ workflowPath: wfPath, title: 'revive' });
+    await runner.idle();
+
+    runner.stop(task.id);
+    expect(store.task(task.id)!.stopped_at).toBeGreaterThan(0);
+
+    runner.retry(task.id);
+    expect(store.task(task.id)!.stopped_at).toBe(null);
+    await runner.idle();
+    expect(store.task(task.id)!.status).toBe('done');
+
+    runner.stop(task.id);
+    expect(store.task(task.id)!.stopped_at).toBeGreaterThan(0);
   });
 
   it('hands notes to the next run of that step', async () => {
