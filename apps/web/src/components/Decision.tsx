@@ -17,9 +17,12 @@ const DONE_TOAST: Record<string, string> = {
   approved: 'Approved',
   changes_requested: 'Changes requested. The agent picks it up next.',
   rejected: 'Rejected',
+  start: 'Started. The agent picks it up next.',
+  close: 'Closed',
+  reopen: 'Reopened. The agent picks it up next.',
 };
 const isReject = (c: string) => /^reject/.test(c);
-const isApprove = (c: string) => /^approve/.test(c);
+const isApprove = (c: string) => /^(approve|start|close)/.test(c);
 const choiceLabel = (c: string) => CHOICE_LABEL[c] ?? humanize(c);
 
 /** The human step's decision: the question, the artifact's progress, one button per choice. */
