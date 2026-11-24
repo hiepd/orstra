@@ -84,9 +84,11 @@ Each run is a fresh `claude -p` session (stream-json) in the task's worktree, wi
 
 If the agent ends a turn with no `OUTCOME:` line, Orstra asks once for it; if it is still absent, the task comes to you. A Claude Code tool call that the permission mode does not allow comes to your Inbox as a question (turn this off in Settings). Each run records its cost and tokens.
 
+A step's agent can also publish a **Claude artifact**: a page on your claude.ai account. It prints the link in its message. Turn it off in Settings → Agents, or with `ORSTRA_CLAUDE_ARTIFACT=0`. See [docs/concepts.md](docs/concepts.md#claude-artifact) for the limits.
+
 Codex steps run `codex exec --json` in the worktree, one process per turn, in a `workspace-write` sandbox.
 
-Settings via environment variables: `ORSTRA_HOME` (default `~/.orstra`), `ORSTRA_WORKFLOWS` (default `$ORSTRA_HOME/workflows`), `ORSTRA_PORT` (4317), `ORSTRA_SLOTS` (4), `ORSTRA_CLAUDE_PERMISSION` (`acceptEdits`), `ORSTRA_CLAUDE_TOOLS` (`Bash Read Edit Write Glob Grep`), `ORSTRA_COS_MODEL`, `ORSTRA_AGENT_TIMEOUT_MIN` (120), `ORSTRA_GATE_TIMEOUT_MIN` (30), `LINEAR_API_KEY`, `ORSTRA_TRIGGER_INTERVAL_S` (60), `ORSTRA_CODEX_SANDBOX` (`workspace-write`), `ORSTRA_UI_PORTS` (5317, other UI ports the API accepts), `ORSTRA_ALLOWED_HOSTS`.
+Settings via environment variables: `ORSTRA_HOME` (default `~/.orstra`), `ORSTRA_WORKFLOWS` (default `$ORSTRA_HOME/workflows`), `ORSTRA_PORT` (4317), `ORSTRA_SLOTS` (4), `ORSTRA_CLAUDE_PERMISSION` (`acceptEdits`), `ORSTRA_CLAUDE_TOOLS` (`Bash Read Edit Write Glob Grep`), `ORSTRA_CLAUDE_ARTIFACT` (`1`), `ORSTRA_COS_MODEL`, `ORSTRA_AGENT_TIMEOUT_MIN` (120), `ORSTRA_GATE_TIMEOUT_MIN` (30), `LINEAR_API_KEY`, `ORSTRA_TRIGGER_INTERVAL_S` (60), `ORSTRA_CODEX_SANDBOX` (`workspace-write`), `ORSTRA_UI_PORTS` (5317, other UI ports the API accepts), `ORSTRA_ALLOWED_HOSTS`.
 
 ## Security
 

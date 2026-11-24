@@ -21,6 +21,11 @@ export interface AgentSettings {
    * your Inbox as a question. false: Claude Code refuses it, and only the agent learns why.
    */
   askPermission?: boolean;
+  /**
+   * Claude Code only. true (the default): a step's agent may publish a Claude artifact, a page on your
+   * claude.ai account. false: the Artifact tool stays off. Unset falls back to ORSTRA_CLAUDE_ARTIFACT.
+   */
+  artifact?: boolean;
 }
 export type AgentConfig = Record<AgentId, AgentSettings>;
 
@@ -41,6 +46,7 @@ function sanitize(raw: any, id: AgentId): AgentSettings {
     if (effort) out.effort = effort;
     if (permissionMode) out.permissionMode = permissionMode;
     if (r.askPermission === false) out.askPermission = false;
+    if (r.artifact === false) out.artifact = false;
   }
   return out;
 }

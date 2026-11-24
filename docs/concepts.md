@@ -88,6 +88,15 @@ The caps are 10 MB per file and 25 MB per message; over them, Orstra tells you a
 
 An attachment is a file **you** add. A file a **step** produces is an **artifact** (not built yet). One root, 2 folders: `.orstra/attachments/` and `.orstra/artifacts/`.
 
+### Claude artifact
+A web page an agent publishes to your claude.ai account with Claude Code's `Artifact` tool. It is not Orstra's artifact above: it lives on claude.ai, not in the worktree. A step's agent writes an HTML file, publishes it, and prints the link in its message. Orstra stores nothing about it. Turn it off with `"artifact": false` in `~/.orstra/agents.json` (Settings → Agents), or `ORSTRA_CLAUDE_ARTIFACT=0`.
+
+Its limits:
+
+- It needs a paid Claude plan and a claude.ai login. A session that signs in with `ANTHROPIC_API_KEY`, a gateway token or a cloud provider cannot publish.
+- A step's agent runs `claude -p`, which holds no live watch, so the page gets no live update subscription.
+- A republish of the same file path keeps the same URL, so the agent can correct a page without a second link.
+
 ### Decision
 Your answer at a `human` step. You see what you're deciding (e.g. the spec, the agent's assumptions and open questions) and what each choice leads to. Each choice is an arrow.
 

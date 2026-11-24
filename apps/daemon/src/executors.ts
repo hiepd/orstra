@@ -97,6 +97,41 @@ export function permissionMcpConfig(runId: string): string {
   return JSON.stringify({ mcpServers: { orstra_perm: { type: 'stdio', command: TSX, args: [script], env: { ORSTRA_PORT: String(PORT), ORSTRA_RUN_ID: runId } } } });
 }
 
+/**
+ * May a step's agent publish a Claude artifact? On unless you turn it off: `"artifact": false` in
+ * agents.json, or ORSTRA_CLAUDE_ARTIFACT=0 in the daemon's environment. The setting wins over the
+ * variable, the same way the permission mode does.
+ */
+export function artifactOn(cfg: AgentSettings = {}, env: NodeJS.ProcessEnv = process.env): boolean {
+  if (cfg.artifact !== undefined) return cfg.artifact;
+  return (env.ORSTRA_CLAUDE_ARTIFACT ?? '1') !== '0';
+}
+
+/** The tools a step's agent may use without a permission question. */
+export function allowedTools(cfg: AgentSettings = {}, env: NodeJS.ProcessEnv = process.env): string {
+  const tools = env.ORSTRA_CLAUDE_TOOLS ?? 'Bash Read Edit Write Glob Grep';
+  if (!artifactOn(cfg, env) || /(^|\s)Artifact(\s|$)/.test(tools)) return tools;
+  return `${tools} Artifact`;
+}
+
+/**
+ * The environment of a Claude Code session.
+ *
+ * A permission question can wait hours for you. The MCP timeouts keep Claude Code from giving up on
+ * the tool call. The artifact variables turn on the Artifact tool, which a `-p` session has off; a
+ * step's agent needs them to publish a page. AUTO_OPEN=0 keeps a browser tab from opening on your
+ * machine while a task runs. The chief of staff passes its own tool flags, and its session is left
+ * as it is.
+ */
+export function claudeEnv(opts: Pick<SessionOptions, 'toolArgs'>, cfg: AgentSettings = {}, base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...base, MCP_TOOL_TIMEOUT: base.MCP_TOOL_TIMEOUT ?? '86400000', CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT: '0', CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS: '0' };
+  if (!opts.toolArgs && artifactOn(cfg, base)) {
+    env.CLAUDE_CODE_ARTIFACT = '1';
+    env.CLAUDE_CODE_ARTIFACT_AUTO_OPEN = '0';
+  }
+  return env;
+}
+
 /** The claude command line for a session. A model set by the caller (a workflow step) wins over the configured default. */
 export function claudeArgs(opts: Pick<SessionOptions, 'sessionId' | 'resume' | 'model' | 'toolArgs' | 'runId'>, cfg: AgentSettings = {}): string[] {
   // Without --strict-mcp-config, so the agent keeps your own MCP servers next to Orstra's permission tool.
@@ -108,7 +143,7 @@ export function claudeArgs(opts: Pick<SessionOptions, 'sessionId' | 'resume' | '
     '--input-format', 'stream-json',
     '--output-format', 'stream-json',
     '--verbose',
-    ...(opts.toolArgs ?? ['--permission-mode', cfg.permissionMode ?? process.env.ORSTRA_CLAUDE_PERMISSION ?? 'acceptEdits', '--allowedTools', process.env.ORSTRA_CLAUDE_TOOLS ?? 'Bash Read Edit Write Glob Grep']),
+    ...(opts.toolArgs ?? ['--permission-mode', cfg.permissionMode ?? process.env.ORSTRA_CLAUDE_PERMISSION ?? 'acceptEdits', '--allowedTools', allowedTools(cfg)]),
     ...ask,
     ...(opts.resume ? ['--resume', opts.sessionId] : ['--session-id', opts.sessionId]),
   ];
@@ -120,10 +155,9 @@ export function claudeArgs(opts: Pick<SessionOptions, 'sessionId' | 'resume' | '
 
 /** Claude Code in streaming-input mode: stdin stays open, so we can message and interrupt it while it works. */
 function claudeSession(opts: SessionOptions): LiveSession {
-  const args = claudeArgs(opts, loadAgentConfig()['claude-code']);
-
-  // A permission question can wait hours for you. These keep Claude Code from giving up on the tool call.
-  const env = { ...process.env, MCP_TOOL_TIMEOUT: process.env.MCP_TOOL_TIMEOUT ?? '86400000', CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT: '0', CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS: '0' };
+  const cfg = loadAgentConfig()['claude-code'];
+  const args = claudeArgs(opts, cfg);
+  const env = claudeEnv(opts, cfg);
   const child = spawn(process.env.ORSTRA_CLAUDE_BIN ?? 'claude', args, { cwd: opts.cwd, stdio: ['pipe', 'pipe', 'pipe'], env });
   let stderr = '';
   let interruptPending = false;
