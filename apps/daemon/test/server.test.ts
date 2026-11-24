@@ -8,6 +8,7 @@ import { Store } from '../src/db.ts';
 import { Runner } from '../src/runner.ts';
 import { startServer } from '../src/server.ts';
 import type { Executors } from '../src/executors.ts';
+import { Terminals } from '../src/terminals.ts';
 
 let server: Server;
 let base: string;
@@ -24,7 +25,7 @@ beforeAll(async () => {
   store = new Store(':memory:');
   runner = new Runner(store, {} as Executors, { slots: 1, createWorktree: () => dir });
   taskId = runner.startTask({ workflowPath: wf, title: 'x' }).id;
-  server = startServer(store, runner, 0);
+  server = startServer(store, runner, 0, undefined, undefined, { terminals: new Terminals({ shell: '/bin/sh', args: [] }) });
   await new Promise((r) => server.once('listening', r));
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 });
@@ -81,5 +82,29 @@ describe('link info', () => {
   it('refuses a link that is not http or https', async () => {
     const r = await fetch(`${base}/api/link-info?url=${encodeURIComponent('file:///etc/hosts')}`);
     expect(r.status).toBe(400);
+  });
+});
+
+describe('terminals', () => {
+  it('opens a shell in the worktree, streams its output and takes keys', async () => {
+    const r = await post(`/api/tasks/${taskId}/terminals`);
+    expect(r.status).toBe(201);
+    const t = await r.json();
+    expect((await get(`/api/tasks/${taskId}/terminals`)).map((x: any) => x.id)).toEqual([t.id]);
+    const ctrl = new AbortController();
+    const stream = await fetch(`${base}/api/terminals/${t.id}/stream`, { signal: ctrl.signal });
+    expect(stream.headers.get('content-type')).toBe('text/event-stream');
+    const reader = stream.body!.getReader();
+    expect((await post(`/api/terminals/${t.id}/input`, { data: 'echo ok-$((40+2))\n' })).status).toBe(200);
+    let text = '';
+    while (!text.includes('ok-42')) text += new TextDecoder().decode((await reader.read()).value);
+    expect(text).toContain('"type":"data"');
+    ctrl.abort();
+    expect((await post(`/api/terminals/${t.id}/close`)).status).toBe(200);
+  });
+
+  it('answers 404 for a terminal that is not there', async () => {
+    expect((await fetch(`${base}/api/terminals/nope/stream`)).status).toBe(404);
+    expect((await post('/api/terminals/nope/input', { data: 'x' })).status).toBe(404);
   });
 });

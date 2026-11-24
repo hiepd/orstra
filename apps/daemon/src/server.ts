@@ -11,6 +11,15 @@ import type { Triggers } from './triggers.ts';
 import { gitDiff, gitInfo } from './git.ts';
 import { listFiles, readWorktreeFile } from './files.ts';
 import { linkInfo } from './linkInfo.ts';
+import { Terminals } from './terminals.ts';
+
+/** The shells and dev servers the side viewer runs. Tests pass their own. */
+export interface ServerExtras {
+  terminals?: Terminals;
+}
+
+/** The largest body of keys the terminal takes in one POST. */
+const MAX_INPUT_BODY = 64 * 1024;
 import { listWorkflows, resolveWorkflow } from './workflows.ts';
 export { listWorkflows, resolveWorkflow };
 import { AGENT_IDS, EFFORTS, PERMISSION_MODES, loadAgentConfig, saveAgentSettings, type AgentId } from './agentConfig.ts';
@@ -204,7 +213,8 @@ const path = taskPath(wf, runs.map((r) => r.stepId), t.current_step);
 
 export type Views = ReturnType<typeof makeViews>;
 
-export function buildApi(store: Store, runner: Runner, cos?: ChiefOfStaff, triggers?: Triggers) {
+export function buildApi(store: Store, runner: Runner, cos?: ChiefOfStaff, triggers?: Triggers, extras: ServerExtras = {}) {
+  const terminals = extras.terminals ?? new Terminals();
   const { runView, taskSummary, taskDetail, gitView } = makeViews(store, runner);
   const sessions = () => {
     const since = Date.now() - 24 * 3600_000;
@@ -333,6 +343,29 @@ export function buildApi(store: Store, runner: Runner, cos?: ChiefOfStaff, trigg
         // The agent may change the file at any time, so the browser asks again each time.
         return sendBytes(res, hit, 'no-store');
       }
+      // Terminals: a shell in the task's worktree. Output streams from /stream (in startServer).
+      if ((mm = m(/^\/api\/tasks\/([\w-]+)\/terminals$/))) {
+        const t = store.task(mm[1]);
+        if (!t) return send(res, 404, { error: 'No such task' }), true;
+        if (req.method === 'GET') return send(res, 200, terminals.list(t.id)), true;
+        if (req.method === 'POST') {
+          if (!t.worktree || !existsSync(t.worktree)) return send(res, 400, { error: 'This task has no worktree yet.' }), true;
+          try {
+            return send(res, 201, await terminals.open(t.id, t.worktree)), true;
+          } catch (err: any) {
+            return send(res, 503, { error: err?.message ?? String(err) }), true;
+          }
+        }
+      }
+      if ((mm = m(/^\/api\/terminals\/([\w-]+)\/(input|resize|close)$/)) && req.method === 'POST') {
+        if (!terminals.get(mm[1])) return req.resume(), send(res, 404, { error: 'No such terminal' }), true;
+        if (Number(req.headers['content-length'] ?? 0) > MAX_INPUT_BODY) return req.resume(), send(res, 413, { error: 'Too much input at once.' }), true;
+        const b = await readJson(req);
+        if (mm[2] === 'input' && typeof b.data === 'string') terminals.write(mm[1], b.data);
+        if (mm[2] === 'resize') terminals.resize(mm[1], Number(b.cols), Number(b.rows));
+        if (mm[2] === 'close') terminals.close(mm[1]);
+        return send(res, 200, { ok: true }), true;
+      }
       if (req.method === 'GET' && p === '/api/link-info') return send(res, 200, await linkInfo(url.searchParams.get('url') ?? '')), true;
       if ((mm = m(/^\/api\/workflows\/([^/]+)$/)) && req.method === 'PUT') {
         const file = decodeURIComponent(mm[1]);
@@ -411,8 +444,9 @@ export function buildApi(store: Store, runner: Runner, cos?: ChiefOfStaff, trigg
   };
 }
 
-export function startServer(store: Store, runner: Runner, port: number, cos?: ChiefOfStaff, triggers?: Triggers) {
-  const api = buildApi(store, runner, cos, triggers);
+export function startServer(store: Store, runner: Runner, port: number, cos?: ChiefOfStaff, triggers?: Triggers, extras: ServerExtras = {}) {
+  const terminals = extras.terminals ?? new Terminals();
+  const api = buildApi(store, runner, cos, triggers, { ...extras, terminals });
   const clients = new Set<ServerResponse>();
   const broadcast = (e: unknown) => {
     const line = `data: ${JSON.stringify(e)}\n\n`;
@@ -450,6 +484,24 @@ export function startServer(store: Store, runner: Runner, port: number, cos?: Ch
       res.write(': connected\n\n');
       clients.add(res);
       req.on('close', () => clients.delete(res));
+      return;
+    }
+    // One terminal's output: what it kept, then each new chunk, as JSON events.
+    const tm = req.method === 'GET' ? /^\/api\/terminals\/([\w-]+)\/stream$/.exec(req.url ?? '') : null;
+    if (tm) {
+      const term = terminals.get(tm[1]);
+      if (!term) return send(res, 404, { error: 'No such terminal' });
+      res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
+      const out = (e: unknown) => res.write(`data: ${JSON.stringify(e)}\n\n`);
+      out({ type: 'data', data: term.scrollback });
+      const onData = (id: string, data: string) => id === term.id && out({ type: 'data', data });
+      const onExit = (id: string, code: number) => id === term.id && (out({ type: 'exit', code }), res.end());
+      terminals.on('data', onData);
+      terminals.on('exit', onExit);
+      req.on('close', () => {
+        terminals.off('data', onData);
+        terminals.off('exit', onExit);
+      });
       return;
     }
     if (await api(req, res)) return;
