@@ -14,20 +14,10 @@ import { remember, store } from '../lib/remember';
 import { href } from '../lib/router';
 import { taskState } from '../lib/taskState';
 import { clock, duration } from '../lib/time';
-
-export const runName = (task: TaskDetail, r: RunView) => r.stepTitle + (r.attempt > 1 || task.runs.some((x) => x.stepId === r.stepId && x.id !== r.id) ? ` · ${r.kind === 'human' ? 'round' : 'attempt'} ${r.attempt}` : '');
+import { defaultSession, runName, sessionsOf } from '../lib/sessions';
 
 /** Where the Chat view remembers whether its Sessions panel is open. */
 const SESSIONS_KEY = 'orstra.chat.sessions';
-
-/** Agent runs that have a session, newest first. One session per agent run. */
-export const sessionsOf = (task: TaskDetail) => task.runs.filter((r) => r.kind === 'agent' && r.sessionId).reverse();
-
-/** The session to show when none is picked: the one working or waiting on you, else the newest. */
-export function defaultSession(task: TaskDetail): RunView | undefined {
-  const all = sessionsOf(task);
-  return all.find((r) => r.id === task.workingRunId) ?? all.find((r) => r.id === task.awaiting?.runId) ?? all[0];
-}
 
 /** The viewer's shortcuts: ⇧⌘D, ⇧⌘B, ⇧⌘F, then ⌘J and ⌘; (no Shift). */
 const SHIFT_KEYS: Record<string, string> = { d: 'changes', b: 'browser', f: 'files' };

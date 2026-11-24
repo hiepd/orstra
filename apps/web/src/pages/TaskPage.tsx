@@ -13,7 +13,8 @@ import { useLiveResource, useNow, type Resource } from '../lib/live';
 import { href, type TaskViewName } from '../lib/router';
 import { STATE, stepLabel, taskState } from '../lib/taskState';
 import { ago, clock, duration } from '../lib/time';
-import { defaultSession, runName, TaskChat } from './TaskChat';
+import { TaskChat } from './TaskChat';
+import { defaultSession, runName } from '../lib/sessions';
 
 type ModalState = { kind: 'retry'; stepId?: string } | { kind: 'stop' } | { kind: 'cc'; run: RunView } | { kind: 'note'; stepId: string; title: string } | { kind: 'cleanup' } | null;
 
