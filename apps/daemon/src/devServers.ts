@@ -111,11 +111,12 @@ export class DevServers extends EventEmitter {
       s.state = 'running';
       changed();
     };
+    // A change goes out only when the state or the URL changes. A chatty server (request logs, HMR)
+    // must not flood the live channel; the Browser panel reads the log while it starts.
     const onOut = (d: Buffer) => {
       s.out = (s.out + d.toString().replace(ANSI, '')).slice(-64 * 1024);
       const url = s.url ? null : urlFromOutput(s.out);
       if (url) ready(url);
-      else changed();
     };
     child.stdout?.on('data', onOut);
     child.stderr?.on('data', onOut);
@@ -155,6 +156,18 @@ export class DevServers extends EventEmitter {
     const hard = setTimeout(() => kill('SIGKILL'), 3000);
     await s.exited;
     clearTimeout(hard);
+  }
+
+  /** Stop at once, with no grace period: the worktree is about to go. */
+  kill(taskId: string) {
+    const s = this.servers.get(taskId);
+    if (!s || s.state === 'exited' || s.state === 'stopped') return;
+    s.stopping = true;
+    try {
+      if (s.child.pid) process.kill(-s.child.pid, 'SIGKILL');
+    } catch {
+      /* already gone */
+    }
   }
 
   stopAll() {

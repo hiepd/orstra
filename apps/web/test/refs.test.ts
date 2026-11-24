@@ -34,6 +34,35 @@ describe('findRefs', () => {
   });
 });
 
+describe('findRefs and markdown around a URL', () => {
+  it('leaves bold, italic and link syntax out of the target', () => {
+    expect(findRefs('**https://a.com/x**')[0].target).toBe('https://a.com/x');
+    expect(findRefs('*https://a.com/x*')[0].target).toBe('https://a.com/x');
+    expect(findRefs('_https://a.com/x_')[0].target).toBe('https://a.com/x');
+    expect(findRefs('[https://a.com/x](https://a.com/x)').map((r) => r.target)).toEqual(['https://a.com/x']);
+    expect(findRefs('[the docs](https://a.com/docs)').map((r) => r.target)).toEqual(['https://a.com/docs']);
+  });
+
+  it('keeps a closing parenthesis that the URL opened', () => {
+    expect(findRefs('See https://en.wikipedia.org/wiki/Foo_(bar).')[0].target).toBe('https://en.wikipedia.org/wiki/Foo_(bar)');
+    expect(findRefs('(https://a.com/x)')[0].target).toBe('https://a.com/x');
+  });
+
+  it('calls 0.0.0.0 localhost, as the dev server panel does', () => {
+    expect(findRefs('at http://0.0.0.0:3000/')[0]).toMatchObject({ kind: 'browser', target: 'http://localhost:3000/' });
+  });
+});
+
+describe('findRefs with the worktree', () => {
+  const wt = '/Users/me/.orstra/wt/t-1';
+  it('turns an absolute path inside the worktree into a relative one', () => {
+    expect(findRefs(`I wrote ${wt}/docs/plan.md and \`${wt}/shots/a.png\``, wt).map((r) => r.target)).toEqual(['docs/plan.md', 'shots/a.png']);
+  });
+  it('still leaves out absolute paths outside it', () => {
+    expect(findRefs('/etc/x.md', wt)).toEqual([]);
+  });
+});
+
 describe('refTab', () => {
   it('opens links as link tabs and files as file tabs', () => {
     expect(refTab({ kind: 'artifact', target: 'https://claude.ai/artifact/x', label: '' })).toBe('link:https://claude.ai/artifact/x');

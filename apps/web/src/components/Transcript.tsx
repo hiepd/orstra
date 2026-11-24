@@ -78,6 +78,7 @@ export function Transcript({
   agentName,
   onOpenRef,
   hideAsides,
+  worktree,
 }: {
   run: RunView;
   events: TaskEvent[];
@@ -87,6 +88,8 @@ export function Transcript({
   onOpenRef?: (r: Ref) => void;
   /** Questions to a copy and its answers show in the Side chat panel instead. */
   hideAsides?: boolean;
+  /** The task's worktree: an absolute path inside it gets a chip too. */
+  worktree?: string | null;
 }) {
   const mine = events.filter((e) => e.runId === run.id && !(hideAsides && (e.kind === 'aside' || (e.kind === 'you' && e.mode === 'ask'))));
   const onLink = useMemo(() => (onOpenRef ? (href: string) => onOpenRef(findRefs(href)[0] ?? { kind: 'link', target: href, label: href }) : undefined), [onOpenRef]);
@@ -113,7 +116,7 @@ export function Transcript({
         node: (
           <div className="ox-ai">
             <Markdown text={e.text} onLink={onLink} />
-            {onOpenRef && <RefChips taskId={run.taskId} refs={findRefs(e.text)} onOpen={onOpenRef} />}
+            {onOpenRef && <RefChips taskId={run.taskId} refs={findRefs(e.text, worktree)} onOpen={onOpenRef} />}
           </div>
         ),
       });

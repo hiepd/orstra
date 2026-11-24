@@ -27,8 +27,17 @@ beforeAll(() => {
 describe('listFiles', () => {
   it('lists tracked and untracked files, without ignored ones, sorted', () => {
     const { paths, truncated } = listFiles(dir);
-    expect(paths.filter((p) => p !== 'docs/link')).toEqual(['.gitignore', 'docs/a.md', 'img/b.png']);
+    expect(paths.filter((p) => p !== 'docs/link' && !p.startsWith('.orstra/'))).toEqual(['.gitignore', 'docs/a.md', 'img/b.png']);
     expect(truncated).toBe(false);
+  });
+});
+
+describe('listFiles and .orstra/artifacts', () => {
+  it('lists the files a step made under .orstra/artifacts, which git excludes', () => {
+    mkdirSync(join(dir, '.orstra/artifacts/spec'), { recursive: true });
+    writeFileSync(join(dir, '.orstra/artifacts/spec/shot.png'), 'x');
+    writeFileSync(join(dir, '.git/info/exclude'), '/.orstra/\n');
+    expect(listFiles(dir).paths).toContain('.orstra/artifacts/spec/shot.png');
   });
 });
 

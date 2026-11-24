@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AddressInfo } from 'node:net';
@@ -133,16 +133,26 @@ describe('dev server', () => {
 });
 
 describe('cleanup', () => {
-  it('tells the server to stop the task\'s shells and dev server before the worktree goes', () => {
+  it('sends no cleanup event when the cleanup refuses, so your shells keep running', () => {
     const id = runner.startTask({ workflowPath: join(dir, 'wf.yaml'), title: 'y' }).id;
     store.updateTask(id, { status: 'done' });
     const seen: string[] = [];
     runner.on('cleanup', (t: string) => seen.push(t));
-    try {
-      runner.cleanup(id);
-    } catch {
-      /* the test folder is not a git worktree; the event comes first */
-    }
-    expect(seen).toEqual([id]);
+    // The test folder is not a git repository, so a cleanup without force refuses.
+    expect(() => runner.cleanup(id)).toThrow(/not a git repository/);
+    expect(seen).toEqual([]);
+  });
+
+  it('sends the cleanup event just before the worktree goes', () => {
+    const own = mkdtempSync(join(tmpdir(), 'orstra-clean-'));
+    const r = new Runner(new Store(':memory:'), {} as Executors, { slots: 1, createWorktree: () => own });
+    writeFileSync(join(own, 'wf.yaml'), 'name: X\nsteps:\n  review:\n    use: human\n    question: ok?\n    on: { approved: end }\n');
+    const id = r.startTask({ workflowPath: join(own, 'wf.yaml'), title: 'z' }).id;
+    (r as any).store.updateTask(id, { status: 'done' });
+    const seen: boolean[] = [];
+    r.on('cleanup', () => seen.push(existsSync(own)));
+    r.cleanup(id, { force: true });
+    expect(seen).toEqual([true]);
+    expect(existsSync(own)).toBe(false);
   });
 });

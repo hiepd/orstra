@@ -56,6 +56,16 @@ describe('DevServers', () => {
     expect(() => process.kill(pid, 0)).toThrow();
   });
 
+  it('sends a change when the state changes, not for each line of output', async () => {
+    let changes = 0;
+    servers.on('change', (t: string) => t === 'chatty' && changes++);
+    await servers.start('chatty', dir, 'for i in $(seq 1 200); do echo line $i; done; sleep 5');
+    await until(() => servers.status('chatty').log.includes('line 200'));
+    expect(changes).toBeLessThanOrEqual(3);
+    servers.kill('chatty');
+    await until(() => servers.status('chatty').state === 'stopped');
+  });
+
   it('reports a command that exits at once, with its code and log', async () => {
     await servers.start('t2', dir, 'echo boom; exit 3');
     await until(() => servers.status('t2').state === 'exited');

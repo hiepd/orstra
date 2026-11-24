@@ -125,6 +125,16 @@ describe('cleanupWorktree', () => {
     expect(existsSync(wt)).toBe(false);
   });
 
+  it('calls beforeRemove only when it really removes, after the checks that can refuse', () => {
+    const { wt } = repo();
+    writeFileSync(join(wt, 'a.txt'), 'changed\n');
+    let calls = 0;
+    expect(cleanupWorktree(wt, { beforeRemove: () => calls++ }).outcome).toBe('refused');
+    expect(calls).toBe(0);
+    expect(runAction('git.cleanup', { cwd: wt, input: { force: true }, beforeRemove: () => calls++ }).outcome).toBe('ok');
+    expect(calls).toBe(1);
+  });
+
   it('refuses a scratch repository with work unless forced', () => {
     const dir = mkdtempSync(join(tmpdir(), 'orstra-scratch-'));
     sh(dir, 'init', '-q', '-b', 'main');

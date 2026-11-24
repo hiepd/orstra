@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { readFileSync, realpathSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { basename, extname, isAbsolute, resolve, sep } from 'node:path';
 
 /**
@@ -29,10 +29,30 @@ export function mimeOf(path: string): string {
   return MIME[extname(path).toLowerCase()] ?? 'application/octet-stream';
 }
 
-/** Tracked and untracked files, without the ones .gitignore leaves out, sorted. */
+/** What the steps made. Orstra keeps .orstra/ out of git (.git/info/exclude), so git does not list it. */
+const ARTIFACTS = '.orstra/artifacts';
+
+function walk(root: string, rel: string, out: string[], cap: number) {
+  let entries;
+  try {
+    entries = readdirSync(resolve(root, rel), { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const e of entries) {
+    if (out.length >= cap) return;
+    const p = `${rel}/${e.name}`;
+    if (e.isDirectory()) walk(root, p, out, cap);
+    else if (e.isFile()) out.push(p);
+  }
+}
+
+/** Tracked and untracked files, without the ones .gitignore leaves out, plus .orstra/artifacts, sorted. */
 export function listFiles(worktree: string): { paths: string[]; truncated: boolean } {
   const out = execFileSync('git', ['ls-files', '-co', '--exclude-standard', '-z'], { cwd: worktree, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
-  const all = [...new Set(out.split('\0').filter(Boolean))].sort();
+  const made: string[] = [];
+  walk(worktree, ARTIFACTS, made, MAX_LIST);
+  const all = [...new Set([...out.split('\0').filter(Boolean), ...made])].sort();
   return { paths: all.slice(0, MAX_LIST), truncated: all.length > MAX_LIST };
 }
 

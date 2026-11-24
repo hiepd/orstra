@@ -23,7 +23,7 @@ export function ArtifactsPanel({ task, dispatch }: PanelProps) {
     const out = new Map<string, Item>();
     for (const e of [...task.events].reverse()) {
       if (e.kind !== 'message') continue;
-      for (const r of findRefs(e.text)) {
+      for (const r of findRefs(e.text, task.worktree)) {
         if (r.kind !== 'artifact' && r.kind !== 'image' && r.kind !== 'md') continue;
         const tab = refTab(r);
         if (!out.has(tab)) out.set(tab, { tab, title: r.kind === 'artifact' ? r.label : r.label, kind: r.kind, where: (e.runId && steps.get(e.runId)) || 'Chat', ts: e.ts });
@@ -37,7 +37,7 @@ export function ArtifactsPanel({ task, dispatch }: PanelProps) {
       out.set(tab, { tab, title: p.split('/').pop() ?? p, kind, where: p.slice(ARTIFACT_DIR.length).split('/')[0] || 'artifacts', ts: null });
     }
     return [...out.values()];
-  }, [task.events, task.runs, files.data]);
+  }, [task.events, task.runs, task.worktree, files.data]);
 
   return (
     <div className="vw-scroll vw-arts">

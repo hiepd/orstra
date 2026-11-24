@@ -6,6 +6,7 @@ import { api, errorMessage, terminalStreamUrl, type TerminalInfo } from '../../a
 import { insertIntoDraft } from '../Composer';
 import { shortPath } from '../GitPanel';
 import { useToast } from '../Overlay';
+import { serialQueue } from '../../lib/serial';
 import type { PanelProps } from './Viewer';
 
 const LAST_LINES = 40;
@@ -82,11 +83,13 @@ export function TerminalPanel({ task }: PanelProps) {
 
     let pending = '';
     let timer: number | undefined;
+    // One POST after the other: 2 in flight on 2 connections could reach the shell out of order.
+    const send = serialQueue();
     const flush = () => {
       timer = undefined;
       const data = pending;
       pending = '';
-      if (data) void api.terminalInput(tid, data).catch(() => {});
+      if (data) void send(() => api.terminalInput(tid, data));
     };
     const onData = term.onData((d) => {
       pending += d;

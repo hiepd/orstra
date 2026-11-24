@@ -155,7 +155,7 @@ export function TaskChat({ task, runId, git, openPath, onOpenPath, embedded }: {
                     <div className="ox-sline">
                       {a.name} · {runName(task, run)} · started {run.startedAt ? clock(run.startedAt) : 'not yet'} · session {run.sessionId?.slice(0, 8)}
                     </div>
-                    <Transcript run={run} events={events} working={s.working} agentName={a.name} onOpenRef={onOpenRef} hideAsides={!embedded} />
+                    <Transcript run={run} events={events} working={s.working} agentName={a.name} onOpenRef={onOpenRef} hideAsides={!embedded} worktree={task.worktree} />
                   </div>
                 </div>
                 <div className="ox-compwrap">

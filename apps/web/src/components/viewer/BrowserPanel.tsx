@@ -23,6 +23,14 @@ export function BrowserPanel({ task }: PanelProps) {
     if (v && !command) setCommand(v.command ?? v.suggested ?? '');
   }, [v, command]);
 
+  // The daemon reports a change only when the state changes, so the log is read here while it starts.
+  const starting = v?.state === 'starting';
+  useEffect(() => {
+    if (!starting) return;
+    const t = window.setInterval(dev.reload, 1000);
+    return () => window.clearInterval(t);
+  }, [starting, dev.reload]);
+
   const run = async (fn: () => Promise<unknown>) => {
     setBusy(true);
     try {

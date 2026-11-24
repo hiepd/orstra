@@ -488,7 +488,8 @@ export function startServer(store: Store, runner: Runner, port: number, cos?: Ch
   devServers.on('change', (taskId: string) => broadcast({ taskId }));
   runner.on('cleanup', (taskId: string) => {
     terminals.closeTask(taskId);
-    void devServers.stop(taskId);
+    // The worktree goes right after this: no grace period, so nothing writes into it again.
+    devServers.kill(taskId);
   });
 
   // The port the server really has (port 0 in tests means "any free one").

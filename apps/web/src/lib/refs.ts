@@ -7,13 +7,25 @@
 export type RefKind = 'link' | 'artifact' | 'browser' | 'md' | 'image';
 export type Ref = { kind: RefKind; target: string; label: string };
 
-const URL_RE = /https?:\/\/[^\s<>`'"]+/gi;
+// No `*`, `[` or `]` in a URL here: they are markdown around it (bold, a link's text).
+const URL_RE = /https?:\/\/[^\s<>`'"*[\]]+/gi;
 const PATH_RE = /(^|[\s`'"(\[])((?:\.\/)?(?:[\w.@-]+\/)*[\w.@-]+\.(md|markdown|png|jpe?g|gif|webp|svg))(?=$|[\s`'")\],;:!?.])/gi;
-const TRAIL = /[.,;:!?)\]'"]+$/;
+const TRAIL = /[.,;:!?)\]'"_]$/;
 const LOCAL = new Set(['localhost', '127.0.0.1', '0.0.0.0', '[::1]']);
 
+/** Punctuation after a URL is not part of it. A `)` stays when the URL opened it: Foo_(bar). */
+function trimUrl(raw: string): string {
+  let s = raw;
+  while (TRAIL.test(s)) {
+    if (s.endsWith(')') && (s.match(/\(/g)?.length ?? 0) >= (s.match(/\)/g)?.length ?? 0)) break;
+    s = s.slice(0, -1);
+  }
+  return s;
+}
+
 function urlRef(raw: string): Ref | null {
-  const target = raw.replace(TRAIL, '');
+  // 0.0.0.0 is where a server listens, not where a browser goes (Chrome blocks frames to it).
+  const target = trimUrl(raw).replace(/^(https?:\/\/)0\.0\.0\.0(?=[:/]|$)/i, '$1localhost');
   let u: URL;
   try {
     u = new URL(target);
@@ -26,7 +38,16 @@ function urlRef(raw: string): Ref | null {
   return { kind: 'link', target, label };
 }
 
-export function findRefs(text: string): Ref[] {
+/**
+ * The references in a message. With the worktree's path, an absolute path inside it counts too (agents
+ * often print those); it becomes relative to the worktree.
+ */
+export function findRefs(text: string, worktree?: string | null): Ref[] {
+  if (worktree) {
+    const root = worktree.replace(/\/+$/, '');
+    // macOS shows /tmp and /var through /private as well.
+    for (const r of root.startsWith('/private/') ? [root, root.slice('/private'.length)] : [`/private${root}`, root]) text = text.split(`${r}/`).join('');
+  }
   const hits: { at: number; ref: Ref }[] = [];
   // Blank out the URLs first, so a path inside a URL is not found again as a file.
   const rest = text.replace(URL_RE, (raw, at: number) => {
