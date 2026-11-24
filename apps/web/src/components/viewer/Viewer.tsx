@@ -4,6 +4,11 @@ import type { Resource } from '../../lib/live';
 import { GitBody } from '../GitPanel';
 import type { Pane, TabId, ViewerAction, ViewerState } from './state';
 import { IC, PANELS, tabMeta } from './tabs';
+import { ArtifactsPanel } from './ArtifactsPanel';
+import { FilePanel } from './FilePanel';
+import { FilesPanel } from './FilesPanel';
+import { LinkPanel } from './LinkPanel';
+import { SideChatPanel } from './SideChatPanel';
 
 export type PanelProps = {
   task: TaskDetail;
@@ -25,6 +30,11 @@ const Svg = ({ d, size = 15, sw = 1.9, color }: { d: string; size?: number; sw?:
 function Panel(p: PanelProps): ReactNode {
   const kind = tabMeta(p.tab).kind;
   if (kind === 'changes') return <GitBody task={p.task} git={p.git} openPath={p.openPath} onOpenPath={p.onOpenPath} />;
+  if (kind === 'md' || kind === 'image' || kind === 'text') return <FilePanel {...p} />;
+  if (kind === 'link' || kind === 'artifact' || kind === 'local') return <LinkPanel {...p} />;
+  if (kind === 'files') return <FilesPanel {...p} />;
+  if (kind === 'artifacts') return <ArtifactsPanel {...p} />;
+  if (kind === 'side') return <SideChatPanel {...p} />;
   return <div className="vw-empty">This panel comes later in this build.</div>;
 }
 
