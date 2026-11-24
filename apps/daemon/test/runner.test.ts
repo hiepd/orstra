@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { Store } from '../src/db.ts';
 import { Runner } from '../src/runner.ts';
 import { makeViews } from '../src/server.ts';
+import { rebuildAll } from '../src/project.ts';
 import type { Executors, LiveSession, SessionOptions } from '../src/executors.ts';
 
 interface Sent { sessionId: string; resume: boolean; text: string }
@@ -569,6 +570,46 @@ steps:
       // A stopped task keeps the step it stopped at, which is what a re-run starts from.
       'stopped/-/review',
     ]);
+  });
+
+  it('reads an agent run as paused after a restart, and frees its slot', async () => {
+    const { store, runner, wfPath, fake, dir } = setup(LOOP, () => 'Need input\n\nOUTCOME: needs_you');
+    const task = runner.startTask({ workflowPath: wfPath, title: 'restart' });
+    await runner.idle();
+    const impl = store.runsForTask(task.id)[0];
+    store.updateRun(impl.id, { status: 'running', wait_reason: null }); // as a daemon that died mid-turn would leave it
+
+    const runner2 = new Runner(store, fake.exec, { slots: 2, createWorktree: () => dir, turnGraceMs: 0 });
+    runner2.recover();
+
+    expect(store.run(impl.id)).toMatchObject({ status: 'waiting', wait_reason: 'paused' });
+    expect(store.task(task.id)).toMatchObject({ status: 'needs_you', inbox_reason: 'paused', current_step: 'impl' });
+    expect(store.runsByStatus('running')).toHaveLength(0);
+    await runner2.idle();
+  });
+
+  it('still fails a gate run that died with the process', async () => {
+    const { store, runner, wfPath, fake, dir } = setup(LOOP, () => done('ok'));
+    const task = runner.startTask({ workflowPath: wfPath, title: 'dead gate' });
+    await runner.idle();
+    const verify = store.runsForTask(task.id).find((r) => r.kind === 'gate')!;
+    store.updateRun(verify.id, { status: 'running', outcome: null, ended_at: null, routed: null });
+
+    new Runner(store, fake.exec, { slots: 2, createWorktree: () => dir, turnGraceMs: 0 }).recover();
+
+    expect(store.run(verify.id)).toMatchObject({ status: 'failed', outcome: 'interrupted', routed: 'block:interrupted' });
+    expect(store.task(task.id)).toMatchObject({ status: 'needs_you', inbox_reason: 'interrupted' });
+  });
+
+  it('rebuilds the same state it had', async () => {
+    const { store, runner, wfPath } = setup(REVIEW, () => done('first pass'));
+    const task = runner.startTask({ workflowPath: wfPath, title: 'rebuild' });
+    await runner.idle();
+    const before = store.task(task.id)!;
+
+    store.updateTask(task.id, { status: 'running', inbox_reason: null, current_step: 'work' });
+    expect(rebuildAll(store, () => false)).toEqual([{ taskId: task.id, from: 'running', to: 'needs_you' }]);
+    expect(store.task(task.id)).toMatchObject({ status: before.status, inbox_reason: before.inbox_reason, current_step: before.current_step });
   });
 
   it('has no writer of the task state but the projector', () => {

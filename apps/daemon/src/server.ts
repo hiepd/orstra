@@ -247,6 +247,10 @@ export function buildApi(store: Store, runner: Runner, cos?: ChiefOfStaff) {
         runner.stop(mm[1]);
         return send(res, 200, { ok: true }), true;
       }
+      if (req.method === 'POST' && p === '/api/rebuild') {
+        const b = await readJson(req).catch(() => ({}));
+        return send(res, 200, { changed: runner.rebuild(b.taskId) }), true;
+      }
       if ((mm = m(/^\/api\/runs\/([\w-]+)\/decide$/)) && req.method === 'POST') {
         const b = await readJson(req);
         runner.decide(mm[1], b.choice, b.comment);

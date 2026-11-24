@@ -100,8 +100,11 @@ export class Runner extends EventEmitter {
   }
 
   /**
-   * After a restart no session process survives. Agent runs become "waiting": message them and the
-   * same session resumes. Other running steps go to the inbox.
+   * After a restart no session process survives. An agent run becomes "waiting": message it and the
+   * same session resumes. A gate or action run really did die with the process, so it fails.
+   *
+   * The task rows are not repaired here. They are a projection, so 1 rebuild tells every task the
+   * truth, and an agent run with no session reads as paused on its own.
    */
   recover() {
     for (const r of this.store.runsByStatus('running')) {
@@ -113,7 +116,23 @@ export class Runner extends EventEmitter {
         this.store.addEvent(r.task_id, r.id, 'system', { text: 'Orstra restarted while this step was running. Retry it or stop the task.' });
       }
     }
+    this.rebuild();
     this.pump();
+  }
+
+  /** Redo the projection for every task, and say which ones moved. */
+  rebuild(taskId?: string): { taskId: string; from: string; to: string }[] {
+    const isLive = (runId: string) => this.live.has(runId);
+    if (taskId) {
+      const before = this.store.task(taskId)?.status;
+      if (!before) throw new Error('No such task.');
+      this.project(taskId);
+      const after = this.store.task(taskId)!.status;
+      return after === before ? [] : [{ taskId, from: before, to: after }];
+    }
+    const changed = rebuildAll(this.store, isLive);
+    for (const c of changed) this.changed(c.taskId);
+    return changed;
   }
 
   startTask(input: StartTaskInput): TaskRow {

@@ -12,6 +12,7 @@ const HELP = `orstra — a local software factory
   orstra tasks                         list tasks
   orstra sessions                      list agent sessions (running, queued, last 24h)
   orstra workflows                     list workflow files
+  orstra rebuild [task-id]             work every task's state out from its runs again
 `;
 
 const base = `http://127.0.0.1:${PORT}`;
@@ -83,6 +84,12 @@ async function main() {
     case 'sessions': {
       for (const s of await api('/api/sessions')) console.log(`${s.status.padEnd(8)}  ${s.task.ref ?? s.task.id}  ${s.stepTitle} #${s.attempt}  ${s.agent ?? 'gate'}  ${s.now ?? ''}`);
       return;
+    }
+    case 'rebuild': {
+      const { changed } = await api('/api/rebuild', { method: 'POST', body: JSON.stringify({ taskId: positionals[0] }) });
+      for (const c of changed) console.log(`${c.taskId}  ${c.from} → ${c.to}`);
+      console.log(changed.length ? `${changed.length} task${changed.length === 1 ? '' : 's'} changed` : 'Every task already said the right thing.');
+      break;
     }
     case 'workflows': {
       const { listWorkflows } = await import('./server.ts');
