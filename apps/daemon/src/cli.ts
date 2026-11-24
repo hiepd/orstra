@@ -2,7 +2,7 @@ import { parseArgs } from 'node:util';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { COS_DIR, DB_PATH, HOME, PORT, REPO_ROOT, SLOTS, TSX, ensureDirs } from './paths.ts';
+import { COS_DIR, DB_PATH, HOME, LOCK_PATH, PORT, REPO_ROOT, SLOTS, TSX, ensureDirs } from './paths.ts';
 
 const HELP = `orstra — a local software factory
 
@@ -40,6 +40,15 @@ async function main() {
   switch (cmd) {
     case 'serve': {
       ensureDirs();
+      // One daemon per home folder. Two would both start every queued run, so each step would
+      // happen twice in the same worktree.
+      const { takeLock } = await import('./lock.ts');
+      const lock = takeLock(LOCK_PATH, PORT);
+      if (!lock.ok) {
+        console.error(`Orstra already runs on this data folder: http://localhost:${lock.holder.port} (pid ${lock.holder.pid}).`);
+        console.error(`Stop it first, or point this one somewhere else with ORSTRA_HOME.`);
+        process.exit(1);
+      }
       const { Store } = await import('./db.ts');
       const { Runner, defaultTimeoutsFromEnv } = await import('./runner.ts');
       const { realExecutors } = await import('./executors.ts');
@@ -75,8 +84,21 @@ async function main() {
       const terminals = new Terminals();
       const devServers = new DevServers();
       const stopChildren = () => (terminals.closeAll(), devServers.stopAll());
-      process.on('exit', stopChildren);
-      for (const sig of ['SIGINT', 'SIGTERM'] as const) process.on(sig, () => { stopChildren(); process.exit(0); });
+      process.on('exit', () => { stopChildren(); lock.release(); });
+      /**
+       * Go down on purpose: close every agent session first, so each agent stops at the end of its
+       * current action and leaves no process behind. A crash skips this, and `recover()` sweeps.
+       */
+      let stopping = false;
+      const stop = async () => {
+        if (stopping) return;
+        stopping = true;
+        stopChildren();
+        await runner.shutdown();
+        lock.release();
+        process.exit(0);
+      };
+      for (const sig of ['SIGINT', 'SIGTERM'] as const) process.on(sig, () => void stop());
       startServer(store, runner, PORT, cos, triggers, { terminals, devServers });
       triggers.start(Number(process.env.ORSTRA_TRIGGER_INTERVAL_S ?? 60) * 1000);
       cos.start();

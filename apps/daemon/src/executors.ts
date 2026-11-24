@@ -67,6 +67,12 @@ export interface LiveSession {
   end(): void;
   kill(): void;
   closed: Promise<{ ok: boolean; error?: string }>;
+  /**
+   * The agent's process id, so a restart can find a process that outlived the daemon. Claude Code
+   * keeps one process for the whole session. Codex starts one per turn, so this changes, and it is
+   * undefined between turns, and for a session that has no process of its own.
+   */
+  readonly pid?: number;
 }
 
 export interface GateRequest {
@@ -194,6 +200,9 @@ function claudeSession(opts: SessionOptions): LiveSession {
   });
 
   return {
+    get pid() {
+      return child.pid;
+    },
     send(text) {
       write({ type: 'user', message: { role: 'user', content: text } });
     },

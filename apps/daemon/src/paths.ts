@@ -5,6 +5,8 @@ import { fileURLToPath } from 'node:url';
 
 export const HOME = process.env.ORSTRA_HOME ?? join(homedir(), '.orstra');
 export const DB_PATH = join(HOME, 'orstra.db');
+/** Which daemon owns this home folder. See lock.ts. */
+export const LOCK_PATH = join(HOME, 'daemon.lock');
 export const WORKTREES = join(HOME, 'wt');
 export const REPO_ROOT = resolve(fileURLToPath(new URL('../../..', import.meta.url)));
 /** Workflows are user config, not repo files. Override the folder with ORSTRA_WORKFLOWS. */

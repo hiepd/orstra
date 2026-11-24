@@ -9,6 +9,7 @@ import { locateWorkflow } from './workflows.ts';
 import { projectTask, rebuildAll } from './project.ts';
 import { runAction } from './actions.ts';
 import { cleanupWorktree } from './cleanup.ts';
+import { isSameProcess, realProcessEnv, stampOf, stopProcess, type ProcessEnv, type ProcessStamp, type StopResult } from './process.ts';
 
 export interface StartTaskInput {
   workflowPath: string;
@@ -36,6 +37,12 @@ export interface RunnerOptions {
   turnGraceMs?: number;
   /** How long a step may work when it sets no `timeout:`. 0 = no limit. */
   defaultTimeoutMs?: { agent?: number; gate?: number };
+  /** How long an agent process left by an earlier daemon gets to stop before Orstra kills it. */
+  sweepGraceMs?: number;
+  /** How this machine identifies a process. A test hands in its own. */
+  processEnv?: ProcessEnv;
+  /** How to end a stray process. A test hands in its own, so it signals nothing real. */
+  stopProcess?: (pid: number, opts?: { graceMs?: number }) => Promise<StopResult>;
 }
 
 /** The limits when a step sets no `timeout:`: ORSTRA_AGENT_TIMEOUT_MIN (120) and ORSTRA_GATE_TIMEOUT_MIN (30). */
@@ -78,6 +85,8 @@ interface Live {
 
 const id = (p: string) => `${p}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 const SLOT_KINDS = new Set(['agent', 'gate']);
+/** What to call a run's agent in a message to the human. */
+const agentName = (run: RunRow) => (run.agent === 'codex' ? 'Codex' : 'Claude Code');
 /** A run in one of these still holds its task. The database allows 1 per task. */
 const OPEN_STATUSES = new Set(['queued', 'running', 'waiting']);
 
@@ -106,6 +115,11 @@ export class Runner extends EventEmitter {
   private timedOut = new Set<string>();
   /** Permission questions by id, open or answered in the last minute. */
   private permissions = new Map<string, PendingPermission>();
+
+  /** How this machine identifies a process; see process.ts. */
+  private get procEnv(): ProcessEnv {
+    return this.opts.processEnv ?? realProcessEnv;
+  }
 
   constructor(private store: Store, private exec: Executors, private opts: RunnerOptions) {
     super();
@@ -193,8 +207,13 @@ export class Runner extends EventEmitter {
   recover() {
     for (const r of this.store.runsByStatus('running')) {
       if (r.kind === 'agent' && r.session_id) {
-        this.store.updateRun(r.id, { status: 'waiting', wait_reason: 'paused' });
-        this.store.addEvent(r.task_id, r.id, 'system', { text: 'Orstra restarted mid-run. Message Claude Code to pick the session back up, or retry the step.' });
+        const stray = this.strayProcess(r);
+        if (stray) void this.sweep(r, stray);
+        this.store.updateRun(r.id, { status: 'waiting', wait_reason: 'paused', agent_pid: null, agent_boot_id: null, agent_started_at: null });
+        const text = stray
+          ? `Orstra restarted mid-run. ${agentName(r)} was still working, so Orstra stopped it (pid ${stray.pid}). Message the session to pick it back up, or retry the step.`
+          : `Orstra restarted mid-run. Message ${agentName(r)} to pick the session back up, or retry the step.`;
+        this.store.addEvent(r.task_id, r.id, 'system', { text });
       } else {
         this.store.updateRun(r.id, { status: 'failed', outcome: 'interrupted', ended_at: Date.now(), routed: 'block:interrupted' });
         this.store.addEvent(r.task_id, r.id, 'system', { text: 'Orstra restarted while this step was running. Retry it or stop the task.' });
@@ -202,6 +221,16 @@ export class Runner extends EventEmitter {
     }
     this.rebuild();
     this.pump();
+  }
+
+  /**
+   * Stop an agent process this daemon does not own. Two agents on one worktree would edit the same
+   * files and append to the same session, so the old one goes before a new one opens.
+   */
+  private async sweep(run: RunRow, stamp: ProcessStamp) {
+    const stop = this.opts.stopProcess ?? stopProcess;
+    const how = await stop(stamp.pid, { graceMs: this.opts.sweepGraceMs ?? 5_000 });
+    if (how === 'killed') this.event(run.task_id, run.id, 'system', { text: `${agentName(run)} did not stop on its own, so Orstra killed it (pid ${stamp.pid}).` });
   }
 
   /** Redo the projection for every task, and say which ones moved. */
@@ -245,7 +274,7 @@ export class Runner extends EventEmitter {
       id: id('r'), task_id: task.id, step_id: stepId, kind: step.use, attempt, status: 'queued', outcome: null,
       agent: step.use === 'agent' ? step.agent ?? 'claude-code' : null, session_id: null, progress: null, output: null,
       created_at: Date.now(), started_at: null, ended_at: null, last_turn_at: null, wait_reason: null, routed: null,
-      cost_usd: null, tokens_in: null, tokens_out: null,
+      cost_usd: null, tokens_in: null, tokens_out: null, agent_pid: null, agent_boot_id: null, agent_started_at: null,
     };
     this.store.insertRun(run);
     this.project(task.id);
@@ -387,9 +416,38 @@ export class Runner extends EventEmitter {
       onEvent, onTurn: (t) => this.onTurn(task.id, run.id, t),
     });
     this.live.set(run.id, live);
+    this.stamp(run.id, live.session.pid);
     this.changed(task.id);
     void live.session.closed.then((res) => this.onClosed(task.id, run.id, live, res));
     return live;
+  }
+
+  /**
+   * Write down which process serves a run, so a restart can find it. Clears the stamp when the
+   * session has no process (it ended, or Codex sits between turns).
+   */
+  private stamp(runId: string, pid: number | undefined) {
+    const s = pid === undefined ? null : stampOf(pid, this.procEnv);
+    this.store.updateRun(runId, { agent_pid: s?.pid ?? null, agent_boot_id: s?.bootId ?? null, agent_started_at: s?.startedAt ?? null });
+  }
+
+  /** The process a run has open, as the row remembers it. */
+  private stampOfRun(run: RunRow): ProcessStamp | null {
+    return run.agent_pid && run.agent_boot_id && run.agent_started_at !== null
+      ? { pid: run.agent_pid, bootId: run.agent_boot_id, startedAt: run.agent_started_at }
+      : null;
+  }
+
+  /**
+   * Is an agent process from an earlier daemon still working for this run?
+   *
+   * It can be. Closing its input makes Claude Code stop, but only once it is idle, so it finishes
+   * the action it was on. Nothing else stops it, because the daemon that owned it is gone.
+   */
+  private strayProcess(run: RunRow): ProcessStamp | null {
+    if (this.live.has(run.id)) return null; // this daemon owns it
+    const stamp = this.stampOfRun(run);
+    return stamp && isSameProcess(stamp, this.procEnv) ? stamp : null;
   }
 
   /** The agent finished a turn: decide whether the run is over, waiting for you, or still talking. */
@@ -580,6 +638,8 @@ export class Runner extends EventEmitter {
 
   private onClosed(taskId: string, runId: string, live: Live, res: { ok: boolean; error?: string }) {
     if (this.live.get(runId) === live) this.live.delete(runId);
+    // The process is gone, so the stamp would only mislead the next restart.
+    this.stamp(runId, undefined);
     this.dropPermissions(runId);
     // The session is gone, so a run that still waits now reads as paused rather than as live.
     this.project(taskId);
@@ -779,7 +839,7 @@ export class Runner extends EventEmitter {
     const run: RunRow = {
       id: id('r'), task_id: task.id, step_id: target.step_id, kind: target.kind, attempt, status: 'running', outcome: null,
       agent: target.agent, session_id: target.session_id, progress: null, output: null, created_at: now, started_at: now, ended_at: null,
-      last_turn_at: null, wait_reason: null, routed: null, cost_usd: null, tokens_in: null, tokens_out: null,
+      last_turn_at: null, wait_reason: null, routed: null, cost_usd: null, tokens_in: null, tokens_out: null, agent_pid: null, agent_boot_id: null, agent_started_at: null,
     };
     this.store.insertRun(run);
     return run;
@@ -889,6 +949,13 @@ export class Runner extends EventEmitter {
     let live = this.live.get(run.id);
     const step = this.workflowFor(task).steps[run.step_id];
     if (!live) {
+      // A process from an earlier daemon can still hold this session. Resuming it now would put 2
+      // agents in one worktree, so refuse and say which process to deal with.
+      const stray = this.strayProcess(run);
+      if (stray) {
+        this.event(taskId, run.id, 'system', { text: `${agentName(run)} from an earlier Orstra still runs on this session (pid ${stray.pid}). Orstra did not send your message. Stop that process, or retry the step.` });
+        throw new Error(`An earlier ${agentName(run)} process (pid ${stray.pid}) still holds this session. Stop it, or retry the step.`);
+      }
       live = this.openSession(task, run, { sessionId: target.session_id!, resume: true, routes, model: step?.model });
     }
     // The run works again, so its clock starts again.
@@ -898,6 +965,35 @@ export class Runner extends EventEmitter {
     live.session.send(run === target ? body : `${body}\n\n${this.backOnStep(task, run)}`);
     // After the session is open, never before: a run that is running with no session reads as paused.
     this.project(taskId);
+  }
+
+  /**
+   * Close every agent session, for a daemon that is going down on purpose.
+   *
+   * Each one gets its input closed first, so the agent stops at the end of its current action and
+   * writes nothing half way. One that will not go is killed. After this a restart finds no stray
+   * process, and the sweep in `recover()` is left for a crash.
+   */
+  async shutdown(graceMs = 5_000): Promise<void> {
+    const open = [...this.live.entries()];
+    for (const [runId, live] of open) {
+      this.disarm(runId);
+      live.finished = true;
+      live.session.end();
+    }
+    let timer: NodeJS.Timeout | undefined;
+    await Promise.race([
+      Promise.all(open.map(([, l]) => l.session.closed)),
+      new Promise((r) => { timer = setTimeout(r, graceMs); }),
+    ]);
+    clearTimeout(timer);
+    for (const [, live] of open) {
+      try {
+        live.session.kill();
+      } catch {
+        /* already gone */
+      }
+    }
   }
 
   /** Stop the agent's current turn; the session stays open for your next message. */

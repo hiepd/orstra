@@ -134,6 +134,10 @@ export function codexSession(opts: SessionOptions, cfg: AgentSettings = {}): Liv
   };
 
   return {
+    // Codex runs one process per turn, so this is the current turn's process, if a turn runs.
+    get pid() {
+      return child?.pid;
+    },
     send(text) {
       if (done) return;
       if (child) queue.push(text);
