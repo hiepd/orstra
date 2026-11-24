@@ -44,6 +44,8 @@ interface Live {
 
 const id = (p: string) => `${p}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 const SLOT_KINDS = new Set(['agent', 'gate']);
+/** A run in one of these still holds its task. The database allows 1 per task. */
+const OPEN_STATUSES = new Set(['queued', 'running', 'waiting']);
 
 /**
  * Why a chat to an ended session leaves the task where it is. A closed task reopens through a re-run
@@ -169,15 +171,20 @@ export class Runner extends EventEmitter {
     let busy = this.store.runsByStatus('running').filter((r) => SLOT_KINDS.has(r.kind)).length;
     for (const run of this.store.runsByStatus('queued')) {
       const task = this.store.task(run.task_id);
-      if (!task || task.status === 'stopped') continue;
+      if (!task || task.stopped_at) continue;
       if (SLOT_KINDS.has(run.kind)) {
         if (busy >= this.opts.slots) continue;
         busy++;
       }
       this.store.updateRun(run.id, { status: 'running', started_at: Date.now() });
       this.execute(task, { ...run, status: 'running' }).catch((err) => {
-        this.event(task.id, run.id, 'system', { text: `Run crashed: ${err?.message ?? err}` });
-        this.finish(task.id, run.id, 'cant_do');
+        // The handler for a crash must not crash: an unhandled rejection here ends the daemon.
+        try {
+          this.event(task.id, run.id, 'system', { text: `Run crashed: ${err?.message ?? err}` });
+          this.finish(task.id, run.id, 'cant_do');
+        } catch (inner: any) {
+          console.error(`[orstra] could not record the crash of run ${run.id} on task ${task.id}:`, inner?.message ?? inner);
+        }
       });
     }
   }
@@ -392,7 +399,10 @@ export class Runner extends EventEmitter {
   private finish(taskId: string, runId: string, outcome: string) {
     const run = this.store.run(runId);
     const task = this.store.task(taskId);
-    if (!run || !task || task.status === 'stopped') return;
+    if (!run || !task || task.stopped_at) return;
+    // A retry or a stop may have closed this run while its outcome was on the way. Routing it now
+    // would open a second run beside the one that replaced it, which the database refuses.
+    if (!OPEN_STATUSES.has(run.status)) return;
     const okOutcomes = new Set(['done', 'pass', 'ok', 'approved', 'started']);
     const wf = this.workflow(task.workflow_path);
     const counts = JSON.parse(task.edge_counts) as Record<string, number>;

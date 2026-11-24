@@ -50,7 +50,9 @@ export function describeTask(task: TaskDetail): { now: string; next: string } {
       const now =
         r === 'reply'
           ? `${agent} answered you during ${step}${attempt} and is waiting for your reply.`
-          : `${agent} asked a question during ${step}${attempt} and is waiting for your answer.`;
+          : r === 'paused'
+            ? `You stopped ${agent} during ${step}${attempt}. It is waiting for you to say what to do next.`
+            : `${agent} asked a question during ${step}${attempt} and is waiting for your answer.`;
       return { now, next: `When you reply in Chat, the same session continues. Then ${todo.length ? joinSteps(todo) : 'the task finishes'}.` };
     }
     case 'blocked':

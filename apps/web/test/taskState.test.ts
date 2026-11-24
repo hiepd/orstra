@@ -46,6 +46,11 @@ describe('describeTask after a chat sent the task back', () => {
     expect(next).toBe('Review.');
   });
 
+  it('says you stopped it when you interrupted the turn', () => {
+    const stopped = { ...task, state: 'waiting_you', stateReason: 'paused' } as unknown as TaskDetail;
+    expect(describeTask(stopped).now).toContain('You stopped');
+  });
+
   it('says the session is closed when the run is paused', () => {
     const paused = { ...task, state: 'paused', lastTurnAt: Date.now() - 1000 } as unknown as TaskDetail;
     expect(describeTask(paused).now).toContain('session');

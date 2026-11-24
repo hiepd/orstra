@@ -27,8 +27,8 @@ export function taskFacts(store: Store, isLive: IsLive, task: TaskRow, runs?: Ru
     },
     lastRouted: ended?.routed ?? null,
     // A task you stopped kept its step before this change, and a re-run needs it. The newest run
-    // holds it even when that run was closed by the stop and so routed nowhere.
-    lastStepId: (ended ?? all.at(-1))?.step_id ?? null,
+    // holds it, even when a stop closed that run so it routed nowhere and `ended` skipped it.
+    lastStepId: all.at(-1)?.step_id ?? null,
   };
 }
 

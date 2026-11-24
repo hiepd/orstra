@@ -629,6 +629,34 @@ steps:
     expect(store.task(task.id)!.inbox_reason).toBe('question');
   });
 
+  it('re-runs the step it was stopped at, not the one before it', async () => {
+    const { store, runner, wfPath } = setup(REVIEW, () => done('first pass'));
+    const task = runner.startTask({ workflowPath: wfPath, title: 'stop at the decision' });
+    await runner.idle();
+    expect(store.task(task.id)!.current_step).toBe('review');
+
+    runner.stop(task.id);
+    expect(store.task(task.id)!.current_step).toBe('review');
+
+    runner.retry(task.id);
+    expect(store.openRun(task.id)).toMatchObject({ step_id: 'review', kind: 'human' });
+    await runner.idle();
+  });
+
+  it('ignores an outcome that arrives after its run was closed', async () => {
+    const { store, runner, wfPath } = setup(LOOP, () => done('ok'));
+    const task = runner.startTask({ workflowPath: wfPath, title: 'late outcome' });
+    await runner.idle();
+    const impl = store.runsForTask(task.id)[0];
+    const runs = store.runsForTask(task.id).length;
+
+    // A step that was closed by a retry or a stop can still have an outcome on the way.
+    store.updateRun(impl.id, { status: 'stopped', outcome: null, routed: null });
+    expect(() => (runner as unknown as { finish: (t: string, r: string, o: string) => void }).finish(task.id, impl.id, 'cant_do')).not.toThrow();
+    expect(store.run(impl.id)!.status).toBe('stopped');
+    expect(store.runsForTask(task.id)).toHaveLength(runs);
+  });
+
   it('has no writer of the task state but the projector', () => {
     const dir = join(import.meta.dirname, '../src');
     const writers = readdirSync(dir)
