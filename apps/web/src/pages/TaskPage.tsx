@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useMemo, useState } from 'react';
 import { api, errorMessage, taskLoader, type GitView, type RunView, type TaskDetail } from '../api';
 import { ClaudeCodeModal } from '../components/ClaudeCodeModal';
-import { AwaitingCard, DecisionCard, PermissionCard, RetryModal, StopModal, StuckBanner } from '../components/Decision';
+import { AwaitingCard, DecisionCard, PermissionCard, RetryModal, StopModal, StuckBanner, reopenStep } from '../components/Decision';
 import { prName, shortPath, useGit } from '../components/GitPanel';
 import { ChevronRight, TerminalIcon } from '../components/Icons';
 import { Menu, Modal, useToast } from '../components/Overlay';
@@ -11,12 +11,12 @@ import { currentRun, describeTask } from '../lib/describe';
 import { agentOf, humanize, money, taskLabel, tokens } from '../lib/format';
 import { useLiveResource, useNow, type Resource } from '../lib/live';
 import { href, type TaskViewName } from '../lib/router';
-import { STATE, stepLabel, taskState } from '../lib/taskState';
+import { taskState } from '../lib/taskState';
 import { ago, clock, duration } from '../lib/time';
 import { TaskChat } from './TaskChat';
 import { defaultSession, runName } from '../lib/sessions';
 
-type ModalState = { kind: 'retry'; stepId?: string } | { kind: 'stop' } | { kind: 'cc'; run: RunView } | { kind: 'note'; stepId: string; title: string } | { kind: 'cleanup' } | null;
+type ModalState = { kind: 'retry'; stepId?: string; reopen?: boolean } | { kind: 'stop' } | { kind: 'cc'; run: RunView } | { kind: 'note'; stepId: string; title: string } | { kind: 'cleanup' } | null;
 
 export function TaskPage({ id, view, runId, embedded }: { id: string; view: TaskViewName; runId?: string; embedded?: boolean }) {
   // Each refetch asks only for the events the page has not seen yet.
@@ -62,7 +62,6 @@ function TaskView({ task, view, runId, embedded }: { task: TaskDetail; view: Tas
   const [openPath, setOpenPath] = useState<string | null>(null);
   const closeMenu = useCallback(() => setEditorMenu(false), []);
 
-  const state = taskState(task);
   const ccRun = (view === 'chat' && runId ? task.runs.find((r) => r.id === runId && r.sessionId) : undefined) ?? defaultSession(task);
   const copyPath = async () => {
     try {
@@ -78,14 +77,10 @@ function TaskView({ task, view, runId, embedded }: { task: TaskDetail; view: Tas
     return (
       <>
         <div className="lx-bar">
-          <span className="ox-id">{taskLabel(task)}</span>
-          <b className="ox-trunc" style={{ fontWeight: 600 }}>
+          {task.ref && <span className="ox-id">{task.ref}</span>}
+          <b className="ox-trunc" style={{ fontWeight: 600 }} title={task.id}>
             {task.title}
           </b>
-          <span className="ox-pill" style={{ background: STATE[state].bg, color: STATE[state].fg }}>
-            <span className={`ox-sd${state === 'working' ? ' ox-live' : ''}`} style={{ background: STATE[state].fg }} />
-            {STATE[state].label}
-          </span>
           <div className="lx-acts">
             <div className="ox-seg" role="group" aria-label="Task view">
               <a href={href.inboxTask(task.id)} aria-current={view === 'overview' ? 'page' : undefined}>
@@ -105,7 +100,7 @@ function TaskView({ task, view, runId, embedded }: { task: TaskDetail; view: Tas
         ) : (
           <TaskChat task={task} runId={runId} git={git} openPath={openPath} onOpenPath={setOpenPath} embedded />
         )}
-        {modal?.kind === 'retry' && <RetryModal task={task} stepId={modal.stepId} onClose={() => setModal(null)} />}
+        {modal?.kind === 'retry' && <RetryModal task={task} stepId={modal.stepId} reopen={modal.reopen} onClose={() => setModal(null)} />}
         {modal?.kind === 'stop' && <StopModal task={task} onClose={() => setModal(null)} />}
         {modal?.kind === 'note' && <NoteModal task={task} stepId={modal.stepId} title={modal.title} onClose={() => setModal(null)} />}
       </>
@@ -118,13 +113,11 @@ function TaskView({ task, view, runId, embedded }: { task: TaskDetail; view: Tas
         <div className="lx-crumb">
           <a href={href.tasks}>Tasks</a>
           <span>›</span>
-          <span className="ox-id">{taskLabel(task)}</span>
-          <b className="ox-trunc">{task.title}</b>
+          {task.ref && <span className="ox-id">{task.ref}</span>}
+          <b className="ox-trunc" title={task.id}>
+            {task.title}
+          </b>
         </div>
-        <span className="ox-pill" style={{ background: STATE[state].bg, color: STATE[state].fg }}>
-          <span className={`ox-sd${state === 'working' ? ' ox-live' : ''}`} style={{ background: STATE[state].fg }} />
-          {STATE[state].label}
-        </span>
         <div className="ox-seg" role="group" aria-label="Task view" style={{ marginLeft: 10 }}>
           <a href={href.task(task.id)} aria-current={view === 'overview' ? 'page' : undefined}>
             Overview
@@ -176,7 +169,7 @@ function TaskView({ task, view, runId, embedded }: { task: TaskDetail; view: Tas
         <TaskChat task={task} runId={runId} git={git} openPath={openPath} onOpenPath={setOpenPath} />
       )}
 
-      {modal?.kind === 'retry' && <RetryModal task={task} stepId={modal.stepId} onClose={() => setModal(null)} />}
+      {modal?.kind === 'retry' && <RetryModal task={task} stepId={modal.stepId} reopen={modal.reopen} onClose={() => setModal(null)} />}
       {modal?.kind === 'stop' && <StopModal task={task} onClose={() => setModal(null)} />}
       {modal?.kind === 'cc' && <ClaudeCodeModal run={modal.run} crumb={taskLabel(task)} onClose={() => setModal(null)} />}
       {modal?.kind === 'note' && <NoteModal task={task} stepId={modal.stepId} title={modal.title} onClose={() => setModal(null)} />}
@@ -184,6 +177,9 @@ function TaskView({ task, view, runId, embedded }: { task: TaskDetail; view: Tas
     </>
   );
 }
+
+/** The run the task is on now, still running or waiting on you. The page says its state once, under the track. */
+const isOpenRun = (r: RunView) => r.status === 'running' || r.status === 'waiting';
 
 const KIND: Record<string, string> = { agent: 'agent', gate: 'checks', human: 'your decision', switch: 'picks a branch', action: 'action', workflow: 'starts a workflow' };
 const TONE = {
@@ -244,14 +240,13 @@ function Overview({ task, git, onModal, embedded }: { task: TaskDetail; git: Res
 
   /** What a non-agent run did, in a sentence, from the task's events. */
   const runText = (r: RunView): string | null => {
-    if (r.status === 'running' && r.kind === 'agent') return 'Running now. Open Chat to watch it or talk to it.';
-    if (r.status === 'waiting' && r.kind === 'agent') return 'The session is open and waiting for you.';
+    if (isOpenRun(r)) return null;
     // Your chat sent the step back to the agent, so whatever waited here closed without an answer.
     if (r.outcome === 'reopened') return 'Closed without an answer: your message sent the task back to the agent.';
     if (r.kind === 'human') {
       const d = task.events.find((e) => e.runId === r.id && e.kind === 'you' && e.mode === 'decision');
       if (d && d.kind === 'you') return `${d.via === 'cos' ? 'Your assistant chose (with your OK)' : 'You chose'} “${humanize(d.choice ?? r.outcome ?? '').toLowerCase()}”.` + (d.text ? ` Comment: “${d.text}”` : '');
-      return r.status === 'waiting' ? 'Waiting for your decision.' : null;
+      return null;
     }
     if (r.kind === 'switch' || r.kind === 'action') {
       const sys = task.events.find((e) => e.runId === r.id && e.kind === 'system');
@@ -384,9 +379,11 @@ function Overview({ task, git, onModal, embedded }: { task: TaskDetail; git: Res
                           {r.startedAt ? duration(r.startedAt, r.endedAt ?? Date.now()) : '—'}
                           {r.costUsd ? ` · ${money(r.costUsd)}` : ''}
                         </span>
-                        <span className="ox-oc" style={{ background: TONE[badge.tone].bg, color: TONE[badge.tone].fg }}>
-                          {badge.text}
-                        </span>
+                        {!isOpenRun(r) && (
+                          <span className="ox-oc" style={{ background: TONE[badge.tone].bg, color: TONE[badge.tone].fg }}>
+                            {badge.text}
+                          </span>
+                        )}
                         <ChevronRight open={o} size={11} />
                       </button>
                       {o && (
@@ -394,14 +391,14 @@ function Overview({ task, git, onModal, embedded }: { task: TaskDetail; git: Res
                           {text && <div className="ox-rtext">{text}</div>}
                           {r.progress && <ProgressList progress={r.progress} />}
                           {r.output && <pre className="ox-pre">{r.output.trim().split('\n').slice(-30).join('\n')}</pre>}
-                          {!text && !r.progress && !r.output && <div className="lx-hint">Nothing recorded for this run.</div>}
+                          {!text && !r.progress && !r.output && !isOpenRun(r) && <div className="lx-hint">Nothing recorded for this run.</div>}
                           <div className="ox-brow">
-                            {r.sessionId && (
+                            {r.sessionId && !isOpenRun(r) && (
                               <a className="ox-link" href={href.chat(task.id, r.id)}>
-                                {r.status === 'running' || r.status === 'waiting' ? 'Open the live session in Chat →' : 'Open this session in Chat →'}
+                                Open this session in Chat →
                               </a>
                             )}
-                            {active && r.status !== 'running' && r.status !== 'queued' && r.kind !== 'human' && r.kind !== 'switch' && (
+                            {active && !isOpenRun(r) && r.status !== 'queued' && r.kind !== 'human' && r.kind !== 'switch' && (
                               <button className="ox-link" onClick={() => onModal({ kind: 'retry', stepId: r.stepId })}>
                                 Re-run this step…
                               </button>
@@ -418,9 +415,6 @@ function Overview({ task, git, onModal, embedded }: { task: TaskDetail; git: Res
             ) : (
               <div className="ox-calm">No runs yet. The first step starts when a slot is free.</div>
             )}
-            <div className="lx-hint" style={{ marginTop: 8 }}>
-              A run is one step executed once. A retry is a new run with a fresh session; it reads the earlier runs’ progress notes.
-            </div>
           </section>
 
           {active && upcoming.length > 0 && (
@@ -453,9 +447,6 @@ function Overview({ task, git, onModal, embedded }: { task: TaskDetail; git: Res
                   );
                 })}
               </div>
-              <div className="lx-hint" style={{ marginTop: 8 }}>
-                These are the steps the task reaches if each one succeeds. A note is read by that step’s agent when it runs. To talk to an agent that is running now, use Chat.
-              </div>
             </section>
           )}
         </div>
@@ -463,7 +454,6 @@ function Overview({ task, git, onModal, embedded }: { task: TaskDetail; git: Res
 
       {!embedded && (
       <aside className="ox-props" aria-label="Task details">
-        <Prop k="Step" v={stepLabel({ ...task, run: cur ? { status: cur.status, attempt: cur.attempt, kind: cur.kind } : null })} />
         <div className="ox-prop">
           <span className="ox-pk">Workflow</span>
           <a className="ox-pv" href={href.workflow(task.workflowFile)}>
@@ -504,9 +494,6 @@ function Overview({ task, git, onModal, embedded }: { task: TaskDetail; git: Res
         <Prop k="Started" v={ago(task.createdAt)} title={new Date(task.createdAt).toLocaleString()} />
         <Prop k="Updated" v={ago(task.updatedAt)} title={new Date(task.updatedAt).toLocaleString()} />
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 14 }}>
-          <a className="lx-btn" style={{ justifyContent: 'center' }} href={href.chat(task.id)}>
-            Open Chat
-          </a>
           {active && task.currentStep && (
             <button className="lx-btn" style={{ justifyContent: 'center' }} onClick={() => onModal({ kind: 'retry' })}>
               Re-run the current step…
@@ -519,6 +506,12 @@ function Overview({ task, git, onModal, embedded }: { task: TaskDetail; git: Res
           )}
           {!active && !task.archivedAt && (
             <>
+              {/* Done is the end of a workflow: more work on a done task starts here, not at a step. */}
+              {task.status === 'done' && reopenStep(task) && (
+                <button className="lx-btn" style={{ justifyContent: 'center' }} onClick={() => onModal({ kind: 'retry', reopen: true })}>
+                  Reopen…
+                </button>
+              )}
               <button className="lx-btn" style={{ justifyContent: 'center' }} onClick={() => void api.archive(task.id, true)}>
                 Archive
               </button>

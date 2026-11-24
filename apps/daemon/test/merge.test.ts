@@ -151,16 +151,18 @@ describe('mergeTaskBranch', () => {
 });
 
 describe('the Simple workflow Orstra ships', () => {
-  it('is Todo, In progress, Done: it waits for Start, and merges nothing', () => {
+  it('is Todo, In progress, In review: you decide once, and Done is the end', () => {
     const path = fileURLToPath(new URL('../../../workflows/simple.yaml', import.meta.url));
     const wf = parseWorkflow(readFileSync(path, 'utf8'));
-    expect(Object.values(wf.steps).map((s) => s.title)).toEqual(['Todo', 'In progress', 'Done']);
+    expect(Object.values(wf.steps).map((s) => s.title)).toEqual(['Todo', 'In progress', 'In review']);
     expect(wf.start).toBe('todo');
     expect(wf.steps.todo.use).toBe('human');
     expect(wf.steps.todo.on.start.goto).toBe('work');
-    expect(wf.steps.work.on.done.goto).toBe('done');
-    expect(wf.steps.done.on.close.goto).toBe('end');
-    expect(wf.steps.done.on.reopen.goto).toBe('work');
+    expect(wf.steps.work.on.done.goto).toBe('review');
+    expect(wf.steps.review.on.approved.goto).toBe('end');
+    expect(wf.steps.review.on.changes_requested.goto).toBe('work');
+    // No step is called Done: Done is where a finished task is, not a decision.
+    expect(Object.values(wf.steps).some((s) => s.title?.toLowerCase() === 'done')).toBe(false);
     expect(Object.values(wf.steps).some((s) => s.use === 'action')).toBe(false);
   });
 });

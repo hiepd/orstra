@@ -2,7 +2,6 @@ import type { ReactNode } from 'react';
 import type { TaskSummary } from '../api';
 import { href, type Route } from '../lib/router';
 import { setThemeChoice, useTheme } from '../lib/theme';
-import { taskLabel } from '../lib/format';
 import { CosIcon, LogoIcon, SettingsIcon, TasksIcon, WorkflowsIcon } from './Icons';
 
 function NavLink({ to, on, icon, label, count }: { to: string; on: boolean; icon: ReactNode; label: string; count?: number }) {
@@ -63,9 +62,7 @@ export function Sidebar({
           {running.map((t) => (
             <a key={t.id} className="lx-live" href={href.chat(t.id)} title={t.title}>
               <span className="lx-pulse" aria-hidden="true" />
-              <span>
-                {taskLabel(t)} {t.title}
-              </span>
+              <span>{t.title}</span>
             </a>
           ))}
         </>

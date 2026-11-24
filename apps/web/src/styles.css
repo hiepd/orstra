@@ -1711,6 +1711,14 @@ a:hover {
   max-height: 220px;
   overflow: auto;
 }
+.lx-brief {
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+.lx-brief ul {
+  margin: 6px 0 0;
+  padding-left: 20px;
+}
 .lx-qa {
   display: flex;
   flex-direction: column;
@@ -1762,7 +1770,7 @@ a:hover {
 .ox-list{flex:1;overflow:auto;padding-bottom:24px}
 .ox-lgh{display:flex;align-items:center;gap:8px;height:34px;padding:0 18px;font-size:12.5px;font-weight:500;color:var(--ink-2);background:var(--hover);border-bottom:1px solid var(--line)}
 .ox-lgh .ox-gn{color:var(--dim);font-weight:400}
-.ox-lrow{display:grid;grid-template-columns:16px 76px minmax(0,1fr) 220px 22px 60px;align-items:center;gap:10px;width:100%;height:40px;padding:0 18px;border:0;border-bottom:1px solid var(--line-3);background:transparent;text-align:left;cursor:pointer;font-size:13px}
+.ox-lrow{display:grid;grid-template-columns:16px minmax(0,1fr) 220px 22px 60px;align-items:center;gap:10px;width:100%;height:40px;padding:0 18px;border:0;border-bottom:1px solid var(--line-3);background:transparent;text-align:left;cursor:pointer;font-size:13px}
 .ox-lrow:hover{background:var(--hover)}
 .ox-lstep{font-size:12.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ox-ltime{font-size:12px;color:var(--dim);text-align:right}
@@ -2042,6 +2050,10 @@ a:hover {
 .cs-intro b{color:var(--ink);font-size:16px}
 .cs-card{border:1px solid var(--frame-line);border-radius:10px;overflow:hidden;background:var(--surface)}
 .cs-cardh{display:flex;align-items:center;gap:8px;padding:8px 12px;font-size:12.5px;font-weight:500;color:var(--ink-2);background:var(--hover);border-bottom:1px solid var(--line)}
+.cs-didmore{margin-top:2px}
+.cs-didd{margin-top:4px;font-size:12.5px;line-height:1.5;color:var(--muted);white-space:pre-wrap;word-break:break-word}
+.cs-acts{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 4px}
+.cs-more{margin-top:6px}
 .lx a.cs-trow{display:flex;align-items:center;gap:10px;width:100%;padding:9px 12px;border-top:1px solid var(--line-3);color:inherit;text-decoration:none}
 .cs-cardh + .cs-trow{border-top:0}
 .lx a.cs-trow:hover{background:var(--hover);text-decoration:none}
@@ -2128,7 +2140,7 @@ a:hover {
 .ox-md hr{border:0;border-top:1px solid var(--line)}
 .ox-md strong{font-weight:600}
 .ox-md img{max-width:100%}
-.ox-md :not(pre)>code{font-family:var(--mono);font-size:.86em;background:var(--hover);border:1px solid var(--line);border-radius:4px;padding:1px 4px}
+.ox-md :not(pre)>code,.lx-dl dd code{font-family:var(--mono);font-size:.86em;background:var(--hover);border:1px solid var(--line);border-radius:4px;padding:1px 4px}
 /* A fenced block: the language on top, the code scrolling sideways under it. */
 .ox-mdcode{border:1px solid var(--line);border-radius:6px;background:var(--hover);overflow:hidden}
 .ox-mdlang{display:block;padding:4px 10px;border-bottom:1px solid var(--line);font-family:var(--mono);font-size:12px;color:var(--faint)}

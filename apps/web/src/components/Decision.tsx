@@ -7,6 +7,8 @@ import { StopIcon, StuckCircle, WaitCircle } from './Icons';
 import { Modal, useToast } from './Overlay';
 import { href } from '../lib/router';
 import { ProgressList } from './ProgressList';
+import { Markdown } from './Markdown';
+import { briefOf } from '../lib/brief';
 
 const CHOICE_LABEL: Record<string, string> = {
   approved: 'Approve',
@@ -66,10 +68,6 @@ export function DecisionCard({ task, onDone }: { task: TaskDetail; onDone?: () =
 
   return (
     <section className="lx-card" aria-label="Decision">
-      <div className="lx-card-h">
-        <WaitCircle />
-        <span>Waiting for your decision{run ? ` · ${run.stepTitle}` : ''}</span>
-      </div>
       <p className="lx-q">{human.question}</p>
       {human.artifact && (
         <div>
@@ -174,12 +172,6 @@ export function PermissionCard({ task }: { task: TaskDetail }) {
         <span style={{ color: 'var(--ink)', fontWeight: 500 }}>
           {run ? agentOf(run).name : 'The agent'} wants to use {p.tool}
         </span>
-        {run && (
-          <span>
-            · {run.stepTitle}
-            {run.attempt > 1 ? ` · attempt ${run.attempt}` : ''}
-          </span>
-        )}
       </div>
       {p.summary && <p className="lx-awaittext lx-mono">{p.summary}</p>}
       <details>
@@ -217,21 +209,26 @@ export function PermissionCard({ task }: { task: TaskDetail }) {
 export function AwaitingCard({ task, children }: { task: TaskDetail; children?: ReactNode }) {
   const a = task.awaiting;
   if (!a) return null;
-  const run = task.runs.find((r) => r.id === a.runId);
   const title = awaitingTitle(taskState(task), a.reason);
+  const brief = a.text ? briefOf(a.text) : null;
   return (
     <section className="lx-card lx-await" aria-label={title}>
       <div className="lx-card-h">
         {a.reason === 'paused' ? <StopIcon /> : <WaitCircle />}
         <span style={{ color: 'var(--ink)', fontWeight: 500 }}>{title}</span>
-        {run && (
-          <span>
-            · {run.stepTitle}
-            {run.attempt > 1 ? ` · attempt ${run.attempt}` : ''}
-          </span>
-        )}
       </div>
-      {a.text && <p className="lx-awaittext">{a.text}</p>}
+      {brief && (
+        <div className="lx-brief">
+          <Markdown text={brief.lead} />
+          {brief.parts.length > 0 && (
+            <ul>
+              {brief.parts.map((p) => (
+                <li key={p}>{p}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
       {taskState(task) === 'paused' && !a.text && <p className="lx-awaittext">Send a message to pick the session up where it left off.</p>}
       {children}
     </section>
@@ -293,17 +290,24 @@ export function StuckBanner({ task, onDone }: { task: TaskDetail; onDone?: () =>
   );
 }
 
-/** Re-run a step (default: the current one) as a fresh session, with an optional note. */
-export function RetryModal({ task, stepId, onClose, onDone }: { task: TaskDetail; stepId?: string; onClose: () => void; onDone?: () => void }) {
+/** The step a reopened task goes back to: its first agent step. */
+export const reopenStep = (task: TaskDetail) => task.steps.find((s) => s.kind === 'agent')?.id;
+
+/**
+ * Re-run a step (default: the current one) as a fresh session, with an optional note. With `reopen`,
+ * it is how a done task takes more work: its first agent step runs again with what should change.
+ */
+export function RetryModal({ task, stepId, reopen, onClose, onDone }: { task: TaskDetail; stepId?: string; reopen?: boolean; onClose: () => void; onDone?: () => void }) {
   const toast = useToast();
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
-  const stepTitle = task.steps.find((s) => s.id === (stepId ?? task.currentStep))?.title ?? task.currentStepTitle ?? 'this step';
+  const target = reopen ? stepId ?? reopenStep(task) : stepId;
+  const stepTitle = task.steps.find((s) => s.id === (target ?? task.currentStep))?.title ?? task.currentStepTitle ?? 'this step';
   const submit = async () => {
     setBusy(true);
     try {
-      await api.retry(task.id, { stepId, note: note.trim() || undefined });
-      toast(`Queued a fresh run of ${stepTitle}`);
+      await api.retry(task.id, { stepId: target, note: note.trim() || undefined });
+      toast(reopen ? `Reopened. ${stepTitle} picks it up next.` : `Queued a fresh run of ${stepTitle}`);
       onClose();
       onDone?.();
     } catch (err) {
@@ -313,26 +317,30 @@ export function RetryModal({ task, stepId, onClose, onDone }: { task: TaskDetail
   };
   return (
     <Modal
-      crumb={<span>{taskLabel(task)} › Re-run</span>}
-      title={`Re-run ${stepTitle}`}
+      crumb={<span>{taskLabel(task)} › {reopen ? 'Reopen' : 'Re-run'}</span>}
+      title={reopen ? 'Reopen this task' : `Re-run ${stepTitle}`}
       onClose={onClose}
       footer={
         <>
           <button className="lx-btn" onClick={onClose}>
             Cancel
           </button>
-          <button className="lx-btn lx-pri" onClick={() => void submit()} disabled={busy}>
+          <button className="lx-btn lx-pri" onClick={() => void submit()} disabled={busy || (reopen && !note.trim())}>
             {busy && <span className="lx-spin" aria-hidden="true" />}
-            Re-run step
+            {reopen ? 'Reopen' : 'Re-run step'}
           </button>
         </>
       }
     >
-      <p>Starts a fresh session from the task’s progress and your note. The steps after it run again.</p>
+      <p>
+        {reopen
+          ? `${stepTitle} starts a fresh session from the task’s progress and your note. The steps after it run again, so you review it once more.`
+          : 'Starts a fresh session from the task’s progress and your note. The steps after it run again.'}
+      </p>
       <textarea
         className="lx-field"
-        aria-label="Note for the new run"
-        placeholder="What should it do differently? (optional)"
+        aria-label={reopen ? 'What should change' : 'Note for the new run'}
+        placeholder={reopen ? 'What should change?' : 'What should it do differently? (optional)'}
         value={note}
         onChange={(e) => setNote(e.target.value)}
         autoFocus

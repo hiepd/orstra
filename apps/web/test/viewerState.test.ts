@@ -4,8 +4,8 @@ import { initialViewer, reduce, type ViewerState } from '../src/components/viewe
 const two = (): ViewerState => ({ ...initialViewer(), panes: [{ tabs: ['changes', 'file:a.md'], active: 'file:a.md' }], focus: 0 });
 
 describe('viewer state', () => {
-  it('starts with Changes, open', () => {
-    expect(initialViewer()).toEqual({ panes: [{ tabs: ['changes'], active: 'changes' }], focus: 0, dir: 'row', expanded: false, open: true });
+  it('starts with Changes, closed: the chat gets the room until there is something to show', () => {
+    expect(initialViewer()).toEqual({ panes: [{ tabs: ['changes'], active: 'changes' }], focus: 0, dir: 'row', expanded: false, open: false });
   });
 
   it('opens a new tab in the focused pane, and focuses a tab that is open', () => {

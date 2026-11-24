@@ -42,6 +42,9 @@ export interface PlanAction {
 const id = (p: string) => `${p}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
 const label = (t: Pick<TaskRow, 'id' | 'ref'>) => t.ref || t.id.slice(0, 8);
+/** How a card names a task for the user: its ticket, else its title. Ids are for the model, not for people. */
+const named = (t: Pick<TaskRow, 'ref' | 'title'>) => (t.ref ? `${t.ref} “${t.title}”` : `“${t.title}”`);
+const UNTIL_TEXT: Record<string, string> = { needs_you: 'needs you', done: 'is done', stopped: 'is stopped', finished: 'finishes' };
 const json = (v: unknown) => JSON.stringify(v, null, 1);
 
 /**
@@ -189,7 +192,7 @@ export class ChiefOfStaff extends EventEmitter {
       try {
         const r = await this.execute(a.tool, a.args);
         results.push(r.text);
-        this.event('did', { text: r.text, taskId: r.taskId ?? null, view: r.view ?? null });
+        this.event('did', { text: r.text, detail: r.detail, taskId: r.taskId ?? null, view: r.view ?? null });
       } catch (err: any) {
         const msg = `Couldn’t ${a.label.charAt(0).toLowerCase() + a.label.slice(1)}: ${err?.message ?? err}`;
         results.push(msg);
@@ -245,7 +248,7 @@ export class ChiefOfStaff extends EventEmitter {
   private fire(w: WatchRow, t: TaskRow) {
     this.store.updateWatch(w.id, { fired_at: Date.now() });
     const state = t.status === 'needs_you' ? `waiting for the user (${t.inbox_reason ?? 'needs you'})` : t.status;
-    this.event('did', { text: `${label(t)} is ${t.status === 'needs_you' ? 'waiting for you' : t.status}. Following up: ${w.instruction}`, taskId: t.id, watch: true });
+    this.event('did', { text: `${named(t)} ${t.status === 'needs_you' ? 'waits for you' : `is ${t.status}`}. I follow up now.`, detail: w.instruction, taskId: t.id, watch: true });
     this.send(
       `[Orstra] Watch ${w.id} fired: ${label(t)} "${t.title}" is now ${state}. Your instruction was: ${w.instruction}\nDo it now. Your permissions still apply: anything that needs the user's OK becomes a plan. Then tell the user in one or two sentences.`,
     );
@@ -311,11 +314,11 @@ export class ChiefOfStaff extends EventEmitter {
   }
 
   /** Run an action for real (permission already granted). */
-  private async execute(tool: string, a: Record<string, any>): Promise<{ text: string; taskId?: string; view?: string }> {
+  private async execute(tool: string, a: Record<string, any>): Promise<{ text: string; detail?: string; taskId?: string; view?: string }> {
     if (tool === 'start_task') {
       const path = resolveWorkflow(String(a.workflow));
       const t = this.runner.startTask({ workflowPath: path, title: String(a.title), description: a.description ? String(a.description) : undefined, ref: a.ref ? String(a.ref) : undefined, via: 'cos' });
-      return { text: `Started ${label(t)} “${t.title}” (${t.workflow_name})`, taskId: t.id };
+      return { text: `Started ${named(t)} · ${t.workflow_name}`, taskId: t.id };
     }
     const t = this.task(a.task);
     switch (tool) {
@@ -324,17 +327,17 @@ export class ChiefOfStaff extends EventEmitter {
         // A message to an agent whose run had ended sends that step back, so say where the task went.
         const after = this.store.task(t.id)!;
         const back = t.status === 'needs_you' && after.status === 'running' ? ` The task went back to ${this.views.stepTitle(after, after.current_step ?? '')}.` : '';
-        return { text: `Sent to ${this.agentName(t)} on ${label(t)}: “${clip(String(a.text), 300)}”${back}`, taskId: t.id, view: 'chat' };
+        return { text: `Sent to ${this.agentName(t)} on ${named(t)}.${back}`, detail: clip(String(a.text), 2000), taskId: t.id, view: 'chat' };
       }
       case 'add_note': {
         const stepId = this.stepId(t, a.step);
         await this.runner.message(t.id, String(a.text), 'note', { stepId, via: 'cos' });
-        return { text: `Left a note for ${this.views.stepTitle(t, stepId)} on ${label(t)}`, taskId: t.id };
+        return { text: `Left a note for ${this.views.stepTitle(t, stepId)} on ${named(t)}`, detail: clip(String(a.text), 2000), taskId: t.id };
       }
       case 'retry_step': {
         const stepId = a.step ? this.stepId(t, a.step) : undefined;
         this.runner.retry(t.id, stepId, a.note ? String(a.note) : undefined, 'cos');
-        return { text: `Re-running ${this.views.stepTitle(t, stepId ?? t.current_step ?? '')} on ${label(t)}`, taskId: t.id };
+        return { text: `Re-running ${this.views.stepTitle(t, stepId ?? t.current_step ?? '')} on ${named(t)}`, detail: a.note ? clip(String(a.note), 2000) : undefined, taskId: t.id };
       }
       case 'decide': {
         const d = this.views.taskDetail(t);
@@ -343,11 +346,11 @@ export class ChiefOfStaff extends EventEmitter {
         const choice = String(a.choice);
         if (!human.choices.includes(choice)) throw new Error(`"${choice}" isn't one of the choices: ${human.choices.join(', ')}.`);
         this.runner.decide(human.runId, choice, a.comment ? String(a.comment) : undefined, 'cos');
-        return { text: `Answered ${label(t)}’s decision: ${choice.replace(/_/g, ' ')}`, taskId: t.id };
+        return { text: `Answered the decision on ${named(t)}: ${choice.replace(/_/g, ' ')}`, taskId: t.id };
       }
       case 'stop_task':
         this.runner.stop(t.id, 'cos');
-        return { text: `Stopped ${label(t)}`, taskId: t.id };
+        return { text: `Stopped ${named(t)}`, taskId: t.id };
     }
     throw new Error(`Unknown action ${tool}.`);
   }
@@ -360,7 +363,7 @@ export class ChiefOfStaff extends EventEmitter {
       const allowed = gate !== 'always' && this.permissions()[gate];
       if (allowed) {
         const r = await this.execute(name, a);
-        this.event('did', { text: r.text, taskId: r.taskId ?? null, view: r.view ?? null });
+        this.event('did', { text: r.text, detail: r.detail, taskId: r.taskId ?? null, view: r.view ?? null });
         return `Done: ${r.text}.`;
       }
       return this.addToPlan(name, a, label);
@@ -452,7 +455,7 @@ export class ChiefOfStaff extends EventEmitter {
         if (this.reached(t, until)) return `${label(t)} is already ${t.status}. Nothing to wait for: act on it now if needed.`;
         const wid = id('w');
         this.store.insertWatch({ id: wid, task_id: t.id, until, instruction: String(a.instruction ?? ''), created_at: Date.now(), fired_at: null, removed_at: null });
-        this.event('did', { text: `Watching ${label(t)}: when it’s ${until === 'needs_you' ? 'waiting for you' : until}, ${String(a.instruction ?? '').replace(/^\w/, (c) => c.toLowerCase())}`, taskId: t.id, watch: true });
+        this.event('did', { text: `Watching ${named(t)}. I tell you when it ${UNTIL_TEXT[until] ?? until}.`, detail: String(a.instruction ?? '') || undefined, taskId: t.id, watch: true });
         return `Watching (${wid}). You'll get a message when ${label(t)} is ${until}.`;
       }
       case 'unwatch':

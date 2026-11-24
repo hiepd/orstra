@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import type { Progress } from '../api';
 
 const FIELDS: [keyof Progress, string][] = [
@@ -6,6 +7,11 @@ const FIELDS: [keyof Progress, string][] = [
   ['left', 'Left'],
   ['avoid', 'Avoid'],
 ];
+
+/** Inline code in a progress line, as the agent wrote it in backticks. Everything else stays text. */
+export function withCode(text: string): ReactNode[] {
+  return text.split(/(`[^`\n]+`)/).map((part, i) => (part.length > 2 && part.startsWith('`') && part.endsWith('`') ? <code key={i}>{part.slice(1, -1)}</code> : part));
+}
 
 const isNothing = (v: string) => /^\s*(nothing|none|n\/a)\.?\s*$/i.test(v);
 
@@ -21,7 +27,7 @@ export function ProgressList({ progress }: { progress: Progress }) {
       {rows.map(([k, label]) => (
         <div key={k} style={{ display: 'contents' }}>
           <dt>{label}</dt>
-          <dd>{progress[k]}</dd>
+          <dd>{withCode(progress[k] as string)}</dd>
         </div>
       ))}
     </dl>

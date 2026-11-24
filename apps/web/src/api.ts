@@ -328,7 +328,7 @@ export type CosEvent = { id: number; ts: number } & (
   | { kind: 'tool'; name: string; summary: string }
   | { kind: 'show'; title: string; taskIds: string[] }
   | { kind: 'plan'; planId: string }
-  | { kind: 'did'; text: string; taskId: string | null; view?: 'chat' | null; watch?: boolean }
+  | { kind: 'did'; text: string; detail?: string; taskId: string | null; view?: 'chat' | null; watch?: boolean }
   | { kind: 'system'; text: string }
 );
 

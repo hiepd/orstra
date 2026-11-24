@@ -7,7 +7,8 @@ import { Markdown } from '../components/Markdown';
 import { useToast } from '../components/Overlay';
 import { useAutoScroll } from '../lib/autoScroll';
 import type { AttachTo } from '../lib/attach';
-import { taskLabel } from '../lib/format';
+import { splitReply } from '../lib/brief';
+import { mentionedTasks, splitCard } from '../lib/mentions';
 import { useLiveResource, useNow } from '../lib/live';
 import { href } from '../lib/router';
 import { STATE, stepLabel, taskState } from '../lib/taskState';
@@ -114,7 +115,7 @@ function TaskRows({ title, ids, tasks }: { title: string; ids: string[]; tasks: 
         return (
           <a key={t.id} className="cs-trow" href={s === 'waiting_you' || s === 'paused' ? href.chat(t.id) : href.task(t.id)}>
             <span className={`ox-sd${s === 'working' ? ' ox-live' : ''}`} style={{ background: STATE[s].fg }} />
-            <span className="ox-id">{taskLabel(t)}</span>
+            {t.ref && <span className="ox-id">{t.ref}</span>}
             <span className="cs-tmain">
               <span className="cs-tt">{t.title}</span>
               <span className="cs-tw">{what}</span>
@@ -179,6 +180,8 @@ function PlanCard({ plan }: { plan: CosPlan }) {
 }
 
 function Did({ e }: { e: Extract<CosEvent, { kind: 'did' }> }) {
+  const [open, setOpen] = useState(false);
+  const card = e.detail ? { text: e.text, detail: e.detail } : splitCard(e.text);
   return (
     <div className="cs-did">
       <span className="cs-didic" style={e.watch ? { background: 'var(--accent-soft)', color: 'var(--accent-fg)' } : undefined}>
@@ -187,12 +190,52 @@ function Did({ e }: { e: Extract<CosEvent, { kind: 'did' }> }) {
         </svg>
       </span>
       <div className="cs-didb">
-        <div className="cs-didt">{e.text}</div>
+        <div className="cs-didt">{card.text}</div>
+        {card.detail && (
+          <button className="ox-fold cs-didmore" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+            <ChevronRight open={open} size={10} />
+            <span>{open ? 'Hide the details' : 'Details'}</span>
+          </button>
+        )}
+        {open && card.detail && <div className="cs-didd">{card.detail}</div>}
       </div>
       {e.taskId && (
         <a className="ox-link" style={{ lineHeight: '22px' }} href={e.view === 'chat' ? href.chat(e.taskId) : href.task(e.taskId)}>
           {e.view === 'chat' ? 'Open chat' : 'Open task'}
         </a>
+      )}
+    </div>
+  );
+}
+
+/**
+ * A reply from the assistant: what happened first, then the rest in a fold. When it names tasks that
+ * wait for you, each gets a button that opens it in the Inbox.
+ */
+function Reply({ text, tasks }: { text: string; tasks: TaskSummary[] }) {
+  const [open, setOpen] = useState(false);
+  const { lead, rest } = splitReply(text);
+  const waiting = mentionedTasks(text, tasks.filter((t) => STATE[taskState(t)].group === 'needs')).slice(0, 2);
+  return (
+    <div className="ox-ai cs-ai">
+      <Markdown text={lead} />
+      {waiting.length > 0 && (
+        <div className="cs-acts">
+          {waiting.map((t, i) => (
+            <a key={t.id} className={`lx-btn${i === 0 ? ' lx-pri' : ''}`} href={href.inboxTask(t.id, taskState(t) === 'waiting_you' ? 'chat' : 'overview')}>
+              {waiting.length === 1 ? 'Open the task' : `Open “${t.title.length > 32 ? t.title.slice(0, 31) + '…' : t.title}”`}
+            </a>
+          ))}
+        </div>
+      )}
+      {rest && (
+        <>
+          <button className="ox-fold cs-more" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+            <ChevronRight open={open} size={11} />
+            <span>{open ? 'Show less' : 'The details'}</span>
+          </button>
+          {open && <Markdown text={rest} />}
+        </>
       )}
     </div>
   );
@@ -207,6 +250,7 @@ function Conversation({ view, tasks }: { view: CosView; tasks: TaskSummary[] }) 
     tools = [];
   };
   let lastDay = '';
+  const lastMessage = [...view.events].reverse().find((e) => e.kind === 'message')?.id;
   for (const e of view.events) {
     const day = new Date(e.ts).toDateString();
     if (e.kind !== 'tool' && day !== lastDay) {
@@ -234,7 +278,7 @@ function Conversation({ view, tasks }: { view: CosView; tasks: TaskSummary[] }) 
           </div>
         ),
       });
-    else if (e.kind === 'message') items.push({ key, node: <div className="ox-ai cs-ai"><Markdown text={e.text} /></div> });
+    else if (e.kind === 'message') items.push({ key, node: <Reply text={e.text} tasks={e.id === lastMessage ? tasks : []} /> });
     else if (e.kind === 'show') items.push({ key, node: <TaskRows title={e.title} ids={e.taskIds} tasks={tasks} /> });
     else if (e.kind === 'plan') {
       const plan = view.plans.find((p) => p.id === e.planId);
@@ -299,9 +343,8 @@ function CosComposer({ working, empty }: { working: boolean; empty: boolean }) {
 
 const UNTIL: Record<string, string> = { done: 'is done', needs_you: 'needs you', stopped: 'is stopped', finished: 'finishes' };
 
-function Side({ view, tasks }: { view: CosView; tasks: TaskSummary[] }) {
+function Side({ view }: { view: CosView }) {
   const toast = useToast();
-  const count = (g: string) => tasks.filter((t) => STATE[taskState(t)].group === g).length;
   const setPerm = async (key: CosPermission, value: boolean) => {
     try {
       await api.cosPermission(key, value);
@@ -325,23 +368,7 @@ function Side({ view, tasks }: { view: CosView; tasks: TaskSummary[] }) {
   ];
   return (
     <aside className="cs-side" aria-label="What your assistant is doing">
-      <div className="cs-sh">Right now</div>
-      {(
-        [
-          ['Need you', count('needs'), 'var(--purple-fg)', href.inbox],
-          ['Running', count('running'), 'var(--accent-fg)', href.tasks],
-          ['Queued', count('queued'), 'var(--faint)', href.tasks],
-        ] as const
-      ).map(([label, n, color, to]) => (
-        <a key={label} className="cs-nrow" href={to}>
-          <span className="ox-sd" style={{ background: color }} />
-          <span style={{ flex: 1 }}>{label}</span>
-          <b>{n}</b>
-        </a>
-      ))}
-
-      <div className="cs-sh" style={{ marginTop: 18 }}>
-        Watching for you
+      <div className="cs-sh">Watching for you
       </div>
       {view.watches.map((w) => (
         <div key={w.id} className="cs-wrow">
@@ -423,7 +450,7 @@ export function CosPage() {
             </div>
             <CosComposer working={view.working} empty={view.events.length === 0} />
           </section>
-          <Side view={view} tasks={tasks.data ?? []} />
+          <Side view={view} />
         </div>
       )}
     </>
