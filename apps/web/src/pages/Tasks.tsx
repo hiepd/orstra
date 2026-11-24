@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, type TaskSummary } from '../api';
 import { PlusIcon, TasksIcon } from '../components/Icons';
-import { taskLabel } from '../lib/format';
+import { boardColumns } from '../lib/board';
 import { useLiveResource, useNow } from '../lib/live';
 import { remember, store } from '../lib/remember';
 import { href, navigate, type TaskViewName } from '../lib/router';
@@ -61,12 +61,7 @@ export function TasksPage({ onNewTask, inbox, sel, selView }: { onNewTask: () =>
   const shown = (t: TaskSummary) => inGroup(t, filter);
   const ofWorkflow = tasks.filter((t) => t.workflowFile === file);
 
-  const columns = [
-    ...(wf.data?.steps ?? [])
-      .filter((s) => s.title.trim().toLowerCase() !== 'done' || ofWorkflow.some((t) => t.status !== 'done' && t.status !== 'stopped' && t.currentStep === s.id))
-      .map((s) => ({ id: s.id, name: s.title, cards: ofWorkflow.filter((t) => t.status !== 'done' && t.status !== 'stopped' && t.currentStep === s.id) })),
-    { id: '__done', name: 'Done', cards: ofWorkflow.filter((t) => t.status === 'done' || t.status === 'stopped') },
-  ];
+  const columns = boardColumns(wf.data?.steps ?? [], ofWorkflow);
 
   return (
     <>
@@ -158,11 +153,12 @@ export function TasksPage({ onNewTask, inbox, sel, selView }: { onNewTask: () =>
                     {c.cards.map((t) => {
                       const a = agentMeta(t);
                       return (
-                        <a key={t.id} className="ox-tcard" href={href.task(t.id)} style={shown(t) ? undefined : { opacity: 0.3 }}>
-                          <span className="ox-id">{taskLabel(t)}</span>
+                        <a key={t.id} className="ox-tcard" href={href.task(t.id)} title={t.id} style={shown(t) ? undefined : { opacity: 0.3 }}>
+                          {t.ref && <span className="ox-id">{t.ref}</span>}
                           <span className="ox-tct">{t.title}</span>
                           <span className="ox-tcf">
-                            <StatusText t={t} />
+                            {/* The Done column says it: a done card shows no Done chip. */}
+                            {t.status !== 'done' && <StatusText t={t} />}
                             <span className="lx-av ox-av" style={{ background: a.color, marginLeft: 'auto' }} title={a.name}>
                               {a.av}
                             </span>
@@ -192,8 +188,10 @@ export function TasksPage({ onNewTask, inbox, sel, selView }: { onNewTask: () =>
                       return (
                         <a key={t.id} className="ox-lrow" href={href.task(t.id)}>
                           <span className={`ox-sd${s === 'working' ? ' ox-live' : ''}`} style={{ background: STATE[s].fg }} title={STATE[s].label} />
-                          <span className="ox-id">{taskLabel(t)}</span>
-                          <span className="ox-trunc">{t.title}</span>
+                          <span className="ox-trunc" title={t.id}>
+                            {t.ref && <span className="ox-id">{t.ref} </span>}
+                            {t.title}
+                          </span>
                           <span className="ox-lstep">
                             {s === 'done' || s === 'stopped' ? STATE[s].label : `${stepLabel(t)} · ${STATE[s].short}`} · {t.workflow}
                           </span>

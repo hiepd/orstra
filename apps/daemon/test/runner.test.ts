@@ -823,7 +823,7 @@ steps:
     expect(store.runsForTask(task.id)[0].outcome).toBe('cant_do');
   });
 
-  it('runs the Simple workflow Orstra ships: waits in Todo, works, then waits in Done', async () => {
+  it('runs the Simple workflow Orstra ships: waits in Todo, works, then waits in In review', async () => {
     const simple = readFileSync(fileURLToPath(new URL('../../../workflows/simple.yaml', import.meta.url)), 'utf8');
     const { store, runner, wfPath, prompts } = setup(simple, () => done('did it'));
     const task = runner.startTask({ workflowPath: wfPath, title: 'Rename the menu' });
@@ -833,9 +833,25 @@ steps:
     runner.decide(store.runsForTask(task.id)[0].id, 'start');
     await runner.idle();
     expect(prompts()[0]).toContain('Rename the menu');
-    expect(store.task(task.id)).toMatchObject({ status: 'needs_you', current_step: 'done' });
-    const doneRun = store.runsForTask(task.id).find((r) => r.step_id === 'done')!;
-    runner.decide(doneRun.id, 'close');
+    expect(store.task(task.id)).toMatchObject({ status: 'needs_you', current_step: 'review' });
+    const review = store.runsForTask(task.id).find((r) => r.step_id === 'review')!;
+    runner.decide(review.id, 'approved');
     expect(store.task(task.id)!.status).toBe('done');
+  });
+
+  it('reopens a done task: a re-run of its first agent step, with your note', async () => {
+    const simple = readFileSync(fileURLToPath(new URL('../../../workflows/simple.yaml', import.meta.url)), 'utf8');
+    const { store, runner, wfPath, prompts } = setup(simple, () => done('did it'));
+    const task = runner.startTask({ workflowPath: wfPath, title: 'Rename the menu' });
+    await runner.idle();
+    runner.decide(store.runsForTask(task.id)[0].id, 'start');
+    await runner.idle();
+    runner.decide(store.runsForTask(task.id).find((r) => r.step_id === 'review')!.id, 'approved');
+    expect(store.task(task.id)!.status).toBe('done');
+    runner.retry(task.id, 'work', 'Also rename the footer');
+    await runner.idle();
+    expect(prompts()).toHaveLength(2);
+    expect(prompts()[1]).toContain('Also rename the footer');
+    expect(store.task(task.id)).toMatchObject({ status: 'needs_you', current_step: 'review' });
   });
 });

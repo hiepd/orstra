@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { api, type TaskDetail } from '../api';
 import { InboxIcon, StuckCircle, WaitCircle } from '../components/Icons';
-import { AGENTS, reasonText, taskLabel } from '../lib/format';
+import { AGENTS, reasonText } from '../lib/format';
 import { useLiveResource, useNow } from '../lib/live';
 import { href, type TaskViewName } from '../lib/router';
 import { TaskPage } from './TaskPage';
@@ -88,7 +88,7 @@ export function InboxView({ sel, selView }: { sel?: string; selView?: TaskViewNa
                     </span>
                     <span className="ox-imain">
                       <span className="ox-iline">
-                        <span className="ox-id">{taskLabel(t)}</span>
+                        {t.ref && <span className="ox-id">{t.ref}</span>}
                         <span className="ox-iname">{t.title}</span>
                       </span>
                       <span className="ox-iwhat">{what(t, g.state)}</span>
@@ -117,7 +117,7 @@ export function InboxView({ sel, selView }: { sel?: string; selView?: TaskViewNa
                 </span>
                 <span className="ox-imain">
                   <span className="ox-iline">
-                    <span className="ox-id">{taskLabel(left)}</span>
+                    {left.ref && <span className="ox-id">{left.ref}</span>}
                     <span className="ox-iname">{left.title}</span>
                   </span>
                   <span className="ox-iwhat">

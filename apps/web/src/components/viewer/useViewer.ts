@@ -2,7 +2,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { initialViewer, reduce, type TabId, type ViewerAction, type ViewerState } from './state';
 
 /** Each task keeps its own viewer: which tabs are open, the split, and whether it shows. */
-const keyOf = (taskId: string) => `orstra.viewer.${taskId}`;
+// v2: the viewer starts closed now. A state saved before that would keep it open on every old task.
+const keyOf = (taskId: string) => `orstra.viewer.v2.${taskId}`;
 /** A tab to open when the Chat view mounts: the Inbox writes it, then goes to the Chat view. */
 const pendingKey = (taskId: string) => `orstra.viewer.open.${taskId}`;
 

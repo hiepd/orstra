@@ -39,7 +39,8 @@ export type ViewerAction =
   | { type: 'resize'; width: number | null }
   | { type: 'ratio'; ratio: number | null };
 
-export const initialViewer = (): ViewerState => ({ panes: [{ tabs: ['changes'], active: 'changes' }], focus: 0, dir: 'row', expanded: false, open: true });
+/** Closed at first: the chat gets the room until a reference, a shortcut or the toggle opens it. */
+export const initialViewer = (): ViewerState => ({ panes: [{ tabs: ['changes'], active: 'changes' }], focus: 0, dir: 'row', expanded: false, open: false });
 
 /** A pane without one tab. The active tab, when it goes, passes to its right neighbour, else its left. */
 function without(p: Pane, tab: TabId): Pane {

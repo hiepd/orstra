@@ -1,5 +1,5 @@
 name: Simple
-description: A task waits in Todo until you start it, the agent does the work, and you close it or reopen it for more changes.
+description: A task waits in Todo until you start it, the agent does the work, and you review it once. A done task can be reopened from its page.
 
 steps:
   # A new task waits here. It shows in your Inbox; press Start when you want the agent to begin.
@@ -20,16 +20,14 @@ steps:
       {{ trigger.description }}
       If a human left feedback or asked for more changes, address it first.
       Commit your work on this branch with a clear message.
-    next: done
+    next: review
 
   # Nothing is merged: the work stays on the task's branch (orstra/<task>), and you merge it yourself.
-  done:
-    title: Done
+  # Approve finishes the task: Done is the end, not a step. To ask for more later, reopen the done task.
+  review:
+    title: In review
     use: human
-    question: Is the work good? Close it, or reopen it to ask for more changes.
-    choices:
-      - close
-      - reopen
+    question: Is the work good?
     on:
-      close: end
-      reopen: work
+      approved: end
+      changes_requested: work

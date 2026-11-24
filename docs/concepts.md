@@ -48,6 +48,7 @@ What starts tasks automatically. Examples: a Linear issue labeled `agent-ready`,
 **The unit of work you care about.** One task = one thing going through one workflow, usually one ticket: "HUB-416 · Empty state on the Trending page".
 
 - A task has a status: **running**, **needs you**, **done** or **stopped**.
+- **Done is the end of a workflow, never a step.** A workflow asks you once (In review), and a done task waits for nothing. To ask for more work, press **Reopen** on the done task: its first agent step runs again with what should change, and you review it once more.
 - A task keeps everything across its whole life: its worktree and branch, its runs, its progress entries, your notes and decisions.
 - A task has exactly **one home: the task page.** Every list in the app links there.
 
@@ -100,7 +101,7 @@ Its limits:
 - A republish of the same file path keeps the same URL, so the agent can correct a page without a second link.
 
 ### Viewer
-The panel on the right of a task's Chat view, in the Inbox pane too. It shows what the agent's messages name, and the tools around the worktree, in tabs:
+The panel on the right of a task's Chat view, in the Inbox pane too. It starts closed, so the chat has the room: a reference, a shortcut or the button at the top right opens it. It shows what the agent's messages name, and the tools around the worktree, in tabs:
 
 - **References.** Orstra finds web links, Claude artifacts, a local dev server URL, and paths to `.md` and image files in each agent message. Each one shows as a chip under the message. A click opens it in a tab. A site that refuses frames (most do, claude.ai too) shows as a card with an Open button.
 - **Panels**, from the + menu: Changes (branch, files with diffs, checks, commits), Browser (Orstra starts the worktree's dev server and shows its page), Files (the worktree as a tree, read-only), Terminal (a real shell in the worktree), Side chat, and Artifacts (what the task's agents made).
@@ -149,6 +150,7 @@ How many runs can work at the same time on this machine (default 4). Agent and g
 - **Orstra, not the model, decides what needs your OK** for Orstra's own actions. This is a guard against mistakes, not a fence: the assistant also has Bash with no permission check, so it could call the daemon's API or edit the database itself. Its prompt tells it not to. Actions that need it become a **plan**: a card with Do it / Not now. Messaging agents is allowed by default; starting and retrying tasks asks by default; decisions and stopping always ask.
 - **A file or a command of its own has no plan card and no review step.** Work on a task still belongs to the task's agent: only then does the change land on the task's branch and go through the workflow. Ask it for a small fix or a quick look; ask a task for the work.
 - Everything it does through Orstra's tools is recorded on the task, marked as done by your assistant. Its own files and commands show in the conversation only.
+- **It says the result first.** A card is 1 line that names the task by its ticket or title; the instruction or the message it sent folds under Details. A long reply shows its first 2 paragraphs and folds the rest. When a reply names a task that waits for you, a button opens it.
 
 ## Screens (one home per concept)
 

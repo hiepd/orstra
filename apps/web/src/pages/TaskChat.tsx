@@ -32,7 +32,8 @@ export function TaskChat({ task, runId, git, openPath, onOpenPath, embedded }: {
   const sessions = sessionsOf(task);
   const run = sessions.find((r) => r.id === runId) ?? defaultSession(task);
   const [reopened, setReopened] = useState<Record<string, boolean>>({});
-  const [sessionsOpen, setSessionsOpen] = useState(() => remember(SESSIONS_KEY, 'open') === 'open');
+  // With 1 session the list says nothing new, so it starts collapsed; the button opens it.
+  const [sessionsOpen, setSessionsOpen] = useState(() => remember(SESSIONS_KEY, 'open') === 'open' && sessions.length > 1);
   const events = run ? task.events.filter((e) => e.runId === run.id) : [];
   const scroll = useAutoScroll<HTMLDivElement>(`${run?.id}:${events.length}`);
   const [viewer, dispatch] = useViewer(task.id);

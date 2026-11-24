@@ -169,6 +169,19 @@ describe('ChiefOfStaff', () => {
     expect(toCos.filter((m) => m.startsWith('[Orstra] Watch')).length).toBe(1);
   });
 
+  it('names a task by its title in its cards, in 1 short line, and keeps the instruction as a detail', async () => {
+    const { runner, cos, wfPath } = setup();
+    const t = runner.startTask({ workflowPath: wfPath, title: 'Rename the menu' });
+    await runner.idle();
+    await cos.tool('watch', { task: t.id, until: 'done', instruction: 'Start the release task.' });
+    const dids = () => cos.view().events.filter((e) => e.kind === 'did') as unknown as { text: string; detail?: string }[];
+    expect(dids().at(-1)).toMatchObject({ text: 'Watching “Rename the menu”. I tell you when it is done.', detail: 'Start the release task.' });
+    cos.setPermission('start', true);
+    await cos.tool('start_task', { workflow: wfPath, title: 'Ship it' });
+    expect(dids().at(-1)!.text).toMatch(/^Started “Ship it” · /);
+    expect(dids().every((d) => !d.text.includes(t.id.slice(0, 8)))).toBe(true);
+  });
+
   it('keeps one session id for the whole conversation', async () => {
     const { cos, store, cosSessions } = setup();
     cos.say('hello');
