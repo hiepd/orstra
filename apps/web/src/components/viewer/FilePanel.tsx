@@ -28,7 +28,7 @@ export function FilePanel({ task, tab }: PanelProps) {
   const [source, setSource] = useState(false);
   const [full, setFull] = useState(false);
   const [stamp, setStamp] = useState(0);
-  const [broken, setBroken] = useState(false);
+  const [broken, setBroken] = useState(-1);
   const text = useLiveResource(
     `file:${task.id}:${path}`,
     useCallback(() => (kind === 'image' ? (setStamp((n) => n + 1), Promise.resolve('')) : readText(url)), [kind, url]),
@@ -47,11 +47,12 @@ export function FilePanel({ task, tab }: PanelProps) {
 
   const body = (() => {
     if (text.error) return <div className="vw-empty">{text.error}</div>;
-    if (kind === 'image' && broken) return <div className="vw-empty">This file is not in the worktree now.</div>;
+    // Each refetch (stamp) tries the picture again: the agent may write it later.
+    if (kind === 'image' && broken === stamp) return <div className="vw-empty">This file is not in the worktree now.</div>;
     if (kind === 'image')
       return (
         <div className="vw-img">
-          <img className={full ? 'vw-img-full' : 'vw-img-fit'} src={`${url}&v=${stamp}`} alt={path} onError={() => setBroken(true)} onLoad={() => setBroken(false)} />
+          <img className={full ? 'vw-img-full' : 'vw-img-fit'} src={`${url}&v=${stamp}`} alt={path} onError={() => setBroken(stamp)} />
         </div>
       );
     if (text.data === undefined) return <div className="vw-empty">Loading…</div>;

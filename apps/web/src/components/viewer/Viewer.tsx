@@ -9,6 +9,8 @@ import { FilePanel } from './FilePanel';
 import { FilesPanel } from './FilesPanel';
 import { LinkPanel } from './LinkPanel';
 import { SideChatPanel } from './SideChatPanel';
+import { TerminalPanel } from './TerminalPanel';
+import { BrowserPanel } from './BrowserPanel';
 
 export type PanelProps = {
   task: TaskDetail;
@@ -35,7 +37,8 @@ function Panel(p: PanelProps): ReactNode {
   if (kind === 'files') return <FilesPanel {...p} />;
   if (kind === 'artifacts') return <ArtifactsPanel {...p} />;
   if (kind === 'side') return <SideChatPanel {...p} />;
-  return <div className="vw-empty">This panel comes later in this build.</div>;
+  if (kind === 'terminal') return <TerminalPanel {...p} />;
+  return <BrowserPanel {...p} />;
 }
 
 type Ctx = { pane: number; tab: TabId; x: number; y: number };
