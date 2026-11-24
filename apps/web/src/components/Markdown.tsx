@@ -2,18 +2,30 @@ import { memo, useMemo, type MouseEvent } from 'react';
 import ReactMarkdown, { type Components, type ExtraProps } from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
+import { Mermaid } from './Mermaid';
 
 // GFM adds the GitHub table, strikethrough and task-list syntax. Breaks keeps one newline as a
 // line break, the way the chat read before it rendered markdown.
 const PLUGINS = [remarkGfm, remarkBreaks];
 const LANG = 'language-';
 
+/** The `<code>` inside a `<pre>`: react-markdown puts the fence's text and language on it. */
+function codeOf(node: ExtraProps['node']) {
+  const code = node?.children.find((c) => c.type === 'element');
+  return code?.type === 'element' ? code : null;
+}
+
 /** The language of a fenced block: react-markdown writes it on the `<code>` as `language-ts`. */
 function langOf(node: ExtraProps['node']): string {
-  const code = node?.children.find((c) => c.type === 'element');
-  const names = code?.type === 'element' ? [code.properties.className].flat() : [];
+  const names = [codeOf(node)?.properties.className].flat();
   const hit = names.find((c) => typeof c === 'string' && c.startsWith(LANG));
   return typeof hit === 'string' ? hit.slice(LANG.length) : '';
+}
+
+/** The text of a fenced block, as the agent wrote it. */
+function textOf(node: ExtraProps['node']): string {
+  const code = codeOf(node);
+  return code ? code.children.map((c) => (c.type === 'text' ? c.value : '')).join('') : '';
 }
 
 const COMPONENTS: Components = {
@@ -29,15 +41,18 @@ const COMPONENTS: Components = {
       <table {...props}>{children}</table>
     </div>
   ),
-  // A fenced block: its language above it, the code itself scrolling sideways.
+  // A fenced block: its language above it, the code itself scrolling sideways. A mermaid block is
+  // drawn instead, and keeps this block as what it falls back to.
   pre: ({ children, node, ...props }) => {
     const lang = langOf(node);
-    return (
+    const block = (
       <div className="ox-mdcode">
         {lang && <span className="ox-mdlang">{lang}</span>}
         <pre {...props}>{children}</pre>
       </div>
     );
+    if (lang !== 'mermaid') return block;
+    return <Mermaid code={textOf(node)}>{block}</Mermaid>;
   },
 };
 

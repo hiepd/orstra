@@ -40,6 +40,23 @@ describe('Markdown', () => {
     expect(out).toContain('const a = 1 &lt; 2;');
   });
 
+  it('marks a mermaid block as a diagram and shows its source until the browser draws it', () => {
+    const out = html('```mermaid\nflowchart TD\n  A --> B\n```');
+    expect(out).toContain('class="ox-mermaid" data-state="source"');
+    expect(out).toContain('class="language-mermaid"');
+    expect(out).toContain('flowchart TD');
+  });
+
+  it('leaves a block of another language as code', () => {
+    expect(html('```ts\nconst a = 1;\n```')).not.toContain('ox-mermaid');
+  });
+
+  it('keeps the markup inside a diagram label as text', () => {
+    const out = html('```mermaid\nflowchart TD\n  A["<img src=x onerror=alert(1)>"]\n```');
+    expect(out).not.toContain('<img');
+    expect(out).toContain('&lt;img src=x onerror=alert(1)&gt;');
+  });
+
   it('renders a table and wraps it so a wide one scrolls inside the message', () => {
     const out = html('| Step | State |\n| --- | --- |\n| build | ok |\n| test | failed |');
     expect(out).toContain('<div class="ox-mdtable"><table>');

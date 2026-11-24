@@ -2134,6 +2134,12 @@ a:hover {
 .ox-mdlang{display:block;padding:4px 10px;border-bottom:1px solid var(--line);font-family:var(--mono);font-size:12px;color:var(--faint)}
 .ox-mdcode pre{margin:0;padding:8px 10px;overflow-x:auto;white-space:pre}
 .ox-mdcode code{font-family:var(--mono);font-size:12px;line-height:1.6;color:var(--ink-2)}
+/* A mermaid block, drawn. Until it is drawn, and when it will not parse, the box holds the code
+   block instead, which carries its own frame. A wide diagram scrolls inside the message. */
+.ox-mermaid[data-state='drawn']{margin:0;padding:10px;border:1px solid var(--line);border-radius:6px;background:var(--surface);overflow-x:auto}
+.ox-mermaid[data-state='drawn'] svg{display:block;max-width:100%;height:auto}
+.ox-mermaid-err{font-size:12px;color:var(--red-fg)}
+.ox-mermaid[data-state='failed']>*+*{margin-top:6px}
 /* A wide table scrolls inside the message, so it never stretches the page. */
 .ox-mdtable{max-width:100%;overflow-x:auto;border:1px solid var(--line);border-radius:6px}
 .ox-mdtable table{border-collapse:collapse;width:max-content;min-width:100%;font-size:13px}
