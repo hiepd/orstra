@@ -2194,8 +2194,8 @@ a:hover {
 .vw-col .vw-pane{min-width:0;min-height:220px}
 .vw-split:not(.vw-col) .vw-pane{min-width:240px}
 .ox-chatv{min-width:0;overflow:hidden}
-.vw-pane + .vw-pane{border-left:1px solid var(--line)}
-.vw-col .vw-pane + .vw-pane{border-left:0;border-top:1px solid var(--line)}
+.vw-pgrip + .vw-pane{border-left:1px solid var(--line)}
+.vw-col .vw-pgrip + .vw-pane{border-left:0;border-top:1px solid var(--line)}
 .vw-focus{box-shadow:inset 0 2px 0 var(--accent)}
 .vw-strip{height:42px;flex:none;display:flex;align-items:stretch;border-bottom:1px solid var(--line);position:relative}
 .vw-tabs{flex:1;min-width:0;display:flex;align-items:stretch;gap:2px;padding:0 6px;overflow-x:auto;scrollbar-width:none}
@@ -2309,3 +2309,15 @@ a:hover {
 .vw-devrow .vw-filter{height:32px;font-family:var(--mono);font-size:12.5px}
 .vw-devexit{margin-top:14px;font-size:13px;color:var(--red-fg)}
 .vw-devlog{margin-top:12px;max-height:none;white-space:pre-wrap}
+
+/* ---- Viewer: drag handles for its width and for a split ---- */
+.vw-grip{position:absolute;left:-4px;top:0;bottom:0;width:8px;cursor:col-resize;z-index:6;touch-action:none}
+.vw-pgrip{flex:none;position:relative;width:8px;margin:0 -4px;cursor:col-resize;z-index:6;touch-action:none}
+.vw-col .vw-pgrip{width:auto;height:8px;margin:-4px 0;cursor:row-resize}
+.vw-grip::after,.vw-pgrip::after{content:"";position:absolute;left:3px;top:0;bottom:0;width:2px;border-radius:1px;background:transparent;transition:background .12s}
+.vw-col .vw-pgrip::after{left:0;right:0;top:3px;bottom:auto;width:auto;height:2px}
+.vw-grip:hover::after,.vw-pgrip:hover::after,.vw-grip:focus-visible::after,.vw-pgrip:focus-visible::after{background:var(--accent)}
+.vw-grip:focus-visible,.vw-pgrip:focus-visible{outline:none}
+.vw-dragging{user-select:none}
+.vw-dragging iframe{pointer-events:none}
+.vw-dragging .vw-grip::after,.vw-dragging .vw-pgrip::after{background:var(--accent)}

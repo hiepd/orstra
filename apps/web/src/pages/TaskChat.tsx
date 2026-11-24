@@ -5,13 +5,13 @@ import { useAutoScroll } from '../lib/autoScroll';
 import { PanelIcon } from '../components/Icons';
 import { Transcript } from '../components/Transcript';
 import { Viewer } from '../components/viewer/Viewer';
-import { openInViewer, useViewer } from '../components/viewer/useViewer';
+import { useViewer } from '../components/viewer/useViewer';
 import { IC } from '../components/viewer/tabs';
 import { refTab, type Ref } from '../lib/refs';
 import { agentOf, humanize } from '../lib/format';
 import type { Resource } from '../lib/live';
 import { remember, store } from '../lib/remember';
-import { href, navigate } from '../lib/router';
+import { href } from '../lib/router';
 import { taskState } from '../lib/taskState';
 import { clock, duration } from '../lib/time';
 
@@ -46,21 +46,13 @@ export function TaskChat({ task, runId, git, openPath, onOpenPath, embedded }: {
   const events = run ? task.events.filter((e) => e.runId === run.id) : [];
   const scroll = useAutoScroll<HTMLDivElement>(`${run?.id}:${events.length}`);
   const [viewer, dispatch] = useViewer(task.id);
-  const showViewer = !embedded && viewer.open;
+  // The Inbox pane has the viewer too: resize it, or expand it over the chat, when the pane is narrow.
+  const showViewer = viewer.open;
   const expanded = showViewer && viewer.expanded;
 
-  const onOpenRef = useCallback(
-    (r: Ref) => {
-      if (embedded) {
-        openInViewer(task.id, refTab(r));
-        navigate(href.chat(task.id, run?.id));
-      } else dispatch({ type: 'open', tab: refTab(r) });
-    },
-    [embedded, task.id, run?.id, dispatch],
-  );
+  const onOpenRef = useCallback((r: Ref) => dispatch({ type: 'open', tab: refTab(r) }), [dispatch]);
 
   useEffect(() => {
-    if (embedded) return;
     const onKey = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
       const key = e.key.toLowerCase();
@@ -78,7 +70,7 @@ export function TaskChat({ task, runId, git, openPath, onOpenPath, embedded }: {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [embedded, dispatch]);
+  }, [dispatch]);
 
   const toggleSessions = () => {
     const next = !sessionsOpen;
@@ -124,20 +116,18 @@ export function TaskChat({ task, runId, git, openPath, onOpenPath, embedded }: {
       )}
 
       <section className={`ox-chat${sessionsOpen ? '' : ' ox-chatx'}`} aria-label="Chat" hidden={expanded}>
-        {!embedded && (
-          <button
-            type="button"
-            className="lx-ib ox-vwt"
-            aria-pressed={viewer.open}
-            aria-label={viewer.open ? 'Hide the viewer' : 'Show the viewer'}
-            title={viewer.open ? 'Hide the viewer' : 'Show the viewer'}
-            onClick={() => dispatch({ type: 'toggleOpen' })}
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d={IC.viewer} />
-            </svg>
-          </button>
-        )}
+        <button
+          type="button"
+          className="lx-ib ox-vwt"
+          aria-pressed={viewer.open}
+          aria-label={viewer.open ? 'Hide the viewer' : 'Show the viewer'}
+          title={viewer.open ? 'Hide the viewer' : 'Show the viewer'}
+          onClick={() => dispatch({ type: 'toggleOpen' })}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d={IC.viewer} />
+          </svg>
+        </button>
         {!sessionsOpen && (
           <button className="lx-ib ox-sessx" aria-expanded={false} aria-label="Expand the sessions" title="Sessions" onClick={toggleSessions}>
             <PanelIcon size={15} />
@@ -155,7 +145,7 @@ export function TaskChat({ task, runId, git, openPath, onOpenPath, embedded }: {
                     <div className="ox-sline">
                       {a.name} · {runName(task, run)} · started {run.startedAt ? clock(run.startedAt) : 'not yet'} · session {run.sessionId?.slice(0, 8)}
                     </div>
-                    <Transcript run={run} events={events} working={s.working} agentName={a.name} onOpenRef={onOpenRef} hideAsides={!embedded} worktree={task.worktree} />
+                    <Transcript run={run} events={events} working={s.working} agentName={a.name} onOpenRef={onOpenRef} hideAsides worktree={task.worktree} />
                   </div>
                 </div>
                 <div className="ox-compwrap">
