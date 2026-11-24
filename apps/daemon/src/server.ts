@@ -12,6 +12,7 @@ import { listWorkflows, resolveWorkflow } from './workflows.ts';
 export { listWorkflows, resolveWorkflow };
 import { AGENT_IDS, EFFORTS, PERMISSION_MODES, loadAgentConfig, saveAgentSettings, type AgentId } from './agentConfig.ts';
 import { COS_DIR, DB_PATH, HOME, PORT, SLOTS, WEB_DIST, WORKFLOW_DIRS, WORKTREES } from './paths.ts';
+import { guardOptionsFromEnv, refuseReason } from './guard.ts';
 
 const MIME: Record<string, string> = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.json': 'application/json', '.png': 'image/png' };
 /** An upload body: base64 of a file at the cap, plus the JSON around it. */
@@ -349,7 +350,17 @@ export function startServer(store: Store, runner: Runner, port: number, cos?: Ch
   });
   cos?.on('change', broadcast);
 
+  // The port the server really has (port 0 in tests means "any free one").
+  let guard = guardOptionsFromEnv(port);
   const server = createServer(async (req, res) => {
+    if (req.url?.startsWith('/api/')) {
+      const why = refuseReason(req.method, req.headers, guard);
+      // why is null for a request from Orstra's UI, the CLI or an MCP server.
+      if (why) {
+        req.resume();
+        return send(res, 403, { error: `Refused: ${why}` });
+      }
+    }
     if (req.url === '/api/events') {
       res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
       res.write(': connected\n\n');
@@ -370,6 +381,10 @@ export function startServer(store: Store, runner: Runner, port: number, cos?: Ch
     if (!file.startsWith(WEB_DIST) || !existsSync(file) || statSync(file).isDirectory()) file = join(WEB_DIST, 'index.html');
     res.writeHead(200, { 'content-type': MIME[extname(file)] ?? 'application/octet-stream' });
     res.end(readFileSync(file));
+  });
+  server.on('listening', () => {
+    const addr = server.address();
+    if (addr && typeof addr === 'object') guard = guardOptionsFromEnv(addr.port);
   });
   server.listen(port, '127.0.0.1');
   return server;

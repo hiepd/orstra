@@ -296,10 +296,12 @@ export class ApiError extends Error {
 async function request<T>(method: 'GET' | 'POST' | 'PUT', path: string, body?: unknown): Promise<T> {
   let res: Response;
   try {
+    // The daemon refuses a change without a JSON content type (see apps/daemon/src/guard.ts).
+    const payload = body === undefined && method !== 'GET' ? {} : body;
     res = await fetch(path, {
       method,
-      headers: body === undefined ? undefined : { 'content-type': 'application/json' },
-      body: body === undefined ? undefined : JSON.stringify(body),
+      headers: payload === undefined ? undefined : { 'content-type': 'application/json' },
+      body: payload === undefined ? undefined : JSON.stringify(payload),
     });
   } catch {
     throw new ApiError('Can’t reach the Orstra daemon. Is it running on port 4317?', 0);
