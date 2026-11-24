@@ -39,14 +39,15 @@ export function initTheme() {
   window.addEventListener('storage', (e) => e.key === KEY && apply());
 }
 
-const subscribe = (cb: () => void) => {
+/** Call `cb` whenever the theme changes. Returns the undo. */
+export const subscribeTheme = (cb: () => void) => {
   listeners.add(cb);
   return () => void listeners.delete(cb);
 };
 
 /** The saved choice and the theme it resolves to right now. */
 export function useTheme() {
-  const choice = useSyncExternalStore(subscribe, getThemeChoice);
-  const resolved = useSyncExternalStore(subscribe, () => resolveTheme(getThemeChoice()));
+  const choice = useSyncExternalStore(subscribeTheme, getThemeChoice);
+  const resolved = useSyncExternalStore(subscribeTheme, () => resolveTheme(getThemeChoice()));
   return { choice, resolved };
 }
