@@ -16,25 +16,16 @@ const ext = (name: string) => {
   return e && e.length <= 4 && e !== name.toUpperCase() ? e : 'FILE';
 };
 
-/** A file the step did not produce, or one Orstra would not keep. Never silent. */
+/** A file Orstra did not keep because it was over a size cap. A note, never a stop. */
 function Gap({ a }: { a: ArtifactView }) {
-  const hard = a.state === 'missing' && /required/i.test(a.label ?? '');
   return (
-    <div className={`ox-argap${hard ? '' : ' soft'}`}>
+    <div className="ox-argap soft">
       <svg width="12" height="12" viewBox="0 0 14 14" aria-hidden="true" style={{ flex: 'none' }}>
         <circle cx="7" cy="7" r="6.5" fill="currentColor" opacity=".18" />
         <path d="M7 3.6v4.1M7 10.1v.3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
       </svg>
       <span>
-        {a.state === 'missing' ? (
-          <>
-            No file matched <code>{a.name}</code>. {a.label}.
-          </>
-        ) : (
-          <>
-            Skipped <code>{a.name}</code>: {a.label}.
-          </>
-        )}
+        Not kept: <code>{a.name}</code>, {a.label}.
       </span>
     </div>
   );
@@ -156,7 +147,7 @@ function Viewer({ artifacts, current, onPick, onClose }: { artifacts: ArtifactVi
 export function ArtifactList({ artifacts }: { artifacts: (ArtifactView & { stepTitle: string; attempt: number })[] }) {
   const [open, setOpen] = useState<string | null>(null);
   if (!artifacts.length) {
-    return <div className="ox-gempty">No artifacts yet. A step that declares `artifacts:` puts its files here when it ends.</div>;
+    return <div className="ox-gempty">No artifacts yet. Files a step writes under .orstra/artifacts/ show here when it ends.</div>;
   }
   const files = artifacts.filter((a) => a.state === 'saved');
   const current = files.find((a) => a.id === open);
@@ -167,7 +158,7 @@ export function ArtifactList({ artifacts }: { artifacts: (ArtifactView & { stepT
     if (last?.key === key) last.items.push(a);
     else groups.push({ key, title: a.stepTitle + (a.attempt > 1 ? ` · attempt ${a.attempt}` : ''), items: [a] });
   }
-  // Inside a run: the files first, then what is not there.
+  // Inside a run: the kept files first, then the ones over a cap.
   for (const g of groups) g.items.sort((a, b) => Number(a.state !== 'saved') - Number(b.state !== 'saved'));
   return (
     <>

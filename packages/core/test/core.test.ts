@@ -66,13 +66,18 @@ describe('parseWorkflow artifacts', () => {
   const wf = (body: string) => parseWorkflow(`name: x\nsteps:\n  a:\n    use: agent\n    prompt: hi\n${body}`);
 
   it('reads the long form', () => {
-    const w = wf('    artifacts:\n      - name: screen\n        path: .orstra/out/*.png\n        required: true\n');
-    expect(w.steps.a.artifacts).toEqual([{ name: 'screen', path: '.orstra/out/*.png', required: true }]);
+    const w = wf('    artifacts:\n      - name: screen\n        path: .orstra/out/*.png\n');
+    expect(w.steps.a.artifacts).toEqual([{ name: 'screen', path: '.orstra/out/*.png' }]);
   });
 
-  it('reads a bare glob and defaults name and required', () => {
+  it('reads a bare glob and defaults the name to it', () => {
     const w = wf('    artifacts: [".orstra/out/*.png"]\n');
-    expect(w.steps.a.artifacts).toEqual([{ name: '.orstra/out/*.png', path: '.orstra/out/*.png', required: false }]);
+    expect(w.steps.a.artifacts).toEqual([{ name: '.orstra/out/*.png', path: '.orstra/out/*.png' }]);
+  });
+
+  it('ignores a required key from an older workflow file', () => {
+    const w = wf('    artifacts:\n      - path: out/*.png\n        required: true\n');
+    expect(w.steps.a.artifacts).toEqual([{ name: 'out/*.png', path: 'out/*.png' }]);
   });
 
   it('leaves artifacts unset when the step declares none', () => {
@@ -88,7 +93,7 @@ describe('parseWorkflow artifacts', () => {
   it('keeps artifacts when the canvas editor rewrites the file', () => {
     const src = 'name: x\nsteps:\n  a:\n    use: agent\n    prompt: hi\n    artifacts: ["out/*.png"]\n';
     const out = applyEdits(src, { start: 'a', steps: [{ id: 'a', kind: 'agent', title: 'a', prompt: 'hi', on: [] }] });
-    expect(parseWorkflow(out).steps.a.artifacts).toEqual([{ name: 'out/*.png', path: 'out/*.png', required: false }]);
+    expect(parseWorkflow(out).steps.a.artifacts).toEqual([{ name: 'out/*.png', path: 'out/*.png' }]);
   });
 });
 

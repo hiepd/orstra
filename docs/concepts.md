@@ -83,20 +83,19 @@ What a run did, written when it ends: **Did · Decided · Left · Avoid**. It is
 2. **Hand on.** Before each agent or gate run, Orstra puts the newest kept files of every earlier step at `.orstra/inputs/<step>/<file>`. The agent's prompt lists them, a gate command can read them, and a workflow prompt can name them with `{{ steps.<step>.artifacts }}`.
 3. **Review.** The decision card shows what the steps made since your last decision. Each run on the Overview shows its own, and the Changes panel has an Artifacts tab for the whole task.
 
-A step can also declare files it must leave, at any path:
+A step can also name files to keep from any other path:
 
 ```yaml
-plan:
-  use: agent
-  prompt: Write the plan to .orstra/artifacts/plan.md
+verify:
+  use: gate
+  run: [npx vitest run --coverage]
   artifacts:
-    - name: plan
-      path: .orstra/artifacts/plan.md
-      required: true
+    - name: coverage
+      path: coverage/index.html
 ```
 
-- `required: true`: no file means the step runs once more, then the task waits for you (`missing_artifact`). A declared file that never arrived is recorded, so the review states the gap.
-- Images and text show inline; anything else is a download. 10 MB per file, 50 MB per run.
+- **Artifacts never block.** A step that keeps nothing moves on like any other; no rule asks for a file, and an artifact never changes an outcome or a route.
+- Images and text show inline; anything else is a download. 10 MB per file, 50 MB per run: a bigger file is noted as not kept, and the run goes on.
 - `.orstra/` stays out of git (`.git/info/exclude`), so artifacts never reach your branch or the PR.
 - **Orstra never makes an artifact.** The step does, with its own tools; Orstra keeps it, hands it on and shows it.
 

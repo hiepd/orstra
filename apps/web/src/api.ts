@@ -59,11 +59,11 @@ export interface ArtifactView {
   id: string;
   runId: string;
   stepId: string;
-  /** File name, or the glob when the state is missing. */
+  /** File name in the store. */
   name: string;
   /** The step's name for this group, or why the file is not here. */
   label: string | null;
-  state: 'saved' | 'skipped' | 'missing';
+  state: 'saved' | 'skipped';
   mime: string;
   /** How to show it: inline picture, inline text, or a download. */
   kind: 'image' | 'text' | 'file';

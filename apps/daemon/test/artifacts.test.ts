@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import type { ArtifactSpec } from '@orstra/core';
 import { collectArtifacts, globToRegExp, kindOf, matchArtifacts, mimeOf, MAX_FILE_BYTES, seenKey } from '../src/artifacts.ts';
 
-const spec = (path: string, required = false): ArtifactSpec => ({ name: path, path, required });
+const spec = (path: string): ArtifactSpec => ({ name: path, path });
 
 function worktree(files: Record<string, string | number>): string {
   const dir = mkdtempSync(join(tmpdir(), 'orstra-art-'));
@@ -38,11 +38,10 @@ describe('globToRegExp', () => {
 });
 
 describe('matchArtifacts', () => {
-  it('finds the files a spec asks for and names the specs that matched nothing', () => {
+  it('finds the files a spec asks for', () => {
     const dir = worktree({ 'out/a.png': 'x', 'out/b.png': 'y', 'src/app.ts': 'z' });
-    const res = matchArtifacts(dir, [spec('out/*.png'), spec('coverage/*.html', true)]);
+    const res = matchArtifacts(dir, [spec('out/*.png'), spec('coverage/*.html')]);
     expect(res.matches.map((m) => m.from).sort()).toEqual(['out/a.png', 'out/b.png']);
-    expect(res.missing.map((m) => m.path)).toEqual(['coverage/*.html']);
   });
 
   it('leaves out a file an earlier run wrote', () => {
@@ -65,7 +64,6 @@ describe('collectArtifacts', () => {
     const dir = worktree({ 'out/shot.png': 'bytes' });
     const root = mkdtempSync(join(tmpdir(), 'orstra-store-'));
     const res = collectArtifacts({ worktree: dir, specs: [spec('out/*.png')], taskId: 't1', runId: 'r1', root });
-    expect(res.missing).toEqual([]);
     expect(res.saved).toHaveLength(1);
     const [a] = res.saved;
     expect(a.name).toBe('shot.png');
@@ -121,7 +119,6 @@ describe('collectArtifacts and what the task already keeps', () => {
     const again = collectArtifacts({ worktree: dir, specs: [spec('.orstra/artifacts/**/*')], taskId: 't', runId: 'r2', root, seen: new Set([seenKey('plan.md', first.saved[0].sha256!)]) });
     expect(first.saved).toHaveLength(1);
     expect(again.saved).toEqual([]);
-    expect(again.missing).toEqual([]);
   });
 });
 

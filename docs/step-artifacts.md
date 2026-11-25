@@ -4,7 +4,8 @@ A design note: one word, 3 options, 1 recommendation.
 
 **Status: built, as a general system.** Any agent or gate step keeps a file by writing it under
 `.orstra/artifacts/`; Orstra stores it per run, hands it to the next run at `.orstra/inputs/<step>/`,
-and shows it at the review. `artifacts:` in the workflow adds names and `required`. See
+and shows it at the review. `artifacts:` in the workflow adds names and other paths. There are no
+rules: artifacts never block a run, so section 4 (`required`) was dropped. See
 `docs/concepts.md`. Still open: a person who adds one at a review (question 7), a blocked Approve
 button (question 8), and the prune rule from section 5. Sections 2 to 4 below are the original design.
 

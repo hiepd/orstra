@@ -433,8 +433,8 @@ export class Runner extends EventEmitter {
   private artifactText(step: Step): string {
     const keep = `To keep a file for the steps after you and for the human's review (a plan, a report, test output, a log), write it under ${ARTIFACT_DIR}/. Orstra copies everything new there when you finish.`;
     if (!step.artifacts?.length) return keep;
-    const lines = step.artifacts.map((a) => `- ${a.path}${a.required ? ' (required)' : ''}`).join('\n');
-    return `${keep}\nThis step must also leave:\n${lines}`;
+    const lines = step.artifacts.map((a) => `- ${a.path}`).join('\n');
+    return `${keep}\nOrstra also keeps these files when this step writes them:\n${lines}`;
   }
 
   private buildPrompt(task: TaskRow, wf: Workflow, step: Step, run: RunRow, inputs = ''): string {
@@ -818,22 +818,22 @@ export class Runner extends EventEmitter {
   }
 
   /**
-   * Copy what the run produced out of the worktree and record it. Returns 'retry' or 'block' when a
-   * required file is absent, null when the task may move on.
+   * Copy what the run produced out of the worktree and record it. Artifacts never change how a run
+   * ends or where the task goes: a step that keeps nothing moves on like any other.
    */
-  private collect(task: TaskRow, run: RunRow, step: Step | undefined, success: boolean): 'retry' | 'block' | null {
-    if (!step || !task.worktree) return null;
+  private collect(task: TaskRow, run: RunRow, step: Step | undefined) {
+    if (!step || !task.worktree) return;
     // Declared specs first, so a file they match keeps their name. Then the folder every agent and gate
     // step may write to without any workflow change.
     const specs = [...(step.artifacts ?? []), ...(step.use === 'agent' || step.use === 'gate' ? [DEFAULT_SPEC] : [])];
-    if (!specs.length) return null;
+    if (!specs.length) return;
     let res;
     try {
       res = collectArtifacts({ worktree: task.worktree, specs, taskId: task.id, runId: run.id, since: run.started_at ?? 0, root: this.opts.artifactsRoot,
         seen: new Set(this.store.artifactsForTask(task.id).flatMap((a) => (a.sha256 ? [seenKey(a.name, a.sha256)] : []))) });
     } catch (err: any) {
       this.event(task.id, run.id, 'system', { text: `Could not collect this step’s artifacts: ${err?.message ?? err}` });
-      return null;
+      return;
     }
     const now = Date.now();
     const row = (name: string, label: string, mime: string, bytes: number, state: ArtifactState, sha256: string | null, path: string | null) =>
@@ -843,24 +843,9 @@ export class Runner extends EventEmitter {
       if (s.skipped) row(s.name, s.skipped, s.mime, s.bytes, 'skipped', null, null);
       else row(s.name, s.label, s.mime, s.bytes, 'saved', s.sha256, s.path);
     }
-    // A declared file that never arrived is a row too, so the review states the gap instead of staying silent.
-    // An empty default folder is normal; only a declared file that never arrived is a gap.
-    res.missing = res.missing.filter((m) => m !== DEFAULT_SPEC);
-    if (success) for (const m of res.missing) row(m.path, m.required ? 'Required, and the step wrote none' : 'The step declared it and wrote none', 'application/octet-stream', 0, 'missing', null, null);
-    if (res.saved.length || (success && res.missing.length)) {
-      this.event(task.id, run.id, 'artifact', { files: res.saved.map((s) => ({ name: s.name, bytes: s.bytes, skipped: s.skipped ?? null })), missing: success ? res.missing.map((m) => m.path) : [] });
+    if (res.saved.length) {
+      this.event(task.id, run.id, 'artifact', { files: res.saved.map((s) => ({ name: s.name, bytes: s.bytes, skipped: s.skipped ?? null })) });
     }
-
-    const required = success ? res.missing.filter((s) => s.required) : [];
-    if (!required.length) return null;
-    const globs = required.map((s) => s.path).join(', ');
-    if (run.attempt < 2) {
-      this.event(task.id, run.id, 'system', { text: `No file matched ${globs}. The step runs again.` });
-      this.store.addEvent(task.id, null, 'note', { text: `The last run left no file that matches ${globs}. This step must produce it.`, step: run.step_id });
-      return 'retry';
-    }
-    this.event(task.id, run.id, 'system', { text: `Still no file for ${globs} after ${run.attempt} attempts. Over to you.` });
-    return 'block';
   }
 
   /** Record a run's outcome and follow the matching arrow. */
@@ -875,16 +860,7 @@ export class Runner extends EventEmitter {
     if (!OPEN_STATUSES.has(run.status)) return;
     const okOutcomes = new Set(['done', 'pass', 'ok', 'approved', 'started']);
     const wf = this.workflowFor(task);
-    // An absent required artifact stops the task here: the step runs once more, then it is blocked.
-    const gap = this.collect(task, run, wf.steps[run.step_id], okOutcomes.has(outcome));
-    if (gap) {
-      const routed = gap === 'retry' ? `goto:${run.step_id}` : 'block:missing_artifact';
-      this.store.updateRun(runId, { status: 'done', outcome, ended_at: Date.now(), routed });
-      if (gap === 'retry') this.queueStep(this.store.task(taskId)!, run.step_id);
-      this.project(taskId);
-      this.pump();
-      return;
-    }
+    this.collect(task, run, wf.steps[run.step_id]);
     const counts = JSON.parse(task.edge_counts) as Record<string, number>;
     const next = route(wf, run.step_id, outcome, counts);
     // What the router decided is stored on the run, so a later read never has to ask the workflow

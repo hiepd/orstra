@@ -12,7 +12,7 @@ export const ARTIFACT_DIR = '.orstra/artifacts';
 /** Where the next run finds what the earlier steps kept: `.orstra/inputs/<step>/<file>`. */
 export const INPUT_DIR = '.orstra/inputs';
 /** The folder every agent and gate run is collected from, declared or not. */
-export const DEFAULT_SPEC: ArtifactSpec = { name: 'artifacts', path: `${ARTIFACT_DIR}/**/*`, required: false };
+export const DEFAULT_SPEC: ArtifactSpec = { name: 'artifacts', path: `${ARTIFACT_DIR}/**/*` };
 
 /** Bigger than this and Orstra records the gap instead of the file. */
 export const MAX_FILE_BYTES = 10 * 1024 * 1024;
@@ -87,14 +87,12 @@ export interface Match {
  * Files in the worktree that the specs ask for. `since` keeps out files an earlier run left behind:
  * only what this run wrote counts as its own.
  */
-export function matchArtifacts(worktree: string, specs: ArtifactSpec[], since = 0): { matches: Match[]; missing: ArtifactSpec[] } {
+export function matchArtifacts(worktree: string, specs: ArtifactSpec[], since = 0): { matches: Match[] } {
   const files = walk(worktree);
   const matches: Match[] = [];
-  const missing: ArtifactSpec[] = [];
   const taken = new Set<string>();
   for (const spec of specs) {
     const re = globToRegExp(spec.path);
-    let hit = 0;
     for (const f of files) {
       if (!re.test(f)) continue;
       let st;
@@ -104,14 +102,12 @@ export function matchArtifacts(worktree: string, specs: ArtifactSpec[], since = 
         continue;
       }
       if (st.mtimeMs + 1000 < since) continue; // written before this run started
-      hit++;
       if (taken.has(f)) continue; // 2 specs, 1 file: keep it once
       taken.add(f);
       matches.push({ from: f, spec, bytes: st.size });
     }
-    if (hit === 0) missing.push(spec);
   }
-  return { matches, missing };
+  return { matches };
 }
 
 export interface Saved {
@@ -129,8 +125,6 @@ export interface Saved {
 
 export interface Collected {
   saved: Saved[];
-  /** Specs that matched nothing. */
-  missing: ArtifactSpec[];
 }
 
 /** A file counts as already kept when the same name with the same bytes is in the store. */
@@ -158,7 +152,7 @@ export function collectArtifacts(opts: {
   /** `seenKey` of every file this task already keeps. A file left unchanged in the folder is not kept twice. */
   seen?: Set<string>;
 }): Collected {
-  const { matches, missing } = matchArtifacts(opts.worktree, opts.specs, opts.since ?? 0);
+  const { matches } = matchArtifacts(opts.worktree, opts.specs, opts.since ?? 0);
   const dest = join(opts.root ?? ARTIFACTS, opts.taskId, opts.runId);
   const saved: Saved[] = [];
   const used = new Set<string>();
@@ -197,7 +191,7 @@ export function collectArtifacts(opts: {
     total += m.bytes;
     saved.push({ name, label: m.spec.name, mime, bytes: m.bytes, sha256: sha, path: to });
   }
-  return { saved, missing };
+  return { saved };
 }
 
 /** Where an earlier step's file appears for the runs after it. */

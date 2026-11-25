@@ -76,8 +76,8 @@ export interface RunRow {
   head_after: string | null;
 }
 
-/** saved = the bytes are in the store. skipped = too big. missing = the step declared it and wrote nothing. */
-export type ArtifactState = 'saved' | 'skipped' | 'missing';
+/** saved = the bytes are in the store. skipped = over a size cap; the row says why. */
+export type ArtifactState = 'saved' | 'skipped';
 
 /** One file a run produced, or the record of one it should have produced. */
 export interface ArtifactRow {
@@ -85,7 +85,7 @@ export interface ArtifactRow {
   task_id: string;
   run_id: string;
   step_id: string;
-  /** File name in the store folder, or the glob when the file is missing. */
+  /** File name in the store folder. */
   name: string;
   /** The step's name for this group, or why the file is not here. */
   label: string | null;

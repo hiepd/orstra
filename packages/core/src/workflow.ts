@@ -38,8 +38,6 @@ export interface ArtifactSpec {
   name: string;
   /** Glob, relative to the worktree: `.orstra/out/*.png`, `coverage/**\/*.html`. */
   path: string;
-  /** No match means the step runs once more, then the task goes to your Inbox. */
-  required: boolean;
 }
 
 export interface Step {
@@ -109,10 +107,10 @@ const targetSchema = z.union([
   z.object({ goto: z.string(), max: z.number().int().positive().optional() }),
 ]);
 
-/** `artifacts: [".orstra/out/*.png"]` or the long form with a name and `required`. */
+/** `artifacts: ["coverage/index.html"]` or the long form with a name. Never blocks a run. */
 const artifactSchema = z.union([
   z.string(),
-  z.object({ name: z.string().optional(), path: z.string(), required: z.boolean().optional() }),
+  z.object({ name: z.string().optional(), path: z.string() }),
 ]);
 
 const stepSchema = z
@@ -173,7 +171,7 @@ function toTarget(t: z.infer<typeof targetSchema>): Target {
 function toArtifact(a: z.infer<typeof artifactSchema>): ArtifactSpec {
   const path = typeof a === 'string' ? a : a.path;
   const name = typeof a === 'string' ? path : a.name ?? path;
-  return { name, path, required: typeof a === 'string' ? false : a.required ?? false };
+  return { name, path };
 }
 
 /** An artifact path stays inside the worktree: no leading slash, no "..", no "~". */
