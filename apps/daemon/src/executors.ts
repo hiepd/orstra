@@ -52,6 +52,8 @@ export interface SessionOptions {
   toolArgs?: string[];
   /** The Orstra run this session works for. With it, permission questions go to the Inbox. */
   runId?: string;
+  /** Extra environment variables for the agent process: the task workspace's own. */
+  env?: Record<string, string>;
   /** Codex picks its own session id; this reports it so the runner can resume that session. */
   onSessionId?: (id: string) => void;
   onEvent: (e: StreamEvent) => void;
@@ -80,6 +82,8 @@ export interface LiveSession {
 export interface GateRequest {
   commands: string[];
   cwd: string;
+  /** Extra environment variables for the commands: the task workspace's own. */
+  env?: Record<string, string>;
   onEvent: (e: StreamEvent) => void;
   signal: AbortSignal;
 }
@@ -222,7 +226,7 @@ function claudeSession(opts: SessionOptions): LiveSession {
   const cfg = loadAgentConfig()['claude-code'];
   const args = claudeArgs(opts, cfg);
   const env = claudeEnv(opts, cfg);
-  const child = spawn(process.env.ORSTRA_CLAUDE_BIN ?? 'claude', args, { cwd: opts.cwd, stdio: ['pipe', 'pipe', 'pipe'], env });
+  const child = spawn(process.env.ORSTRA_CLAUDE_BIN ?? 'claude', args, { cwd: opts.cwd, stdio: ['pipe', 'pipe', 'pipe'], env: { ...env, ...opts.env } });
   let stderr = '';
   let interruptPending = false;
   let lastText = '';
@@ -272,9 +276,9 @@ function claudeSession(opts: SessionOptions): LiveSession {
   };
 }
 
-function runShell(command: string, cwd: string, onLine: (l: string) => void, signal: AbortSignal): Promise<{ code: number; output: string }> {
+function runShell(command: string, cwd: string, onLine: (l: string) => void, signal: AbortSignal, env?: Record<string, string>): Promise<{ code: number; output: string }> {
   return new Promise((resolve) => {
-    const child = spawn(command, { cwd, shell: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(command, { cwd, shell: true, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...env } });
     let output = '';
     signal.addEventListener('abort', () => child.kill('SIGTERM'), { once: true });
     const take = (d: Buffer) => {
@@ -300,7 +304,7 @@ export const realExecutors: Executors = {
     let all = '';
     for (const cmd of req.commands) {
       req.onEvent({ kind: 'tool', name: 'Shell', summary: cmd });
-      const r = await runShell(cmd, req.cwd, (l) => req.onEvent({ kind: 'output', text: l }), req.signal);
+      const r = await runShell(cmd, req.cwd, (l) => req.onEvent({ kind: 'output', text: l }), req.signal, req.env);
       all += `$ ${cmd}\n${r.output}\n`;
       if (r.code !== 0) return { pass: false, output: all.slice(-4000) };
     }

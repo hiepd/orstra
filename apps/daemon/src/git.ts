@@ -60,13 +60,23 @@ export function gitCommitsBetween(dir: string, from: string | null, to: string |
   return Number.isInteger(n) && n > 0 ? n : null;
 }
 
+/** The commit a task started from, when the task recorded it: its base branch and that branch's commit. */
+export interface TaskBase {
+  branch: string | null;
+  commit: string | null;
+}
+
 /**
- * What the task's work is compared with. A git worktree off a repository compares with the commit it
- * branched from (the merge-base with the main checkout). A scratch folder compares with nothing.
+ * What the task's work is compared with. A task that recorded its start commit compares with that
+ * commit, so switching branch in the main checkout does not move it. An older git worktree compares
+ * with the merge-base with the main checkout. A scratch folder compares with nothing.
  */
-function baseOf(dir: string): { ref: string; name: string | null; hasCommits: boolean } {
+function baseOf(dir: string, fixed?: TaskBase): { ref: string; name: string | null; hasCommits: boolean } {
   const head = git(dir, ['rev-parse', '--verify', '-q', 'HEAD']);
   if (!head) return { ref: EMPTY_TREE, name: null, hasCommits: false };
+  if (fixed?.commit && git(dir, ['cat-file', '-e', `${fixed.commit}^{commit}`]) !== null) {
+    return { ref: fixed.commit, name: fixed.branch ?? fixed.commit.slice(0, 7), hasCommits: true };
+  }
   const list = lines(git(dir, ['worktree', 'list', '--porcelain']));
   const mainPath = list.find((l) => l.startsWith('worktree '))?.slice('worktree '.length);
   const top = git(dir, ['rev-parse', '--show-toplevel']);
@@ -89,9 +99,9 @@ function countLines(file: string): number {
 }
 
 /** Branch, commits and changed files of a task's worktree, compared with where it started. */
-export function gitInfo(dir: string): GitInfo | null {
+export function gitInfo(dir: string, fixed?: TaskBase): GitInfo | null {
   if (!existsSync(dir) || git(dir, ['rev-parse', '--git-dir']) === null) return null;
-  const base = baseOf(dir);
+  const base = baseOf(dir, fixed);
   const branch = git(dir, ['symbolic-ref', '--short', '-q', 'HEAD']) ?? git(dir, ['rev-parse', '--short', 'HEAD']);
 
   const dirty = new Set<string>();
@@ -131,11 +141,11 @@ export function gitInfo(dir: string): GitInfo | null {
 }
 
 /** One file's diff against the task's base, as unified diff text. */
-export function gitDiff(dir: string, path: string): { path: string; diff: string; truncated: boolean } | null {
+export function gitDiff(dir: string, path: string, fixed?: TaskBase): { path: string; diff: string; truncated: boolean } | null {
   if (!existsSync(dir) || git(dir, ['rev-parse', '--git-dir']) === null) return null;
   const abs = resolve(dir, path);
   if (!abs.startsWith(resolve(dir) + '/')) return null;
-  const base = baseOf(dir);
+  const base = baseOf(dir, fixed);
   let diff = git(dir, ['diff', '-M', base.ref, '--', path]) ?? '';
   if (!diff && existsSync(abs)) {
     // Untracked file: show it as all-added.

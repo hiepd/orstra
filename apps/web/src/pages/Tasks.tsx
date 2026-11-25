@@ -8,6 +8,7 @@ import { href, navigate, type TaskViewName } from '../lib/router';
 import { InboxView } from './Inbox';
 import { agentMeta, STATE, stepLabel, taskState, type StateGroup } from '../lib/taskState';
 import { age } from '../lib/time';
+import { TASKS_WORKSPACE_KEY } from './Workspaces';
 
 type View = 'board' | 'list';
 type Filter = 'all' | 'needs' | 'running' | 'done';
@@ -48,8 +49,14 @@ export function TasksPage({ onNewTask, inbox, sel, selView }: { onNewTask: () =>
   const [view, setView] = useState<View>(() => remember<View>('orstra.tasks.view', 'board'));
   const [filter, setFilter] = useState<Filter>('all');
   const [wfFile, setWfFile] = useState<string | null>(null);
-  const tasks = res.data ?? [];
-  const needsCount = (archived ? [] : tasks).filter((t) => STATE[taskState(t)].group === 'needs').length;
+  // A filter, never a mode: the Inbox, the counts and the sidebar always show every workspace.
+  const [wsId, setWsId] = useState<string>(() => remember<string>(TASKS_WORKSPACE_KEY, ''));
+  useEffect(() => store(TASKS_WORKSPACE_KEY, wsId), [wsId]);
+  const allTasks = res.data ?? [];
+  const workspaces = [...new Map(allTasks.filter((t) => t.workspace).map((t) => [t.workspace!.id, t.workspace!.name])).entries()].sort((a, b) => a[1].localeCompare(b[1]));
+  const wsShown = wsId && (wsId === 'none' || workspaces.some(([id]) => id === wsId)) ? wsId : '';
+  const tasks = wsShown ? allTasks.filter((t) => (wsShown === 'none' ? !t.workspace : t.workspace?.id === wsShown)) : allTasks;
+  const needsCount = (archived ? [] : allTasks).filter((t) => STATE[taskState(t)].group === 'needs').length;
 
   // Workflows that have tasks, the busiest first. The board shows one workflow at a time.
   const countOf = (f: string) => tasks.filter((t) => t.workflowFile === f).length;
@@ -103,7 +110,7 @@ export function TasksPage({ onNewTask, inbox, sel, selView }: { onNewTask: () =>
           <span className="lx-spin" /> Loading tasks…
         </div>
       )}
-      {!inbox && res.data && tasks.length === 0 && (
+      {!inbox && res.data && allTasks.length === 0 && (
         <div className="lx-empty">
           <span style={{ color: 'var(--dim)' }}>
             <TasksIcon />
@@ -117,7 +124,7 @@ export function TasksPage({ onNewTask, inbox, sel, selView }: { onNewTask: () =>
         </div>
       )}
 
-      {!inbox && tasks.length > 0 && (
+      {!inbox && allTasks.length > 0 && (
         <>
           <div className="ox-fbar">
             {FILTERS.map((f) => (
@@ -126,6 +133,20 @@ export function TasksPage({ onNewTask, inbox, sel, selView }: { onNewTask: () =>
                 <span className="ox-fn">{tasks.filter((t) => inGroup(t, f.id)).length}</span>
               </button>
             ))}
+            {workspaces.length > 0 && (
+              <label className="ox-wfpick">
+                Workspace
+                <select className="lx-select" value={wsShown} onChange={(e) => setWsId(e.target.value)}>
+                  <option value="">All workspaces</option>
+                  {workspaces.map(([id, name]) => (
+                    <option key={id} value={id}>
+                      {name}
+                    </option>
+                  ))}
+                  {allTasks.some((t) => !t.workspace) && <option value="none">No workspace</option>}
+                </select>
+              </label>
+            )}
             {view === 'board' && (
               <label className="ox-wfpick">
                 Workflow
@@ -158,7 +179,12 @@ export function TasksPage({ onNewTask, inbox, sel, selView }: { onNewTask: () =>
                       const a = agentMeta(t);
                       return (
                         <a key={t.id} className="ox-tcard" href={href.task(t.id)} title={t.id} style={shown(t) ? undefined : { opacity: 0.3 }}>
-                          {t.ref && <span className="ox-id">{t.ref}</span>}
+                          {(t.ref || (t.workspace && !wsShown)) && (
+                            <span className="ox-tch">
+                              {t.ref && <span className="ox-id">{t.ref}</span>}
+                              {t.workspace && !wsShown && <span className="ox-wstag">{t.workspace.name}</span>}
+                            </span>
+                          )}
                           <span className="ox-tct">{t.title}</span>
                           <span className="ox-tcf">
                             {/* The Done column says it: a done card shows no Done chip. */}
@@ -196,6 +222,7 @@ export function TasksPage({ onNewTask, inbox, sel, selView }: { onNewTask: () =>
                             {t.ref && <span className="ox-id">{t.ref} </span>}
                             {t.title}
                           </span>
+                          {t.workspace && !wsShown && <span className="ox-wstag">{t.workspace.name}</span>}
                           <span className="ox-lstep">
                             {s === 'done' || s === 'stopped' ? STATE[s].label : `${stepLabel(t)} · ${STATE[s].short}`} · {t.workflow}
                           </span>

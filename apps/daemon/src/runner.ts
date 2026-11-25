@@ -11,6 +11,7 @@ import { projectTask, rebuildAll } from './project.ts';
 import { runAction } from './actions.ts';
 import { cleanupWorktree } from './cleanup.ts';
 import { gitCommitsBetween, gitHead } from './git.ts';
+import { copyIntoWorktree, taskCwd, workspaceView } from './workspace.ts';
 import { isSameProcess, realProcessEnv, stampOf, stopProcess, type ProcessEnv, type ProcessStamp, type StopResult } from './process.ts';
 
 export interface StartTaskInput {
@@ -18,7 +19,12 @@ export interface StartTaskInput {
   title: string;
   description?: string;
   ref?: string;
+  /** The workspace to work in, by id. It gives the repo, the base branch and the folder agents start in. */
+  workspaceId?: string;
+  /** A bare repo path, used once, when the task has no workspace. */
   repo?: string;
+  /** The branch to start from. Default: the workspace's base branch. */
+  baseBranch?: string;
   /** Who asked: 'cos' when the chief of staff started it. */
   via?: Via;
   /** Where it came from, e.g. `linear:<issue id>` for a task a trigger started. */
@@ -34,7 +40,7 @@ const byCos = (via: Via) => (via === 'cos' ? ' (by your assistant)' : '');
 
 export interface RunnerOptions {
   slots: number;
-  createWorktree: (taskId: string, repo?: string) => string;
+  createWorktree: (taskId: string, repo?: string, base?: string) => string;
   /** After an agent finishes a turn with an outcome, wait this long for a follow-up message before closing it. */
   turnGraceMs?: number;
   /** How long a step may work when it sets no `timeout:`. 0 = no limit. */
@@ -112,6 +118,8 @@ export class Runner extends EventEmitter {
   private held = new Map<string, { taskId: string; body: string }[]>();
   private controllers = new Map<string, AbortController>();
   private live = new Map<string, Live>();
+  /** Runs whose workspace setup is running: working, with no agent session open yet. */
+  private preparing = new Set<string>();
   private timers = 0;
   /** Run id -> the timer that stops it when it works longer than its timeout. */
   private deadlines = new Map<string, NodeJS.Timeout>();
@@ -183,7 +191,8 @@ export class Runner extends EventEmitter {
   }
 
   isLive(runId: string): boolean {
-    return this.live.has(runId);
+    // A run whose workspace setup is running is working, though no agent session is open yet.
+    return this.live.has(runId) || this.preparing.has(runId);
   }
 
   private changed(taskId: string) {
@@ -192,7 +201,7 @@ export class Runner extends EventEmitter {
 
   /** Work the task's state out from its runs and write it down. The only path that writes it. */
   private project(taskId: string) {
-    projectTask(this.store, (runId) => this.live.has(runId), taskId);
+    projectTask(this.store, (runId) => this.isLive(runId), taskId);
     this.changed(taskId);
   }
 
@@ -247,7 +256,7 @@ export class Runner extends EventEmitter {
 
   /** Redo the projection for every task, and say which ones moved. */
   rebuild(taskId?: string): { taskId: string; from: string; to: string }[] {
-    const isLive = (runId: string) => this.live.has(runId);
+    const isLive = (runId: string) => this.isLive(runId);
     if (taskId) {
       const before = this.store.task(taskId)?.status;
       if (!before) throw new Error('No such task.');
@@ -264,16 +273,29 @@ export class Runner extends EventEmitter {
     const yaml = readFileSync(locateWorkflow(input.workflowPath), 'utf8');
     const wf = parseWorkflow(yaml);
     const taskId = id('t');
-    const worktree = this.opts.createWorktree(taskId, input.repo ?? wf.repo);
+    const ws = input.workspaceId ? this.store.workspace(input.workspaceId) : undefined;
+    if (input.workspaceId && !ws) throw new Error(`There is no workspace with id ${input.workspaceId}.`);
+    const repo = ws ? ws.repo_path : input.repo ?? wf.repo;
+    const base = repo ? input.baseBranch?.trim() || ws?.base_branch || undefined : undefined;
+    const worktree = this.opts.createWorktree(taskId, repo, base);
     const now = Date.now();
     const task: TaskRow = {
       id: taskId, ref: input.ref ?? null, title: input.title, description: input.description ?? '',
       workflow_path: input.workflowPath, workflow_name: wf.name, status: 'running', current_step: wf.start,
       inbox_reason: null, edge_counts: '{}', worktree, created_at: now, updated_at: now, stopped_at: null,
       workflow_yaml: yaml, pr_url: null, source: input.source ?? null, archived_at: null,
+      workspace_id: ws?.id ?? null, base_branch: base ?? null, base_commit: repo ? gitHead(worktree) : null, subdir: ws?.subdir || null, setup_at: null,
     };
     this.store.insertTask(task);
-    this.event(taskId, null, 'system', { text: `Started ${wf.name}${byCos(input.via)}` });
+    this.event(taskId, null, 'system', { text: `Started ${wf.name}${ws ? ` in ${ws.name}` : ''}${byCos(input.via)}` });
+    if (ws) {
+      const files = workspaceView(ws).copyFiles;
+      if (files.length) {
+        const { copied, missing } = copyIntoWorktree(ws.repo_path, worktree, files);
+        const said = [copied.length ? `Copied ${copied.join(', ')} into the worktree.` : '', missing.length ? `The repo has no ${missing.join(', ')}, so it was not copied.` : ''];
+        this.event(taskId, null, 'system', { text: said.filter(Boolean).join(' ') });
+      }
+    }
     this.queueStep(task, wf.start);
     this.pump();
     return task;
@@ -467,7 +489,7 @@ export class Runner extends EventEmitter {
     };
     const live: Live = { session: null as unknown as LiveSession, routes: opts.routes, humanSpoke: false, sendSeq: 0, finished: false, nudged: false, baseCost: this.store.run(run.id)?.cost_usd ?? 0 };
     live.session = this.exec.session((run.agent as 'claude-code' | 'codex') ?? 'claude-code', {
-      cwd: task.worktree ?? process.cwd(), sessionId: opts.sessionId, resume: opts.resume, model: opts.model, runId: run.id,
+      cwd: taskCwd(task), env: this.envOf(task), sessionId: opts.sessionId, resume: opts.resume, model: opts.model, runId: run.id,
       onSessionId: (sid) => {
         if (this.store.run(run.id)?.session_id !== sid) this.store.updateRun(run.id, { session_id: sid });
       },
@@ -753,6 +775,8 @@ export class Runner extends EventEmitter {
       this.event(task.id, run.id, 'system', { text: `The task's worktree at ${task.worktree} is gone, so this step cannot run.` });
       return this.finish(task.id, run.id, 'cant_do');
     }
+    // Only a task whose workspace has setup commands still to run waits here; every other step starts at once.
+    if ((step.use === 'agent' || step.use === 'gate') && this.setupCommands(task).length && !(await this.prepare(task, run))) return;
 
     if (step.use === 'agent') {
       if (this.overBudget(task.id)) return this.finish(task.id, run.id, 'over_budget');
@@ -772,7 +796,7 @@ export class Runner extends EventEmitter {
       if (step.use === 'gate') {
         this.stage(task, run);
         this.arm(task.id, run.id, step);
-        const res = await this.exec.gate({ commands: step.run ?? [], cwd, onEvent, signal: ctrl.signal });
+        const res = await this.exec.gate({ commands: step.run ?? [], cwd: taskCwd(task), env: this.envOf(task), onEvent, signal: ctrl.signal });
         this.disarm(run.id);
         if (this.timedOut.delete(run.id)) {
           this.store.updateRun(run.id, { output: res.output });
@@ -813,6 +837,54 @@ export class Runner extends EventEmitter {
       this.event(task.id, run.id, 'system', { text: `Step type "${step.use}" isn't built yet.` });
       return this.finish(task.id, run.id, 'cant_do');
     } finally {
+      this.controllers.delete(run.id);
+    }
+  }
+
+  /** The workspace's environment variables, for every agent and gate of the task. */
+  private envOf(task: TaskRow): Record<string, string> | undefined {
+    const ws = task.workspace_id ? this.store.workspace(task.workspace_id) : undefined;
+    const env = ws ? workspaceView(ws).env : {};
+    return Object.keys(env).length ? env : undefined;
+  }
+
+  /**
+   * Run the workspace's setup commands in the task's worktree, once, before its first agent or gate
+   * step. True when the step may go on. A failure ends the run with `setup_failed`, which no workflow
+   * routes, so the task goes to your Inbox; a retry runs the setup again.
+   */
+  private setupCommands(task: TaskRow): string[] {
+    const fresh = this.store.task(task.id) ?? task;
+    if (!fresh.workspace_id || fresh.setup_at) return [];
+    const ws = this.store.workspace(fresh.workspace_id);
+    return ws ? workspaceView(ws).setup : [];
+  }
+
+  private async prepare(task: TaskRow, run: RunRow): Promise<boolean> {
+    const fresh = this.store.task(task.id) ?? task;
+    const ws = this.store.workspace(fresh.workspace_id!)!;
+    const commands = this.setupCommands(task);
+    const ctrl = new AbortController();
+    this.controllers.set(run.id, ctrl);
+    this.preparing.add(run.id);
+    this.project(task.id);
+    this.event(task.id, run.id, 'system', { text: `Setting up the worktree for ${ws.name}` });
+    try {
+      const res = await this.exec.gate({ commands, cwd: taskCwd(fresh), env: this.envOf(fresh), signal: ctrl.signal,
+        onEvent: (e) => this.event(task.id, run.id, e.kind, e) });
+      if (ctrl.signal.aborted) return false;
+      if (!res.pass) {
+        this.store.updateRun(run.id, { output: res.output });
+        this.event(task.id, run.id, 'system', { text: 'The workspace setup failed, so this step did not start. Fix the setup on the Workspaces page, then retry the step.' });
+        this.preparing.delete(run.id);
+        this.finish(task.id, run.id, 'setup_failed');
+        return false;
+      }
+      this.store.updateTask(task.id, { setup_at: Date.now() });
+      this.event(task.id, run.id, 'system', { text: 'The workspace setup passed' });
+      return true;
+    } finally {
+      this.preparing.delete(run.id);
       this.controllers.delete(run.id);
     }
   }
@@ -993,7 +1065,7 @@ export class Runner extends EventEmitter {
     if (mode === 'ask') {
       this.event(taskId, target?.id ?? null, 'you', { mode: 'ask', ...said });
       if (!target?.session_id) return this.event(taskId, null, 'aside', { text: 'There is no agent session to ask yet.' });
-      const answer = await this.exec.ask(target.session_id, task.worktree ?? process.cwd(), body, (target.agent as 'claude-code' | 'codex' | null) ?? 'claude-code');
+      const answer = await this.exec.ask(target.session_id, taskCwd(task), body, (target.agent as 'claude-code' | 'codex' | null) ?? 'claude-code');
       return this.event(taskId, target.id, 'aside', { text: answer });
     }
 

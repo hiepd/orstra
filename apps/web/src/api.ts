@@ -41,7 +41,27 @@ export interface TaskSummary {
   /** Where a trigger got the task, e.g. "linear:<issue id>". */
   source: string | null;
   archivedAt: number | null;
+  /** The workspace the task works in. Null for a task started with a bare repo path, or before workspaces. */
+  workspace: { id: string; name: string } | null;
 }
+
+/** Where a task's code is: 1 repo, the branch new tasks start from, and how to prepare a fresh worktree. */
+export interface Workspace {
+  id: string;
+  name: string;
+  repoPath: string;
+  baseBranch: string;
+  /** A folder inside the repo where agents start, or '' for the repo root. */
+  subdir: string;
+  defaultWorkflow: string | null;
+  setup: string[];
+  copyFiles: string[];
+  env: Record<string, string>;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type WorkspaceInput = Partial<Pick<Workspace, 'name' | 'repoPath' | 'baseBranch' | 'subdir' | 'defaultWorkflow' | 'setup' | 'copyFiles' | 'env'>>;
 
 /** A tool call that waits for your OK. */
 export interface PermissionView {
@@ -162,6 +182,13 @@ export interface Awaiting {
 export interface TaskDetail extends TaskSummary {
   description: string | null;
   worktree: string | null;
+  /** The branch the task started from and its commit then. Fixed at start. */
+  baseBranch: string | null;
+  baseCommit: string | null;
+  /** The folder inside the worktree where agents start, or null for the worktree root. */
+  subdir: string | null;
+  /** When the workspace setup passed in this worktree. */
+  setupAt: number | null;
   steps: StepView[];
   /** The steps this task has been through, then the ones it will most likely reach. */
   track: TrackStep[];
@@ -398,7 +425,12 @@ export interface NewTaskInput {
   title: string;
   description?: string;
   ref?: string;
+  /** The workspace to work in, by id or name. */
+  workspace?: string;
+  /** A repo path used once, for a task with no workspace. */
   repo?: string;
+  /** The branch to start from. Default: the workspace's. */
+  baseBranch?: string;
 }
 
 export class ApiError extends Error {
@@ -407,7 +439,7 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(method: 'GET' | 'POST' | 'PUT', path: string, body?: unknown): Promise<T> {
+async function request<T>(method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE', path: string, body?: unknown): Promise<T> {
   let res: Response;
   try {
     // The daemon refuses a change without a JSON content type (see apps/daemon/src/guard.ts).
@@ -467,6 +499,12 @@ export const api = {
   stopDevServer: (taskId: string) => request<DevServerView>('POST', `/api/tasks/${encodeURIComponent(taskId)}/devserver/stop`, {}),
   saveWorkflow: (file: string, graph: WorkflowGraphInput) => request<WorkflowDetail>('PUT', `/api/workflows/${encodeURIComponent(file)}`, graph),
   createTask: (input: NewTaskInput) => request<TaskSummary>('POST', '/api/tasks', input),
+  workspaces: () => request<Workspace[]>('GET', '/api/workspaces'),
+  createWorkspace: (input: WorkspaceInput) => request<Workspace>('POST', '/api/workspaces', input),
+  updateWorkspace: (id: string, input: WorkspaceInput) => request<Workspace>('PATCH', `/api/workspaces/${encodeURIComponent(id)}`, input),
+  deleteWorkspace: (id: string) => request<{ ok: true; unlinked: number }>('DELETE', `/api/workspaces/${encodeURIComponent(id)}`),
+  /** Is this a git repo with commits, and which branch is its default? Asked before you save. */
+  checkRepo: (repo: string) => request<{ ok: boolean; baseBranch?: string; error?: string }>('GET', `/api/workspaces/check?repo=${encodeURIComponent(repo)}`),
   message: (taskId: string, body: { text: string; mode: MessageMode; runId?: string; stepId?: string; files?: ChatFile[] }) =>
     request<{ ok: true }>('POST', `/api/tasks/${encodeURIComponent(taskId)}/messages`, body),
   /** Put one file in the task's worktree. `data` is the file's bytes as base64. */

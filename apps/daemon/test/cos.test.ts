@@ -66,6 +66,8 @@ function setup() {
     async ask() { return ''; },
   };
   const store = new Store(':memory:');
+  // A task the assistant starts needs a workspace; with exactly 1, start_task may leave it out.
+  store.insertWorkspace({ id: 'w-1', name: 'hub', repo_path: dir, base_branch: 'main', subdir: '', default_workflow: null, setup: '[]', copy_files: '[]', env: '{}', created_at: 0, updated_at: 0 });
   const runner = new Runner(store, exec, { slots: 2, createWorktree: () => dir, turnGraceMs: 0 });
   const cos = new ChiefOfStaff(store, runner, exec, makeViews(store, runner), { cwd: cosDir, toolArgs: ['--tools', ''] });
   runner.on('change', (e: { taskId: string }) => cos.onTaskChange(e.taskId));
@@ -115,7 +117,7 @@ describe('ChiefOfStaff', () => {
     expect(store.task(t.id)!.status).toBe('needs_you'); // nothing ran yet
     const [plan] = cos.view().plans;
     expect(plan.status).toBe('pending');
-    expect(plan.actions).toEqual(['Answer HUB-3’s decision: approved, with “ship it”', 'Start a task: “follow-up” · Ship it']);
+    expect(plan.actions).toEqual(['Answer HUB-3’s decision: approved, with “ship it”', 'Start a task: “follow-up” · Ship it · in hub']);
 
     await cos.approve(plan.id);
     await runner.idle();

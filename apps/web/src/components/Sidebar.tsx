@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import type { TaskSummary } from '../api';
 import { href, type Route } from '../lib/router';
 import { setThemeChoice, useTheme } from '../lib/theme';
-import { CosIcon, LogoIcon, SettingsIcon, TasksIcon, WorkflowsIcon } from './Icons';
+import { CosIcon, LogoIcon, SettingsIcon, TasksIcon, WorkflowsIcon, WorkspacesIcon } from './Icons';
 
 function NavLink({ to, on, icon, label, count }: { to: string; on: boolean; icon: ReactNode; label: string; count?: number }) {
   return (
@@ -22,7 +22,7 @@ const SUN = 'M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M5.6 18
 const MOON = 'M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z';
 
 /**
- * Your assistant, then Tasks (with the count of what needs you) and Workflows. The tasks working right
+ * Your assistant, then Tasks (with the count of what needs you), Workspaces and Workflows. The tasks working right
  * now come next, so you can jump into one. Settings and one status card sit at the bottom: the daemon,
  * what needs you, what runs, what waits, what today cost, and the appearance switch.
  */
@@ -54,6 +54,7 @@ export function Sidebar({
       </div>
       <NavLink to={href.cos} on={route.name === 'cos'} icon={<CosIcon />} label="Assistant" />
       <NavLink to={needsCount ? href.inbox : href.tasks} on={onTasks} icon={<TasksIcon />} label="Tasks" count={needsCount} />
+      <NavLink to={href.workspaces} on={route.name === 'workspaces'} icon={<WorkspacesIcon />} label="Workspaces" />
       <NavLink to={href.workflows} on={route.name === 'workflows'} icon={<WorkflowsIcon />} label="Workflows" />
 
       {running.length > 0 && (

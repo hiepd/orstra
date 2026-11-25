@@ -107,7 +107,7 @@ export function codexSession(opts: SessionOptions, cfg: AgentSettings = {}): Liv
     let reported = false;
     let stderr = '';
     interrupted = false;
-    const proc = spawn(process.env.ORSTRA_CODEX_BIN ?? 'codex', codexArgs({ threadId, model: opts.model, cwd: opts.cwd }, cfg), { cwd: opts.cwd, stdio: ['pipe', 'pipe', 'pipe'] });
+    const proc = spawn(process.env.ORSTRA_CODEX_BIN ?? 'codex', codexArgs({ threadId, model: opts.model, cwd: opts.cwd }, cfg), { cwd: opts.cwd, stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, ...opts.env } });
     child = proc;
     proc.stdin!.end(prompt);
     proc.stderr!.on('data', (d) => { stderr += String(d); });
