@@ -6,7 +6,7 @@
  * known only inside the process that owns the session, and it is never stored, because a stored
  * "running" survives the death of the process that wrote it.
  */
-export type TaskState = 'queued' | 'working' | 'checks' | 'waiting_you' | 'paused' | 'decision' | 'blocked' | 'done' | 'stopped';
+export type TaskState = 'queued' | 'working' | 'checks' | 'sleeping' | 'waiting_you' | 'paused' | 'decision' | 'blocked' | 'done' | 'stopped';
 
 /** The 4 values the task row keeps, for the queries that need SQL. */
 export type StoredStatus = 'running' | 'needs_you' | 'done' | 'stopped';
@@ -48,6 +48,8 @@ function openState(open: OpenRunFacts): TaskState {
   if (open.status === 'queued') return 'queued';
   if (open.status === 'waiting') {
     if (open.kind === 'agent') return open.live ? 'waiting_you' : 'paused';
+    // A timer, a callback or child tasks: the task waits on something outside, not on you.
+    if (open.kind === 'wait' || open.kind === 'workflow') return 'sleeping';
     return 'decision';
   }
   if (open.kind === 'agent') return open.live ? 'working' : 'paused';

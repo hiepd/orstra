@@ -163,7 +163,7 @@ export class Triggers {
       const workspaceId = t.workspace ? findWorkspace(this.store, t.workspace)?.id : undefined;
       if (t.workspace && !workspaceId) throw new Error(`There is no workspace called ${t.workspace}.`);
       this.runner.startTask({
-        workflowPath, title: issue.title, ref: issue.identifier, repo: t.repo, workspaceId, source,
+        workflowPath, title: issue.title, ref: issue.identifier, repo: t.repo, workspaceId, source, idempotencyKey: source,
         description: [issue.description?.trim(), `Linear: ${issue.url}`].filter(Boolean).join('\n\n'),
       });
       n++;

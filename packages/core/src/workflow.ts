@@ -1,8 +1,9 @@
 import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
 import { checkCron, checkTimezone } from './cron.ts';
+import { AGENT_RETRY, NO_RETRY, parseDuration, type RetryPolicy } from './duration.ts';
 
-export const STEP_KINDS = ['agent', 'gate', 'human', 'switch', 'action', 'workflow'] as const;
+export const STEP_KINDS = ['agent', 'gate', 'human', 'switch', 'action', 'workflow', 'wait'] as const;
 export type StepKind = (typeof STEP_KINDS)[number];
 
 /** The outcome that `next:` stands for, per step kind. */
@@ -13,6 +14,7 @@ export const SUCCESS_OUTCOME: Record<StepKind, string> = {
   action: 'ok',
   workflow: 'started',
   switch: 'default',
+  wait: 'done',
 };
 
 export const END = 'end';
@@ -59,9 +61,28 @@ export interface Step {
   /** action */
   action?: string;
   with?: Record<string, unknown>;
-  /** workflow */
+  /** workflow: the workflow each child task follows, by name or path. */
   workflow?: string;
+  /** workflow: start 1 child for each item of this list, such as `steps.split.data.items`. */
+  forEach?: string;
+  /** workflow: wait until every child task ends (outcome done, partial or failed). Else go on at once (started). */
+  waitChildren?: boolean;
+  /** wait: a timer of this many ms, a time to wait until (ISO, templating works), or a callback URL. */
+  waitMs?: number;
+  until?: string;
+  /** wait: an outside system completes the run by a POST to its URL. `timeoutMs` ends it with `timeout`. */
+  callback?: { timeoutMs?: number };
   timeoutMinutes?: number;
+  /**
+   * gate, action: may a restart run this step again from the start? Unset = yes for a gate, and for
+   * an action that is safe to run twice. `false` sends the task to your Inbox instead: use it for a
+   * command that changes something outside the worktree, such as a deploy.
+   */
+  rerun?: boolean;
+  /** agent, gate: what to do after a fault. Unset = AGENT_RETRY for an agent, no retry for a gate. */
+  retry?: RetryPolicy;
+  /** Run the step only when the value matches 1 of `is` (as a switch matches). Else it ends with `skipped`. */
+  when?: { value: string; is: string[] };
   /** Files this step produces, collected when the run ends. */
   artifacts?: ArtifactSpec[];
   /** outcome -> where to go */
@@ -146,7 +167,24 @@ const stepSchema = z
     action: z.string().optional(),
     with: z.record(z.unknown()).optional(),
     workflow: z.string().optional(),
+    for_each: z.string().optional(),
+    wait: z.boolean().optional(),
+    for: z.union([z.string(), z.number()]).optional(),
+    until: z.string().optional(),
+    callback: z.union([z.literal(true), z.object({ timeout: z.union([z.string(), z.number()]).optional() })]).optional(),
     timeout: z.number().positive().optional(),
+    rerun: z.boolean().optional(),
+    when: z.object({ value: z.string(), is: z.union([z.string(), z.array(z.string()).min(1)]) }).optional(),
+    retry: z.union([
+      z.literal(false),
+      z.object({
+        max: z.number().int().min(0).optional(),
+        delay: z.union([z.string(), z.number()]).optional(),
+        factor: z.number().min(1).optional(),
+        maxDelay: z.union([z.string(), z.number()]).optional(),
+        onTimeout: z.boolean().optional(),
+      }),
+    ]).optional(),
     artifacts: z.array(artifactSchema).optional(),
     next: targetSchema.optional(),
     on: z.record(targetSchema).optional(),
@@ -200,6 +238,49 @@ function toTarget(t: z.infer<typeof targetSchema>): Target {
   return typeof t === 'string' ? { goto: t } : { goto: t.goto, ...(t.max ? { max: t.max } : {}) };
 }
 
+/** `callback: true`, or `{ timeout }`, on a wait or a human step. */
+function toCallback(stepId: string, c: true | { timeout?: string | number }): { timeoutMs?: number } {
+  const timeout = c === true ? undefined : c.timeout;
+  if (timeout === undefined) return {};
+  try { return { timeoutMs: parseDuration(timeout) }; } catch (err: any) { throw new Error(`Step "${stepId}", callback: ${err.message}`); }
+}
+
+/** A wait step: exactly 1 of `for`, `until` and `callback`. */
+function toWait(stepId: string, s: { for?: string | number; until?: string; callback?: true | { timeout?: string | number } }): Pick<Step, 'waitMs' | 'until' | 'callback'> {
+  const given = [s.for !== undefined, s.until !== undefined, s.callback !== undefined].filter(Boolean).length;
+  if (given !== 1) throw new Error(`Wait step "${stepId}" needs exactly 1 of for, until and callback.`);
+  const ms = (v: string | number) => {
+    try { return parseDuration(v); } catch (err: any) { throw new Error(`Wait step "${stepId}": ${err.message}`); }
+  };
+  if (s.for !== undefined) return { waitMs: ms(s.for) };
+  if (s.until !== undefined) return { until: s.until };
+  const timeout = s.callback === true ? undefined : s.callback?.timeout;
+  return { callback: timeout === undefined ? {} : { timeoutMs: ms(timeout) } };
+}
+
+/** `retry: false`, or the fields that differ from the default of the step kind. */
+function toRetry(stepId: string, use: StepKind, r: false | { max?: number; delay?: string | number; factor?: number; maxDelay?: string | number; onTimeout?: boolean }): RetryPolicy {
+  if (use !== 'agent' && use !== 'gate') throw new Error(`Step "${stepId}" sets retry, which works on agent and gate steps only.`);
+  const base = use === 'agent' ? AGENT_RETRY : { ...NO_RETRY, max: 2 };
+  if (r === false) return { ...base, max: 0 };
+  const ms = (v: string | number | undefined, d: number) => {
+    if (v === undefined) return d;
+    try { return parseDuration(v); } catch (err: any) { throw new Error(`Step "${stepId}", retry: ${err.message}`); }
+  };
+  return {
+    max: r.max ?? base.max,
+    delayMs: ms(r.delay, base.delayMs),
+    factor: r.factor ?? base.factor,
+    maxDelayMs: ms(r.maxDelay, base.maxDelayMs),
+    onTimeout: r.onTimeout ?? base.onTimeout,
+  };
+}
+
+/** The retry policy a step follows: its own, or the default of its kind. */
+export function retryPolicy(step: Step): RetryPolicy {
+  return step.retry ?? (step.use === 'agent' ? AGENT_RETRY : NO_RETRY);
+}
+
 function toArtifact(a: z.infer<typeof artifactSchema>): ArtifactSpec {
   const path = typeof a === 'string' ? a : a.path;
   const name = typeof a === 'string' ? path : a.name ?? path;
@@ -230,7 +311,9 @@ export function parseWorkflow(source: string): Workflow {
     if (s.use === 'switch') {
       for (const [k, v] of Object.entries(s.cases ?? {})) on[k] = toTarget(v);
     }
-    if (s.next !== undefined) on[SUCCESS_OUTCOME[s.use]] = toTarget(s.next);
+    // A workflow step that waits ends with done, so its `next:` stands for done, not started.
+    const success = s.use === 'workflow' && s.wait ? 'done' : SUCCESS_OUTCOME[s.use];
+    if (s.next !== undefined) on[success] = toTarget(s.next);
     for (const [k, v] of Object.entries(s.on ?? {})) on[k] = toTarget(v);
 
     steps[id] = {
@@ -247,7 +330,13 @@ export function parseWorkflow(source: string): Workflow {
       action: s.action,
       with: s.with,
       workflow: s.workflow,
+      ...(s.use === 'workflow' ? { ...(s.for_each ? { forEach: s.for_each } : {}), waitChildren: !!s.wait } : {}),
+      ...(s.use === 'wait' ? toWait(id, s) : {}),
+      ...(s.use === 'human' && s.callback !== undefined ? { callback: toCallback(id, s.callback) } : {}),
       timeoutMinutes: s.timeout,
+      ...(s.rerun !== undefined ? { rerun: s.rerun } : {}),
+      ...(s.when ? { when: { value: s.when.value, is: typeof s.when.is === 'string' ? [s.when.is] : s.when.is } } : {}),
+      ...(s.retry !== undefined ? { retry: toRetry(id, s.use, s.retry) } : {}),
       artifacts: s.artifacts?.map(toArtifact),
       on,
     };
@@ -263,11 +352,18 @@ export function parseWorkflow(source: string): Workflow {
     }
     if (step.use === 'agent' && !step.prompt) throw new Error(`Agent step "${step.id}" needs a prompt.`);
     if (step.use === 'gate' && !step.run?.length) throw new Error(`Gate step "${step.id}" needs run commands.`);
+    if ((raw.steps[step.id] as { callback?: unknown }).callback !== undefined && step.use !== 'wait' && step.use !== 'human') {
+      throw new Error(`Step "${step.id}" sets callback, which works on wait and human steps only.`);
+    }
+    if (step.use === 'workflow' && !step.workflow?.trim()) throw new Error(`Workflow step "${step.id}" needs a workflow: the name or path of the workflow its tasks follow.`);
     if (step.use === 'action') {
       if (!step.action) throw new Error(`Action step "${step.id}" needs an action: ${ACTION_NAMES.join(', ')}.`);
       if (!(ACTION_NAMES as readonly string[]).includes(step.action)) {
         throw new Error(`Action step "${step.id}" names "${step.action}", which Orstra does not have. Use one of: ${ACTION_NAMES.join(', ')}.`);
       }
+    }
+    if (step.rerun !== undefined && step.use !== 'gate' && step.use !== 'action') {
+      throw new Error(`Step "${step.id}" sets rerun, which works on gate and action steps only.`);
     }
     for (const a of step.artifacts ?? []) checkArtifactPath(step.id, a.path);
   }

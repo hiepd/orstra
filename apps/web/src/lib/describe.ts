@@ -1,7 +1,7 @@
 import type { RunView, TaskDetail } from '../api';
 import { AGENTS, reasonText } from './format';
 import { taskState, type TaskState } from './taskState';
-import { ago } from './time';
+import { ago, clock } from './time';
 
 const joinSteps = (names: string[]) => (names.length <= 2 ? names.join(', then ') : `${names[0]}, then ${names[1]}, then ${names.length - 2} more`);
 
@@ -47,9 +47,21 @@ export function describeTask(task: TaskDetail): { now: string; next: string } {
         next: `${after}.`,
       };
     case 'queued':
+      if (run?.notBefore && run.notBefore > Date.now()) {
+        return { now: `${step} failed for a reason outside the work, so Orstra retries it at ${clock(run.notBefore)}${run.retries ? ` (retry ${run.retries})` : ''}.`, next: todo.length ? `${joinSteps(todo)}.` : 'Nothing after it.' };
+      }
       return { now: `${step} is queued${attempt}. It starts on its own when a slot is free.`, next: todo.length ? `${joinSteps(todo)}.` : 'Nothing after it.' };
     case 'decision':
       return { now: `Waiting for your decision at ${step}.`, next: 'Depends on what you choose.' };
+    case 'sleeping':
+      return {
+        now: run?.kind === 'workflow'
+          ? `${step} waits for the tasks it started.`
+          : run?.callbackUrl
+            ? `${step} waits for an outside system to call back${run.wakeAt ? `, until ${clock(run.wakeAt)}` : ''}.`
+            : `${step} waits${run?.wakeAt ? ` until ${clock(run.wakeAt)}` : ''}.`,
+        next: `It moves on by itself. Then ${todo.length ? joinSteps(todo) : 'the task finishes'}.`,
+      };
     case 'checks':
       return { now: `${step} is running${attempt}: its checks are in progress.`, next: `${after}.` };
     case 'paused': {

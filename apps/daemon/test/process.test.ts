@@ -73,8 +73,10 @@ describe('stopProcess', () => {
   });
 
   it('kills a process that ignores SIGTERM', async () => {
-    const c = child(true);
-    await new Promise((r) => setTimeout(r, 120));
+    // It says ready once its handler is in place. A fixed wait loses that race on a busy machine:
+    // the SIGTERM comes first, the child just exits, and the test reads 'exited'.
+    const c = spawn(process.execPath, ['-e', "process.on('SIGTERM',()=>{});console.log('ready');setInterval(()=>{},50)"], { stdio: ['ignore', 'pipe', 'ignore'] });
+    await new Promise((r) => c.stdout!.once('data', r));
     expect(await stopProcess(c.pid!, { graceMs: 250, killMs: 2_000, pollMs: 20 })).toBe('killed');
   });
 

@@ -7,7 +7,7 @@ import { applyEdits, deriveState, parseWorkflow, taskPath, type EditGraph, type 
 import { MAX_FILE_BYTES, checkAttachments, cosFiles, mb, readAttachment, saveAttachment, taskFiles, type AttachStore } from './attachments.ts';
 import type { ArtifactRow, EventRow, RunRow, Store, TaskRow } from './db.ts';
 import { kindOf } from './artifacts.ts';
-import type { Runner } from './runner.ts';
+import { CallbackError, type Runner } from './runner.ts';
 import type { ChiefOfStaff } from './cos.ts';
 import { ScheduleError } from './schedules.ts';
 import type { Triggers } from './triggers.ts';
@@ -137,6 +137,13 @@ export function makeViews(store: Store, runner: Runner) {
     openCommand: r.session_id && task.worktree ? (r.agent === 'codex' ? `cd ${task.worktree} && codex resume ${r.session_id}` : `cd ${task.worktree} && claude --resume ${r.session_id}`) : null,
     forkCommand: r.session_id && task.worktree ? (r.agent === 'codex' ? `cd ${task.worktree} && codex fork ${r.session_id}` : `cd ${task.worktree} && claude --resume ${r.session_id} --fork-session`) : null,
     live: runner.isLive(r.id),
+    /** A retry waits until this time before it starts. */
+    notBefore: r.not_before ?? null,
+    retries: r.retries ?? null,
+    /** A wait (or a callback's timeout) ends at this time. */
+    wakeAt: r.wake_at ?? null,
+    /** Where an outside system completes this run. Only while it waits: the secret is useless after. */
+    callbackUrl: r.status === 'waiting' && r.callback_secret ? `http://127.0.0.1:${PORT}/api/callbacks/${r.callback_secret}` : null,
   });
 
   const taskSummary = (t: TaskRow) => {
@@ -291,8 +298,24 @@ export function buildApi(store: Store, runner: Runner, cos?: ChiefOfStaff, trigg
         const workflowPath = resolveWorkflow(workflow);
         const wfRepo = (() => { try { return parseWorkflow(readFileSync(locateWorkflow(workflowPath), 'utf8')).repo; } catch { return undefined; } })();
         const ws = named ?? pickWorkspace(store, { repo: b.repo || wfRepo });
-        const task = runner.startTask({ workflowPath, title: b.title, description: b.description, ref: b.ref, workspaceId: ws?.id, repo: ws ? undefined : b.repo, baseBranch: b.baseBranch });
-        return send(res, 201, taskSummary(task)), true;
+        const priority = b.priority === undefined || b.priority === null || b.priority === '' ? undefined : Number(b.priority);
+        if (priority !== undefined && !Number.isFinite(priority)) return send(res, 400, { error: 'priority is a number of seconds.' }), true;
+        const task = runner.startTask({ workflowPath, title: b.title, description: b.description, ref: b.ref, workspaceId: ws?.id, repo: ws ? undefined : b.repo, baseBranch: b.baseBranch,
+          idempotencyKey: typeof b.idempotencyKey === 'string' ? b.idempotencyKey : undefined, priority });
+        // 200 with reused: true when the key matched a task an earlier start made; nothing new started.
+        return send(res, task.reused ? 200 : 201, { ...taskSummary(task), reused: !!task.reused }), true;
+      }
+      // A wait step's callback: an outside system (CI, a webhook, curl) completes 1 run by its secret.
+      const cb = req.method === 'POST' && p.match(/^\/api\/callbacks\/([0-9a-f]{48})$/);
+      if (cb) {
+        const b = await readJson(req).catch(() => ({}));
+        try {
+          const task = runner.completeCallback(cb[1], b ?? {});
+          return send(res, 200, { ok: true, task: task.id, status: task.status }), true;
+        } catch (err: any) {
+          if (err instanceof CallbackError) return send(res, err.status, { error: err.message }), true;
+          throw err;
+        }
       }
       if (req.method === 'GET' && p === '/api/workspaces') return send(res, 200, store.workspaces().map(workspaceView)), true;
       if (req.method === 'POST' && p === '/api/workspaces') {

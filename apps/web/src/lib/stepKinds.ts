@@ -7,4 +7,5 @@ export const KIND: Record<StepKind, { label: string; bg: string; fg: string }> =
   switch: { label: 'Branch', bg: 'var(--line-3)', fg: 'var(--grey-fg)' },
   action: { label: 'Action', bg: 'var(--orange-soft)', fg: 'var(--orange-fg)' },
   workflow: { label: 'Workflow', bg: 'var(--line-3)', fg: 'var(--grey-fg)' },
+  wait: { label: 'Wait', bg: 'var(--line-3)', fg: 'var(--grey-fg)' },
 };

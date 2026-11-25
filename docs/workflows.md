@@ -19,7 +19,7 @@ A task keeps a copy of the workflow it started with. An edit to the file changes
 | `name` | Required. The name you see in the UI. |
 | `description` | 1 or 2 sentences, shown on the Workflows screen. |
 | `repo` | The repository each task works in. Each task gets a git worktree on branch `orstra/<task>`. Without a repo, a task gets its own empty git repository to work in. |
-| `concurrency` | How many of this workflow's tasks may work at the same time. Default 3. Only agent and gate steps count. |
+| `concurrency` | How many of this workflow's tasks may work at the same time. Default 3. Only agent and gate steps count. A run starts only when 3 limits allow it: the machine's slots, this one, and the workspace's limit ("At the same time" on the Workspaces page). A chat message to a paused agent waits for the same 3. |
 | `budget_usd` | Stop agent work on a task once its runs cost this much. |
 | `start` | The first step. Default: the first step in the file. |
 | `triggers` | The old form. Orstra moves it into trigger files: see [Triggers](#triggers). |
@@ -30,11 +30,13 @@ A task keeps a copy of the workflow it started with. An edit to the file changes
 
 | Kind | What it does | Outcomes |
 |---|---|---|
-| `agent` | An agent works on a prompt | `done`, `needs_you`, `cant_do` |
+| `agent` | An agent works on a prompt | `done`, `needs_you`, `cant_do`, and each other outcome in its `on:` |
 | `gate` | Runs shell commands, such as tests | `pass`, `fail` |
 | `human` | Waits for your decision | 1 per choice (`approved`, `changes_requested`, `rejected`, …) |
 | `switch` | Picks a branch from the task's data | the matching case, else `default` |
 | `action` | Runs 1 named action | `ok`, `error`, `conflict`, `nothing`, `refused` |
+| `workflow` | Starts child tasks: 1, or 1 for each item of a list | `started`, or with `wait: true`: `done`, `partial`, `failed` |
+| `wait` | Waits for a time, or for an outside system to call back | `done`, `timeout`, or the outcome the call back names |
 
 An agent or a gate step can also end with `timeout`. An agent step can also end with `over_budget`.
 
@@ -43,17 +45,36 @@ Fields by kind:
 | Field | Kind | What it does |
 |---|---|---|
 | `title` | all | The name on the board and in the Inbox. Default: the step id. |
+| `when` | all | `{ value: "{{ … }}", is: [a, b] }`. The step runs only when the value matches 1 of `is`, the way a switch matches. Else it ends with `skipped` and follows its `skipped` arrow, or `next:`. |
 | `timeout` | agent, gate | Minutes. Default: 120 for an agent, 30 for a gate. |
+| `retry` | agent, gate | What to do after a fault: a crash, an API error, or a usage limit. `{ max, delay, factor, maxDelay, onTimeout }`. Default for an agent: 2 retries, after 1 min and then 4 min, in the same session. A gate: none. `retry: false` = none. A usage limit with a reset time waits until that time. A timeout is retried only with `onTimeout: true`. A fault is never an outcome: the arrows see `cant_do` or `timeout` only when the retries run out. |
+| `rerun` | gate, action | `false` = a restart does not run this step again, and the task goes to your Inbox. Default: a gate runs again, and the 3 actions run again because each one gives the same result twice. Set it on a command that changes something outside the worktree, such as a deploy. |
 | `prompt` | agent | Required. The instruction. Templating works here. |
 | `agent` | agent | `claude-code` (default) or `codex`. |
 | `model` | agent | A model for this step only, such as `opus`. |
-| `run` | gate | Required. 1 command, or a list. Each runs in a shell in the worktree. Exit code 0 is a pass. |
+| `run` | gate | Required. 1 command, or a list. Each runs in a shell in the worktree. Exit code 0 is a pass. A command may also write `{ "outcome": "…", "data": {…} }` to the file in `$ORSTRA_OUTPUT`: the outcome then picks the arrow, and later steps read `{{ steps.<id>.data.<field> }}`. `$ORSTRA_INPUT` names a JSON file with the task, the earlier steps and the step's `with:`. Any language works. |
 | `question` | human | What you are asked. |
 | `choices` | human | The buttons. Default: the outcomes in `on:`. |
+| `callback` | human, wait | On a human step: `true`, or `{ timeout: 2d }`. A script or a webhook can then decide by a `POST` to the step's URL with `{"outcome": "approved", "data": {"comment": "…"}}`. The outcome must be 1 of the step's choices. Your Decide button still works, and whichever comes first ends the step. |
 | `value` | switch | A template. Its result picks the case. |
 | `cases` | switch | Outcome to step, like `on:`. |
 | `action` | action | `git.merge`, `github.pr` or `git.cleanup`. Another name is a parse error. |
 | `with` | action | Input for the action. |
+| `workflow` | workflow | Required. The workflow each child follows: a file beside this one, or a name. |
+| `for_each` | workflow | A list in the task's data, such as `steps.split.data.items`. 1 child starts for each item. |
+| `with` | workflow | `title` and `description` of each child. Templating works, and `{{ item }}` is the item. Default title: the parent's title and the item. |
+| `wait` | workflow | `true` = wait until every child ends: `done` (all done), `partial` (some), `failed` (none). The children are in `{{ steps.<id>.data.children }}`. Default: go on at once with `started`. |
+| `for` | wait | A duration: `30s`, `5m`, `2h`, `1d`. |
+| `until` | wait | A time, such as `2026-12-01T09:00:00+01:00`. Templating works here. |
+| `callback` | wait | `true`, or `{ timeout: 3d }`. Orstra shows a URL. A `POST` to it with `{"outcome": "done", "data": {...}}` ends the step, and the outcome picks the arrow. Later steps read the data as `{{ steps.<id>.data.<field> }}`. Without a call back before the timeout, the step ends with `timeout`. |
+
+A `wait` step takes no slot and does not go to your Inbox. The board shows it as Waiting. Its due time is in the database, so it survives a restart, and a wait that came due while Orstra was off ends at once when Orstra starts. The callback URL works on this machine only (the daemon listens on 127.0.0.1). The secret in the URL is the only key, so treat the URL as a password: it completes 1 run, 1 time, and nothing while an agent works on the task.
+
+An agent step can pick a branch itself. Give it arrows of its own, such as `on: { small: ship, large: plan }`. Orstra adds them to the OUTCOME line of the prompt, and the outcome the agent writes picks the arrow.
+
+Keep logic out of the YAML. A keyword may choose a value, wait, or repeat a step. Logic with numbers, "and" or "or", or parsing goes into a gate that returns JSON.
+
+A child task gets its own worktree and the parent's workspace, and it goes through the same queue and limits as any task. A parent that waits takes no slot, so it never blocks its own children. Each child carries the key `<parent run id>:<index>`, so a restart that runs the step again starts no child twice. A child that waits for you keeps its parent waiting too.
 
 ## Arrows and outcomes
 
@@ -143,6 +164,20 @@ In the title, the prompt and the description of a schedule, these placeholders a
 A schedule starts at most 1 task per due time, also across a restart. If due times passed while Orstra was off, it starts 1 task when it is back, and then waits for the next due time.
 
 **A `triggers:` list in a workflow file** is the old form. On its next check, Orstra moves each entry into its own trigger file, named `<workflow>-<kind>.yaml` (with `-1`, `-2` when there are more). It then removes the list from the workflow file and keeps a copy of the file as `<file>.bak-YYYYMMDD`. A schedule keeps its last run and its next run. A workflow file that does not parse is left alone.
+
+## Starting a task once
+
+A start can carry an idempotency key. A second start with the same key and the same workflow returns the first task and starts nothing, also after that task ended or went to the archive.
+
+```sh
+bin/orstra run orstra-build --title "Fix the Inbox count" --key "$ORSTRA_TASK_ID:2"
+```
+
+A start can also carry a priority in seconds (`--priority 600`, or `priority` in the API body). The queue treats the task's runs as if they were queued that much earlier, so urgent work goes first and old work still moves.
+
+The API takes `idempotencyKey` in the body of `POST /api/tasks`, and answers `200` with `reused: true` when the key matched. A Linear trigger uses the key `linear:<issue id>`. A child task uses `<parent run id>:<index>`.
+
+Every agent and gate gets 2 variables for this: `ORSTRA_TASK_ID`, the id of its task, and `ORSTRA_BASE`, the commit the task started from. An agent that starts tasks builds its key from `ORSTRA_TASK_ID`, so a retry or a restart of its step does not start the same task twice.
 
 ## Actions
 

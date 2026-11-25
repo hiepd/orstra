@@ -1,18 +1,21 @@
 import { EventEmitter } from 'node:events';
-import { randomUUID } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
-import { FINISH_INSTRUCTIONS, parseAgentResult, parseWorkflow, renderTemplate, route, stripProgressBlock, switchCase, type Progress, type Step, type Workflow } from '@orstra/core';
+import { randomBytes, randomUUID } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, isAbsolute, join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { agentOutcomes, finishInstructions, formatDuration, lookupPath, parseAgentResult, parseWorkflow, renderTemplate, retryDelay, retryPolicy, route, stripProgressBlock, switchCase, usageReset, type Progress, type Step, type Workflow } from '@orstra/core';
 import { excludeFromGit, withFiles, type Attachment } from './attachments.ts';
 import { readClaudeLine, summarizeTool, type Executors, type LiveSession, type StreamEvent, type TurnEnd, type TurnUsage } from './executors.ts';
 import { entriesAfter, findSessionLog, readSessionLog, whereStopped, type WhereStopped } from './sessionLog.ts';
 import type { ArtifactState, RunRow, Store, TaskRow } from './db.ts';
 import { ARTIFACT_DIR, DEFAULT_SPEC, collectArtifacts, inputPath, seenKey, stageInputs, type Input } from './artifacts.ts';
-import { locateWorkflow } from './workflows.ts';
+import { locateWorkflow, resolveWorkflow } from './workflows.ts';
 import { projectTask, rebuildAll } from './project.ts';
-import { runAction } from './actions.ts';
+import { RERUN_SAFE, runAction } from './actions.ts';
 import { cleanupWorktree } from './cleanup.ts';
 import { gitCommitsBetween, gitHead } from './git.ts';
 import { copyIntoWorktree, taskCwd, workspaceView } from './workspace.ts';
+import { PORT } from './paths.ts';
 import { isSameProcess, realProcessEnv, stampOf, stopProcess, type ProcessEnv, type ProcessStamp, type StopResult } from './process.ts';
 
 export interface StartTaskInput {
@@ -32,6 +35,17 @@ export interface StartTaskInput {
   source?: string;
   /** What the trigger tells every agent step, such as a schedule's prompt. */
   prompt?: string;
+  /**
+   * A second start with the same key and workflow returns the first task and starts nothing. The key
+   * stays after the task ends or goes to the archive. Triggers, child tasks and agents that start
+   * tasks pass one, so a retry or a restart never starts the same work twice.
+   */
+  idempotencyKey?: string;
+  /** Seconds: the queue treats this task's runs as if they were queued this much earlier. */
+  priority?: number;
+  /** Set when a `workflow` step starts this task as its child. */
+  parentTaskId?: string;
+  parentRunId?: string;
 }
 
 /** chat = talk to the agent's session; note = hand to a step's next run; ask = a forked copy answers. */
@@ -65,11 +79,22 @@ export const MAX_RESUMES = 3;
 export const RESUME_WINDOW_MS = 10 * 60_000;
 
 /** What a restart tells an agent that it resumes. */
-export function resumeNote(where: WhereStopped): string {
-  const rest = 'Continue the step from where you stopped. Do not repeat the work you finished.';
-  if (where.kind === 'cut') return `Orstra restarted while your tool call ran: ${where.tool} (${where.summary}). The call may not have finished, and its result is lost. Check what it did before you go on. ${rest}`;
-  return `Orstra restarted while you worked. Your session is intact. ${rest}`;
+export function resumeNote(where: WhereStopped, commits = 0): string {
+  const left = commits ? ` You left ${commits} commit${commits === 1 ? '' : 's'} on the branch before the restart.` : '';
+  const rest = `${left} Continue the step from where you stopped. Do not repeat the work you finished.`;
+  if (where.kind === 'cut') return `Orstra restarted while your tool call ran: ${where.tool} (${where.summary}). The call may not have finished, and its result is lost. Check what it did before you go on.${rest}`;
+  return `Orstra restarted while you worked. Your session is intact.${rest}`;
 }
+
+/** A callback that Orstra refuses, with the HTTP status to answer. */
+export class CallbackError extends Error {
+  constructor(readonly status: number, message: string) {
+    super(message);
+  }
+}
+
+/** A failure of the system, not of the work: the retry policy sees it before the outcome arrows do. */
+export type Fault = 'crash' | 'error' | 'timeout';
 
 /** The limits when a step sets no `timeout:`: ORSTRA_AGENT_TIMEOUT_MIN (120) and ORSTRA_GATE_TIMEOUT_MIN (30). */
 export function defaultTimeoutsFromEnv(): { agent: number; gate: number } {
@@ -151,6 +176,9 @@ export class Runner extends EventEmitter {
   private deadlines = new Map<string, NodeJS.Timeout>();
   /** Runs that hit their timeout, so the gate's abort reads as a timeout and not as a stop. */
   private timedOut = new Set<string>();
+  /** The 1 timer that calls pump() when the earliest delayed run comes due. */
+  private wakeTimer: NodeJS.Timeout | null = null;
+  private wakeAt = Infinity;
   /** Permission questions by id, open or answered in the last minute. */
   private permissions = new Map<string, PendingPermission>();
   /**
@@ -235,6 +263,9 @@ export class Runner extends EventEmitter {
   private project(taskId: string) {
     projectTask(this.store, (runId) => this.isLive(runId), taskId);
     this.changed(taskId);
+    // A child task that ended may be the last one its parent's workflow step waits for.
+    const t = this.store.task(taskId);
+    if (t?.parent_run_id && (t.status === 'done' || t.status === 'stopped')) this.checkChildren(t.parent_run_id);
   }
 
   private event(taskId: string, runId: string | null, kind: string, payload: unknown) {
@@ -250,20 +281,15 @@ export class Runner extends EventEmitter {
    * Then look at where it stopped: a turn that ended goes on as it would have; a turn cut in the
    * middle resumes the same session, with a note that names the cut tool call.
    *
-   * A gate runs again from the start: its output is its only state. An action stops and asks you,
-   * because it may not be safe to do twice.
+   * A gate runs again from the start: its output is its only state. An action runs again when it
+   * gives the same result twice (RERUN_SAFE). A step with `rerun: false`, and any other action, stops
+   * and asks you.
    */
   async recover(): Promise<void> {
     const work: Promise<void>[] = [];
     for (const r of this.store.runsByStatus('running')) {
       if (r.kind === 'agent' && r.session_id) work.push(this.recoverAgent(r));
-      else if (r.kind === 'gate') {
-        this.store.updateRun(r.id, { status: 'queued', started_at: null });
-        this.store.addEvent(r.task_id, r.id, 'system', { text: 'Orstra restarted while this check ran. It runs again from the start.' });
-      } else {
-        this.store.updateRun(r.id, { status: 'failed', outcome: 'interrupted', ended_at: Date.now(), routed: 'block:interrupted' });
-        this.store.addEvent(r.task_id, r.id, 'system', { text: 'Orstra restarted while this step was running. Retry it or stop the task.' });
-      }
+      else this.recoverStep(r);
     }
     // A run that waited on a permission question had its agent in the middle of a tool call too.
     for (const r of this.store.runsByStatus('waiting')) {
@@ -272,7 +298,35 @@ export class Runner extends EventEmitter {
     this.rebuild();
     await Promise.all(work);
     this.rebuild();
-    this.pump();
+    // A child that ended just before the daemon went never told its parent.
+    for (const r of this.store.runsByStatus('waiting')) if (r.wait_reason === 'children') this.checkChildren(r.id);
+    this.tick();
+  }
+
+  /** A gate or an action that ran when the daemon went: run it again when that is safe, else ask you. */
+  private recoverStep(r: RunRow) {
+    const again = (text: string) => {
+      this.store.updateRun(r.id, { status: 'queued', started_at: null });
+      this.store.addEvent(r.task_id, r.id, 'system', { text });
+    };
+    const ask = (text: string) => {
+      this.store.updateRun(r.id, { status: 'failed', outcome: 'interrupted', ended_at: Date.now(), routed: 'block:interrupted' });
+      this.store.addEvent(r.task_id, r.id, 'system', { text });
+    };
+    const task = this.store.task(r.task_id);
+    let step: Step | undefined;
+    try { step = task ? this.workflowFor(task).steps[r.step_id] : undefined; } catch { step = undefined; }
+    const stay = 'Retry it or stop the task.';
+    if (step?.rerun === false) {
+      return ask(`Orstra restarted while this step ran. The step says rerun: false, so it does not run again on its own. Check what it did, then ${stay.toLowerCase()}`);
+    }
+    if (r.kind === 'gate') return again('Orstra restarted while this check ran. It runs again from the start.');
+    // Its children carry the key <run id>:<index>, so a second run finds the ones it started.
+    if (r.kind === 'workflow') return again('Orstra restarted while this step started its tasks. It runs again, and starts none of them twice.');
+    if (r.kind === 'action' && step?.action && (RERUN_SAFE as Record<string, boolean>)[step.action]) {
+      return again('Orstra restarted while this action ran. It is safe to run twice, so it runs again.');
+    }
+    ask(`Orstra restarted while this step was running. ${stay}`);
   }
 
   /** 1 agent run that was working when the daemon went: replay its log, then continue it. */
@@ -331,12 +385,12 @@ export class Runner extends EventEmitter {
     }
     if (where.kind === 'cut') said(`Orstra restarted while ${name} ran ${where.tool}: ${where.summary}.`, `${name} continues, and checks that call first.`);
     else said('Orstra restarted mid-run.', `${name} continues where it stopped.`);
-    this.resumeAfterRestart(task, r, resumeNote(where), recent);
+    this.resumeAfterRestart(task, r, resumeNote(where, gained ?? 0), recent);
   }
 
   /** A turn that ended before the restart, read from the log: route it the way onTurn would have. */
   private routeRecovered(task: TaskRow, run: RunRow, text: string, recent: number[]) {
-    const parsed = parseAgentResult(text);
+    const parsed = parseAgentResult(text, this.extraOutcomes(task.id, run.step_id));
     const ends = parsed.hasOutcome && parsed.outcome !== 'needs_you';
     if (!ends && this.overBudget(task.id)) return this.finish(task.id, run.id, 'over_budget');
     if (!parsed.hasOutcome) {
@@ -386,7 +440,12 @@ export class Runner extends EventEmitter {
     return changed;
   }
 
-  startTask(input: StartTaskInput): TaskRow {
+  startTask(input: StartTaskInput): TaskRow & { reused?: boolean } {
+    const key = input.idempotencyKey?.trim() || undefined;
+    if (key) {
+      const earlier = this.store.taskByKey(input.workflowPath, key);
+      if (earlier) return { ...earlier, reused: true };
+    }
     const yaml = readFileSync(locateWorkflow(input.workflowPath), 'utf8');
     const wf = parseWorkflow(yaml);
     const taskId = id('t');
@@ -403,6 +462,7 @@ export class Runner extends EventEmitter {
       workflow_yaml: yaml, pr_url: null, source: input.source ?? null, archived_at: null,
       workspace_id: ws?.id ?? null, base_branch: base ?? null, base_commit: repo ? gitHead(worktree) : null, subdir: ws?.subdir || null, setup_at: null,
       prompt: input.prompt?.trim() || null,
+      idempotency_key: key ?? null, priority: input.priority ?? null, parent_task_id: input.parentTaskId ?? null, parent_run_id: input.parentRunId ?? null,
     };
     this.store.insertTask(task);
     this.event(taskId, null, 'system', { text: `Started ${wf.name}${ws ? ` in ${ws.name}` : ''}${byCos(input.via)}` });
@@ -442,46 +502,312 @@ export class Runner extends EventEmitter {
    * Chat messages that wait for a slot go first: you sent them before the queued runs could start.
    * A workflow's `concurrency` caps how many of its tasks work at the same time.
    */
+  /**
+   * The room to start work, from what works now. Every run that takes a slot counts against 3
+   * limits: the machine's slots, the workflow's `concurrency`, and the workspace's `concurrency`.
+   * `take` books a slot for a run that starts.
+   */
+  private capacity() {
+    let busy = 0;
+    const perWorkflow = new Map<string, number>();
+    const perWorkspace = new Map<string, number>();
+    const take = (t: TaskRow) => {
+      busy++;
+      perWorkflow.set(t.workflow_path, (perWorkflow.get(t.workflow_path) ?? 0) + 1);
+      if (t.workspace_id) perWorkspace.set(t.workspace_id, (perWorkspace.get(t.workspace_id) ?? 0) + 1);
+    };
+    for (const r of this.busySlots()) {
+      const t = this.store.task(r.task_id);
+      if (t) take(t);
+      else busy++;
+    }
+    const fits = (t: TaskRow) => {
+      if (busy >= this.opts.slots) return false;
+      let cap = Infinity;
+      try { cap = this.workflowFor(t).concurrency; } catch { /* a broken workflow fails in execute() */ }
+      if ((perWorkflow.get(t.workflow_path) ?? 0) >= cap) return false;
+      const wsCap = t.workspace_id ? this.store.workspace(t.workspace_id)?.concurrency ?? null : null;
+      return !(wsCap !== null && t.workspace_id && (perWorkspace.get(t.workspace_id) ?? 0) >= wsCap);
+    };
+    return { fits, take };
+  }
+
   pump() {
-    const running = this.busySlots();
-    let busy = running.length;
+    const room = this.capacity();
+    // Chat messages that wait for a slot go first: you sent them before the queued runs could start.
     for (const [runId, msgs] of [...this.held]) {
-      if (busy >= this.opts.slots) break;
       const run = this.store.run(runId);
       const task = run && this.store.task(run.task_id);
+      if (!run || !task || task.status === 'stopped' || run.status !== 'waiting') {
+        this.held.delete(runId);
+        continue;
+      }
+      if (!room.fits(task)) continue;
       this.held.delete(runId);
-      if (!run || !task || task.status === 'stopped' || run.status !== 'waiting') continue;
-      busy++;
+      room.take(task);
       for (const m of msgs) this.deliver(task, run, m.body);
     }
-    const perWorkflow = new Map<string, number>();
-    for (const r of running) {
-      const t = this.store.task(r.task_id);
-      if (t) perWorkflow.set(t.workflow_path, (perWorkflow.get(t.workflow_path) ?? 0) + 1);
-    }
-    for (const run of this.store.runsByStatus('queued')) {
-      const task = this.store.task(run.task_id);
+    const now = Date.now();
+    let nextDue = Infinity;
+    // Priority is in seconds: a run goes as if it was queued that much earlier, so old work still moves.
+    const queued = this.store.runsByStatus('queued').map((run) => ({ run, task: this.store.task(run.task_id) }));
+    const order = (x: { run: RunRow; task?: TaskRow }) => x.run.created_at - (x.task?.priority ?? 0) * 1000;
+    queued.sort((a, b) => order(a) - order(b));
+    for (const { run, task } of queued) {
       if (!task || task.stopped_at) continue;
+      // A step that ends at once (switch, action, wait) calls pump() again from inside this loop, and
+      // that pump may start a run this list still holds as queued. Read it fresh, or it starts twice.
+      if (this.store.run(run.id)?.status !== 'queued') continue;
+      // A retry waits out its delay. The timer below calls pump() again when the first one is due.
+      if (run.not_before && run.not_before > now) {
+        nextDue = Math.min(nextDue, run.not_before);
+        continue;
+      }
       if (SLOT_KINDS.has(run.kind)) {
-        if (busy >= this.opts.slots) continue;
-        let cap = Infinity;
-        try { cap = this.workflowFor(task).concurrency; } catch { /* a broken workflow fails in execute() */ }
-        const n = perWorkflow.get(task.workflow_path) ?? 0;
-        if (n >= cap) continue;
-        perWorkflow.set(task.workflow_path, n + 1);
-        busy++;
+        if (!room.fits(task)) continue;
+        room.take(task);
       }
       this.store.updateRun(run.id, { status: 'running', started_at: Date.now() });
       this.execute(task, { ...run, status: 'running' }).catch((err) => {
         // The handler for a crash must not crash: an unhandled rejection here ends the daemon.
         try {
-          this.event(task.id, run.id, 'system', { text: `Run crashed: ${err?.message ?? err}` });
-          this.finish(task.id, run.id, 'cant_do');
+          this.fault(task.id, run.id, 'crash', `Run crashed: ${err?.message ?? err}`);
         } catch (inner: any) {
           console.error(`[orstra] could not record the crash of run ${run.id} on task ${task.id}:`, inner?.message ?? inner);
         }
       });
     }
+    this.wakeFor(nextDue);
+  }
+
+  /**
+   * The due loop: call tick() at `at`, unless a timer for an earlier time is set already. 1 timer
+   * covers every due time Orstra keeps: a retry's not_before, a wait's wake_at, a callback's timeout.
+   * The times live in SQLite, so a restart loses none: recover() calls tick(), and a wait that came
+   * due while the daemon was off ends at once.
+   */
+  private wakeFor(at: number) {
+    if (at === Infinity || at >= this.wakeAt) return;
+    if (this.wakeTimer) clearTimeout(this.wakeTimer);
+    this.wakeAt = at;
+    this.wakeTimer = setTimeout(() => {
+      this.wakeTimer = null;
+      this.wakeAt = Infinity;
+      this.tick();
+    }, Math.min(Math.max(0, at - Date.now()) + 5, 2 ** 31 - 1));
+    this.wakeTimer.unref?.();
+  }
+
+  /** End the waits that are due, start the runs that may start, and set the timer for the next due time. */
+  tick() {
+    const now = Date.now();
+    let next = Infinity;
+    for (const r of this.store.runsByStatus('waiting')) {
+      if (!r.wake_at) continue;
+      if (r.wake_at > now) {
+        next = Math.min(next, r.wake_at);
+        continue;
+      }
+      if (r.kind !== 'wait' && r.kind !== 'human') continue;
+      if (r.wait_reason === 'callback') {
+        this.event(r.task_id, r.id, 'system', { text: 'Nothing called back before the timeout.' });
+        this.finish(r.task_id, r.id, 'timeout');
+      } else {
+        this.event(r.task_id, r.id, 'system', { text: 'The wait is over.' });
+        this.finish(r.task_id, r.id, 'done');
+      }
+    }
+    this.pump();
+    this.wakeFor(next);
+  }
+
+  /**
+   * A workflow step: start 1 child task, or 1 for each item of `for_each`, each with its own worktree
+   * and the parent's workspace. The key `<run id>:<index>` makes a second start of the same run (a
+   * restart, a crash) find the children it started, and start none twice. With `wait`, the run
+   * waits, without a slot, until every child ends: done, partial (some done) or failed (none done).
+   */
+  private startChildren(task: TaskRow, run: RunRow, step: Step) {
+    const ctx = this.context(task);
+    let workflowPath: string;
+    try {
+      const name = step.workflow!.trim();
+      const beside = !isAbsolute(name) ? join(dirname(locateWorkflow(task.workflow_path)), name) : name;
+      workflowPath = existsSync(beside) ? beside : resolveWorkflow(name);
+    } catch (err: any) {
+      this.event(task.id, run.id, 'system', { text: err?.message ?? String(err) });
+      return this.finish(task.id, run.id, 'cant_do');
+    }
+    let items: unknown[] = [null];
+    if (step.forEach) {
+      const list = lookupPath(ctx, step.forEach);
+      if (!Array.isArray(list)) {
+        this.event(task.id, run.id, 'system', { text: `for_each: ${step.forEach} is not a list, so no task started. A gate can make one: write {"data": {"items": [...]}} to $ORSTRA_OUTPUT.` });
+        return this.finish(task.id, run.id, 'cant_do');
+      }
+      items = list;
+    }
+    const input = (step.with ?? {}) as { title?: unknown; description?: unknown; priority?: unknown };
+    const label = (item: unknown) => (item === null ? '' : typeof item === 'object' ? JSON.stringify(item) : String(item));
+    const started: TaskRow[] = [];
+    try {
+      items.forEach((item, i) => {
+        const c = { ...ctx, item };
+        const title = typeof input.title === 'string' ? renderTemplate(input.title, c) : items.length > 1 || item !== null ? `${task.title}: ${label(item)}` : task.title;
+        const description = typeof input.description === 'string' ? renderTemplate(input.description, c) : label(item);
+        started.push(this.startTask({
+          workflowPath, title: title.trim() || task.title, description, workspaceId: task.workspace_id ?? undefined,
+          idempotencyKey: `${run.id}:${i}`, parentTaskId: task.id, parentRunId: run.id,
+          priority: typeof input.priority === 'number' ? input.priority : task.priority ?? undefined,
+        }));
+      });
+    } catch (err: any) {
+      this.event(task.id, run.id, 'system', { text: `Could not start the tasks: ${err?.message ?? err}` });
+      if (!started.length) return this.finish(task.id, run.id, 'cant_do');
+    }
+    const n = started.length;
+    this.event(task.id, run.id, 'system', { text: n ? `Started ${n} task${n === 1 ? '' : 's'}: ${started.map((t) => t.title).join(', ')}.` : 'The list was empty, so no task started.' });
+    if (!step.waitChildren) {
+      this.store.updateRun(run.id, { data: JSON.stringify({ children: started.map((t) => ({ id: t.id, title: t.title })) }) });
+      return this.finish(task.id, run.id, 'started');
+    }
+    this.store.updateRun(run.id, { status: 'waiting', wait_reason: 'children' });
+    this.project(task.id);
+    this.checkChildren(run.id);
+  }
+
+  /** End a waiting workflow step once all its children ended. */
+  private checkChildren(parentRunId: string) {
+    const run = this.store.run(parentRunId);
+    if (!run || run.status !== 'waiting' || run.wait_reason !== 'children') return;
+    const kids = this.store.childTasks(parentRunId);
+    if (kids.some((k) => k.status !== 'done' && k.status !== 'stopped')) return;
+    const done = kids.filter((k) => k.status === 'done').length;
+    const outcome = done === kids.length ? 'done' : done > 0 ? 'partial' : 'failed';
+    const children = kids.map((k) => ({ id: k.id, title: k.title, status: k.status, pr_url: k.pr_url }));
+    this.store.updateRun(parentRunId, { data: JSON.stringify({ children }), progress: JSON.stringify({ did: `${done} of ${kids.length} tasks finished.` }) });
+    this.event(run.task_id, parentRunId, 'system', { text: `${done} of ${kids.length} tasks finished.` });
+    this.finish(run.task_id, parentRunId, outcome);
+  }
+
+  /** Start a wait step: a timer, or a callback URL that an outside system completes. */
+  private startWait(task: TaskRow, run: RunRow, step: Step) {
+    const now = Date.now();
+    if (step.callback) {
+      const secret = randomBytes(24).toString('hex');
+      const wake = step.callback.timeoutMs ? now + step.callback.timeoutMs : null;
+      this.store.updateRun(run.id, { status: 'waiting', wait_reason: 'callback', callback_secret: secret, wake_at: wake });
+      const url = `http://127.0.0.1:${PORT}/api/callbacks/${secret}`;
+      this.event(task.id, run.id, 'system', { text: `Waits for a call back. To go on, POST to ${url} with a JSON body such as {"outcome": "done", "data": {}}.${wake ? ` It times out at ${new Date(wake).toLocaleString()}.` : ''}`, url });
+    } else {
+      const wake = step.waitMs !== undefined ? now + step.waitMs : Date.parse(renderTemplate(step.until ?? '', this.context(task)));
+      if (!Number.isFinite(wake)) {
+        this.event(task.id, run.id, 'system', { text: `"${step.until}" is not a time Orstra can read. Write it like 2026-12-01T09:00:00+01:00.` });
+        return this.finish(task.id, run.id, 'cant_do');
+      }
+      this.store.updateRun(run.id, { status: 'waiting', wait_reason: 'timer', wake_at: wake });
+      this.event(task.id, run.id, 'system', { text: `Waits until ${new Date(wake).toLocaleString()}.` });
+    }
+    this.project(task.id);
+    const at = this.store.run(run.id)?.wake_at;
+    if (at) this.wakeFor(at);
+  }
+
+  /**
+   * An outside system calls back: the POST to a wait step's URL. The secret in the URL names 1 run,
+   * and only an open one. The guard of decide() applies: nothing completes while an agent works.
+   */
+  completeCallback(secret: string, body: { outcome?: unknown; data?: unknown } = {}): TaskRow {
+    const run = this.store.runBySecret(secret);
+    if (!run) throw new CallbackError(404, 'No wait has this URL.');
+    if (run.status !== 'waiting' || run.wait_reason !== 'callback') throw new CallbackError(409, 'This wait is over already.');
+    if (this.working(run.task_id)) throw new CallbackError(409, 'An agent works on this task now. Call back when it is done.');
+    let outcome = typeof body.outcome === 'string' && /^[\w-]{1,64}$/.test(body.outcome) ? body.outcome : 'done';
+    const data = body.data ?? null;
+    if (run.kind === 'human') {
+      // A decision by a script: it must name 1 of the step's choices, as the Decide button does.
+      const task = this.store.task(run.task_id)!;
+      const choices = Object.keys(this.workflowFor(task).steps[run.step_id]?.on ?? {});
+      if (typeof body.outcome !== 'string' || !choices.includes(body.outcome)) throw new CallbackError(400, `Name the decision as the outcome: 1 of ${choices.join(', ')}.`);
+      outcome = body.outcome;
+      const comment = data && typeof data === 'object' && typeof (data as { comment?: unknown }).comment === 'string' ? (data as { comment: string }).comment : '';
+      this.event(task.id, run.id, 'you', { mode: 'decision', choice: outcome, text: comment, via: 'callback' });
+      if (comment) this.store.addEvent(task.id, run.id, 'note', { text: comment });
+    }
+    const did = data === null ? `Called back: ${outcome}` : JSON.stringify(data).slice(0, 2000);
+    this.store.updateRun(run.id, { data: JSON.stringify(data), progress: JSON.stringify({ did }) });
+    this.event(run.task_id, run.id, 'system', { text: `Called back with the outcome ${outcome}.` });
+    this.finish(run.task_id, run.id, outcome);
+    return this.store.task(run.task_id)!;
+  }
+
+  /**
+   * A run failed for a reason outside the work: its process crashed, the API gave an error, or
+   * (when the step says so) it timed out. Retry it after a delay while the step's retry policy
+   * allows. After that the fault goes to the router as `cant_do` or `timeout`, as it always did.
+   *
+   * A retry is a new run of the same step. An agent's retry resumes the same session, so the work
+   * of the try before stays.
+   */
+  private fault(taskId: string, runId: string, kind: Fault, text: string, notBefore?: number | null) {
+    const run = this.store.run(runId);
+    const task = this.store.task(taskId);
+    const final = kind === 'timeout' ? 'timeout' : 'cant_do';
+    if (!run || !task || task.stopped_at || !OPEN_STATUSES.has(run.status)) return this.finish(taskId, runId, final);
+    let step: Step | undefined;
+    try { step = this.workflowFor(task).steps[run.step_id]; } catch { step = undefined; }
+    const policy = step ? retryPolicy(step) : undefined;
+    const n = (run.retries ?? 0) + 1;
+    if (!step || !policy || n > policy.max || (kind === 'timeout' && !policy.onTimeout)) {
+      // onTimeout() already said that the step timed out.
+      if (kind !== 'timeout') this.event(taskId, runId, 'system', { text });
+      return this.finish(taskId, runId, final);
+    }
+    this.disarm(runId);
+    this.timedOut.delete(runId);
+    this.collect(task, run, step);
+    const now = Date.now();
+    const at = notBefore && notBefore > now ? notBefore : now + retryDelay(policy, n);
+    this.store.updateRun(runId, { status: 'failed', outcome: kind === 'timeout' ? 'timeout' : 'crashed', ended_at: now, routed: 'retry', output: text });
+    const attempt = this.store.runsForTask(taskId).filter((r) => r.step_id === run.step_id).length + 1;
+    this.store.insertRun({
+      id: id('r'), task_id: taskId, step_id: run.step_id, kind: run.kind, attempt, status: 'queued', outcome: null,
+      agent: run.agent, session_id: run.session_id, progress: null, output: null, created_at: now, started_at: null, ended_at: null,
+      last_turn_at: null, wait_reason: null, routed: null, cost_usd: null, tokens_in: null, tokens_out: null, agent_pid: null, agent_boot_id: null,
+      agent_started_at: null, head_before: null, head_after: null, log_uuid: null, resumed_at: null, not_before: at, retries: n,
+    });
+    const why = notBefore && notBefore > now ? 'when the usage limit lifts' : `in ${formatDuration(at - now)}`;
+    this.event(taskId, runId, 'system', { text: `${text} Orstra retries this step ${why} (retry ${n} of ${policy.max}).` });
+    this.project(taskId);
+    this.pump();
+  }
+
+  /** The outcomes a run's agent may end with, beyond done, needs_you and cant_do: its step's own arrows. */
+  private extraOutcomes(taskId: string, stepId: string): string[] {
+    const task = this.store.task(taskId);
+    try {
+      const step = task && this.workflowFor(task).steps[stepId];
+      return step && step.use === 'agent' ? agentOutcomes(step.on) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  /** The finish text for a run's step, with the step's own outcomes on the OUTCOME line. */
+  private finishFor(task: TaskRow, stepId: string): string {
+    return finishInstructions(this.extraOutcomes(task.id, stepId));
+  }
+
+  /** What a resumed session is told when its run is a retry after a fault. */
+  private retryNote(task: TaskRow, run: RunRow): string {
+    const before = this.store.runsForTask(task.id).filter((r) => r.step_id === run.step_id && r.routed === 'retry' && r.id !== run.id).pop();
+    const step = this.workflowFor(task).steps[run.step_id];
+    const max = step ? retryPolicy(step).max : run.retries ?? 1;
+    return [
+      '--- Orstra ---',
+      `Your last try of this step ended with a fault, not with an outcome: ${before?.output ?? 'the process stopped'}. This is retry ${run.retries} of ${max}. Check what the last try left (git status, the files you changed), then continue the step from where it stopped. Do not repeat the work you finished.`,
+      this.finishFor(task, run.step_id).trim(),
+    ].join('\n\n');
   }
 
   /** Resolves when nothing is running or queued and no turn is about to close (used by tests and the CLI). */
@@ -498,6 +824,10 @@ export class Runner extends EventEmitter {
       if (r.progress) {
         const p = JSON.parse(r.progress) as Progress;
         steps[r.step_id] = { output: p.did, progress: p, outcome: r.outcome };
+      }
+      // {{ steps.<id>.data.<field> }}: a run's structured result (a callback's data, a gate's JSON, children).
+      if (r.data && r.outcome) {
+        try { ((steps[r.step_id] ??= { outcome: r.outcome }) as Record<string, unknown>).data = JSON.parse(r.data); } catch { /* not JSON: leave it out */ }
       }
     }
     // {{ steps.<id>.artifacts }}: where that step's kept files are for the run that reads the template.
@@ -592,7 +922,7 @@ export class Runner extends EventEmitter {
       notes.length ? `Notes from the human for this step:\n${notes.map((n) => `- ${n}`).join('\n')}` : '',
       run.attempt > 1 ? `This is attempt ${run.attempt} of this step. Read the progress above and do not repeat what failed.` : '',
       'The human may message you while you work. Read their messages and follow them.',
-      FINISH_INSTRUCTIONS,
+      finishInstructions(step.use === 'agent' ? agentOutcomes(step.on) : []),
     ]
       .filter(Boolean)
       .join('\n\n');
@@ -708,13 +1038,12 @@ export class Runner extends EventEmitter {
       return;
     }
     if (t.isError) {
-      this.event(taskId, runId, 'system', { text: t.text || 'Claude Code hit an error.' });
       live.finished = true;
       live.session.end();
-      return this.finish(taskId, runId, 'cant_do');
+      return this.fault(taskId, runId, 'error', t.text || 'Claude Code hit an error.', usageReset(t.text ?? ''));
     }
 
-    const parsed = parseAgentResult(t.text);
+    const parsed = parseAgentResult(t.text, this.extraOutcomes(taskId, this.store.run(runId)?.step_id ?? ''));
     const ends = parsed.hasOutcome && parsed.outcome !== 'needs_you';
     if (!ends && this.overBudget(taskId)) {
       live.finished = true;
@@ -889,8 +1218,7 @@ export class Runner extends EventEmitter {
     const task = this.store.task(taskId);
     if (!run || !task || task.status === 'stopped' || run.status === 'stopped') return;
     if (run.status === 'waiting') return; // it's waiting for you; your next message resumes the session
-    this.event(taskId, runId, 'system', { text: res.error ?? 'Claude Code exited before finishing the step.' });
-    this.finish(taskId, runId, 'cant_do');
+    this.fault(taskId, runId, 'crash', res.error ?? 'Claude Code exited before finishing the step.', usageReset(res.error ?? ''));
   }
 
   /** Start the clock on a run. It stops the run and sends the task to the Inbox (`timeout`) when it runs out. */
@@ -921,7 +1249,7 @@ export class Runner extends EventEmitter {
     if (live) {
       live.finished = true;
       live.session.kill();
-      return this.finish(taskId, runId, 'timeout');
+      return this.fault(taskId, runId, 'timeout', 'The step timed out.');
     }
     // A gate: abort its command; execute() sees the timeout and finishes the run.
     this.controllers.get(runId)?.abort();
@@ -930,6 +1258,13 @@ export class Runner extends EventEmitter {
   private async execute(task: TaskRow, run: RunRow) {
     const wf = this.workflowFor(task);
     const step = wf.steps[run.step_id];
+    if (step.when) {
+      const value = renderTemplate(step.when.value, this.context(task));
+      if (switchCase(step.when.is, value) === 'default') {
+        this.event(task.id, run.id, 'system', { text: `Skipped: "${value}" is not ${step.when.is.join(' or ')}.` });
+        return this.finish(task.id, run.id, 'skipped');
+      }
+    }
     const cwd = task.worktree ?? process.cwd();
     if ((step.use === 'agent' || step.use === 'gate') && task.worktree && !existsSync(task.worktree)) {
       // A git.cleanup step or a cleanup removed it. Never run an agent in some other folder.
@@ -941,6 +1276,14 @@ export class Runner extends EventEmitter {
 
     if (step.use === 'agent') {
       if (this.overBudget(task.id)) return this.finish(task.id, run.id, 'over_budget');
+      if (run.retries && run.session_id) {
+        // A retry after a fault: the same session continues, so the work of the last try stays.
+        this.store.updateRun(run.id, { head_before: task.worktree ? gitHead(task.worktree) : null });
+        const live = this.openSession(task, run, { sessionId: run.session_id, resume: true, routes: true, model: step.model });
+        this.arm(task.id, run.id, step);
+        live.session.send(this.retryNote(task, run));
+        return;
+      }
       const sessionId = randomUUID();
       this.store.updateRun(run.id, { session_id: sessionId, head_before: task.worktree ? gitHead(task.worktree) : null });
       const inputs = this.stage(task, run);
@@ -957,21 +1300,33 @@ export class Runner extends EventEmitter {
       if (step.use === 'gate') {
         this.stage(task, run);
         this.arm(task.id, run.id, step);
-        const res = await this.exec.gate({ commands: step.run ?? [], cwd: taskCwd(task), env: this.envOf(task), onEvent, signal: ctrl.signal });
+        const io = this.gateFiles(task, run);
+        const res = await this.exec.gate({ commands: step.run ?? [], cwd: taskCwd(task), env: { ...this.envOf(task), ...io.env }, onEvent, signal: ctrl.signal });
         this.disarm(run.id);
+        const said = io.read();
         if (this.timedOut.delete(run.id)) {
           this.store.updateRun(run.id, { output: res.output });
-          return this.finish(task.id, run.id, 'timeout');
+          return this.fault(task.id, run.id, 'timeout', 'The check timed out.');
         }
         if (ctrl.signal.aborted) return;
-        this.store.updateRun(run.id, { output: res.output });
-        return this.finish(task.id, run.id, res.pass ? 'pass' : 'fail');
+        this.store.updateRun(run.id, { output: res.output, ...(said?.data !== undefined ? { data: JSON.stringify(said.data) } : {}) });
+        // The script names its own outcome in ORSTRA_OUTPUT; without one, the exit code decides.
+        return this.finish(task.id, run.id, said?.outcome ?? (res.pass ? 'pass' : 'fail'));
       }
 
       if (step.use === 'human') {
-        this.store.updateRun(run.id, { status: 'waiting' });
+        // With `callback:`, a script or a webhook can decide too, by a POST to the run's URL.
+        const secret = step.callback ? randomBytes(24).toString('hex') : null;
+        const wake = step.callback?.timeoutMs ? Date.now() + step.callback.timeoutMs : null;
+        this.store.updateRun(run.id, { status: 'waiting', ...(secret ? { wait_reason: 'callback', callback_secret: secret, wake_at: wake } : {}) });
         this.project(task.id);
         this.event(task.id, run.id, 'system', { text: step.question ?? 'Waiting for your decision' });
+        if (secret) {
+          const url = `http://127.0.0.1:${PORT}/api/callbacks/${secret}`;
+          const choices = Object.keys(step.on).join(', ');
+          this.event(task.id, run.id, 'system', { text: `A script can decide too: POST to ${url} with {"outcome": "<${choices}>", "data": {"comment": "…"}}.${wake ? ` Without a decision, it times out at ${new Date(wake).toLocaleString()}.` : ''}`, url });
+          if (wake) this.wakeFor(wake);
+        }
         return;
       }
 
@@ -995,6 +1350,9 @@ export class Runner extends EventEmitter {
         return this.finish(task.id, run.id, res.outcome);
       }
 
+      if (step.use === 'wait') return this.startWait(task, run, step);
+      if (step.use === 'workflow') return this.startChildren(task, run, step);
+
       this.event(task.id, run.id, 'system', { text: `Step type "${step.use}" isn't built yet.` });
       return this.finish(task.id, run.id, 'cant_do');
     } finally {
@@ -1002,11 +1360,52 @@ export class Runner extends EventEmitter {
     }
   }
 
-  /** The workspace's environment variables, for every agent and gate of the task. */
-  private envOf(task: TaskRow): Record<string, string> | undefined {
+  /**
+   * The 2 files of a gate's JSON contract. ORSTRA_INPUT holds the task, the earlier steps' outputs and
+   * data, and the step's `with:`. The commands may write `{ "outcome": "...", "data": {...} }` to
+   * ORSTRA_OUTPUT: the outcome picks the arrow, and later steps read the data as
+   * {{ steps.<id>.data.<field> }}. Any language works; the files are the whole interface.
+   */
+  private gateFiles(task: TaskRow, run: RunRow) {
+    const dir = join(task.worktree && existsSync(task.worktree) ? task.worktree : join(tmpdir(), `orstra-${run.id}`), '.orstra', 'io');
+    mkdirSync(dir, { recursive: true });
+    const input = join(dir, `${run.id}.in.json`);
+    const output = join(dir, `${run.id}.out.json`);
+    rmSync(output, { force: true });
+    const step = this.workflowFor(task).steps[run.step_id];
+    writeFileSync(input, JSON.stringify({ ...this.context(task), with: step?.with ?? {} }, null, 2));
+    return {
+      env: { ORSTRA_INPUT: input, ORSTRA_OUTPUT: output },
+      read: (): { outcome?: string; data?: unknown } | null => {
+        try {
+          if (!existsSync(output)) return null;
+          const raw = JSON.parse(readFileSync(output, 'utf8')) as { outcome?: unknown; data?: unknown };
+          const outcome = typeof raw.outcome === 'string' && /^[\w-]{1,64}$/.test(raw.outcome) ? raw.outcome : undefined;
+          return { outcome, data: raw.data };
+        } catch (err: any) {
+          this.event(task.id, run.id, 'system', { text: `ORSTRA_OUTPUT is not JSON Orstra can read, so the exit code decides: ${err?.message ?? err}` });
+          return null;
+        } finally {
+          rmSync(input, { force: true });
+          rmSync(output, { force: true });
+        }
+      },
+    };
+  }
+
+  /**
+   * The environment of every agent and gate of the task: the workspace's variables, plus
+   * ORSTRA_TASK_ID (an agent that starts tasks builds its idempotency key from it) and ORSTRA_BASE
+   * (the commit the task started from, so a gate can diff against it).
+   */
+  private envOf(task: TaskRow): Record<string, string> {
     const ws = task.workspace_id ? this.store.workspace(task.workspace_id) : undefined;
-    const env = ws ? workspaceView(ws).env : {};
-    return Object.keys(env).length ? env : undefined;
+    const fresh = this.store.task(task.id) ?? task;
+    return {
+      ...(ws ? workspaceView(ws).env : {}),
+      ORSTRA_TASK_ID: task.id,
+      ...(fresh.base_commit ? { ORSTRA_BASE: fresh.base_commit } : {}),
+    };
   }
 
   /**
@@ -1091,7 +1490,9 @@ export class Runner extends EventEmitter {
     // A retry or a stop may have closed this run while its outcome was on the way. Routing it now
     // would open a second run beside the one that replaced it, which the database refuses.
     if (!OPEN_STATUSES.has(run.status)) return;
-    const okOutcomes = new Set(['done', 'pass', 'ok', 'approved', 'started']);
+    const okOutcomes = new Set(['done', 'pass', 'ok', 'approved', 'started', 'skipped']);
+    // An outcome an agent step declares as its own (`on: { small: … }`) is a way to finish, not a failure.
+    if (run.kind === 'agent' && this.extraOutcomes(taskId, run.step_id).includes(outcome)) okOutcomes.add(outcome);
     const wf = this.workflowFor(task);
     this.collect(task, run, wf.steps[run.step_id]);
     const counts = JSON.parse(task.edge_counts) as Record<string, number>;
@@ -1099,7 +1500,7 @@ export class Runner extends EventEmitter {
     // What the router decided is stored on the run, so a later read never has to ask the workflow
     // file again. An edit to that file cannot change what the board says about a task that ended.
     const routed = next.type === 'goto' ? `goto:${next.step}` : next.type === 'end' ? 'end' : `block:${next.reason}`;
-    this.store.updateRun(runId, { status: okOutcomes.has(outcome) || run.kind === 'switch' || run.kind === 'human' ? 'done' : 'failed', outcome, ended_at: Date.now(), routed });
+    this.store.updateRun(runId, { status: okOutcomes.has(outcome) || run.kind === 'switch' || run.kind === 'human' || (run.kind === 'wait' && outcome !== 'timeout') ? 'done' : 'failed', outcome, ended_at: Date.now(), routed });
 
     if (next.type === 'goto') {
       counts[next.edge] = (counts[next.edge] ?? 0) + 1;
@@ -1195,7 +1596,7 @@ export class Runner extends EventEmitter {
     return [
       '--- Orstra ---',
       `Your message put ${this.stepTitle(task, run.step_id)} back on you. This is attempt ${run.attempt} of that step, and it is a run of its own: how it ends moves the workflow.`,
-      FINISH_INSTRUCTIONS.trim(),
+      this.finishFor(task, run.step_id).trim(),
     ].join('\n\n');
   }
 
@@ -1245,12 +1646,13 @@ export class Runner extends EventEmitter {
     const routes = open && (owns || !elsewhere);
 
     // A run that waits on you takes a slot again when it works. With no free slot, the message waits.
-    if (target.status === 'waiting' && open && this.busySlots().length >= this.opts.slots) {
+    if (target.status === 'waiting' && open && !this.capacity().fits(task)) {
       this.event(taskId, target.id, 'you', { mode: 'chat', ...said, via: opts.via });
       const list = this.held.get(target.id) ?? [];
       list.push({ taskId, body });
       this.held.set(target.id, list);
-      return this.event(taskId, target.id, 'system', { text: `All ${this.opts.slots} slots are busy. Your message goes in when one is free.` });
+      const full = this.busySlots().length >= this.opts.slots;
+      return this.event(taskId, target.id, 'system', { text: full ? `All ${this.opts.slots} slots are busy. Your message goes in when one is free.` : 'The limit of this workflow or workspace is reached. Your message goes in when one of its runs ends.' });
     }
 
     // Your message hangs on the run that answers it, so 1 transcript holds the round.
@@ -1300,6 +1702,9 @@ export class Runner extends EventEmitter {
    * process, and the sweep in `recover()` is left for a crash.
    */
   async shutdown(graceMs = 5_000): Promise<void> {
+    // A gate's commands run in their own process group, so Ctrl-C never reaches them: stop them here.
+    // The run stays `running`, and the next daemon runs the gate again (see recover()).
+    for (const ctrl of this.controllers.values()) ctrl.abort();
     const open = [...this.live.entries()];
     for (const [runId, live] of open) {
       this.disarm(runId);

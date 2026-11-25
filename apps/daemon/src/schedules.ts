@@ -463,7 +463,8 @@ export class Schedules {
     }
     const at = { due, timezone: r.timezone, lastRun: r.last_run_at };
     return this.runner.startTask({
-      workflowPath, workspaceId, repo: r.repo ?? undefined, source,
+      // The source doubles as the idempotency key, so the database refuses a second task for this due time.
+      workflowPath, workspaceId, repo: r.repo ?? undefined, source, idempotencyKey: source,
       title: fillSchedule(r.title, at), description: fillSchedule(r.description, at) || undefined,
       prompt: r.prompt ? fillSchedule(r.prompt, at) : undefined,
     });

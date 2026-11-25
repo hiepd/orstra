@@ -77,6 +77,20 @@ export const ACTIONS: Record<ActionName, (ctx: ActionContext) => ActionResult> =
   },
 };
 
+/**
+ * May a restart run this action again, with no question? Only when a second run gives the same
+ * result as the first. A new action must say so here, and a test keeps this list next to ACTIONS.
+ * - git.merge: a branch that is merged has nothing left to merge, so it returns `nothing` (= ok). A
+ *   merge the crash left half done keeps MERGE_HEAD, and the second run stops with `error`.
+ * - github.pr: the push changes nothing, and `gh pr view` finds the open pull request (`exists` = ok).
+ * - git.cleanup: a worktree that is gone returns `removed` (= ok).
+ */
+export const RERUN_SAFE: Record<ActionName, boolean> = {
+  'git.merge': true,
+  'github.pr': true,
+  'git.cleanup': true,
+};
+
 /** Run a named action. The parser refuses an unknown name; if one gets here anyway, it is an error, never a pass. */
 export function runAction(name: string | undefined, ctx: ActionContext): ActionResult {
   const action = name && (ACTIONS as Record<string, (ctx: ActionContext) => ActionResult>)[name];

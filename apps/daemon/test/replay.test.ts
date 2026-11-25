@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from '../src/db.ts';
-import { MAX_RESUMES, Runner } from '../src/runner.ts';
+import { MAX_RESUMES, Runner, resumeNote } from '../src/runner.ts';
 import type { Executors, LiveSession, SessionOptions } from '../src/executors.ts';
 import type { LogEntry } from '../src/sessionLog.ts';
 
@@ -44,10 +44,10 @@ const result = (uuid: string, id: string): LogEntry => user(uuid, [{ type: 'tool
  * Start a task, let the first daemon store the lines in `seen`, then let it die. The session log holds
  * `log`: what the agent wrote, including what came after the daemon died.
  */
-async function crash(seen: LogEntry[], log: LogEntry[], opts: { resumedAt?: number[] } = {}) {
+async function crash(seen: LogEntry[], log: LogEntry[], opts: { resumedAt?: number[]; workflow?: string } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'orstra-replay-'));
   const wf = join(dir, 'wf.yaml');
-  writeFileSync(wf, WF);
+  writeFileSync(wf, opts.workflow ?? WF);
   const config = join(dir, 'claude');
   const store = new Store(':memory:');
 
@@ -190,5 +190,61 @@ describe('recover, for a check that was running', () => {
     expect(t.next.gates()).toBe(1);
     expect(t.store.run('r-gate')).toMatchObject({ status: 'done', outcome: 'pass' });
     expect(chat(t.store, t.taskId)).toContain('system:Orstra restarted while this check ran. It runs again from the start.');
+  });
+
+  it('does not run it again when the step says rerun: false, and asks you instead', async () => {
+    const workflow = 'name: X\nsteps:\n  work:\n    use: agent\n    prompt: go\n    next: check\n  check:\n    use: gate\n    run: ["./deploy.sh"]\n    rerun: false\n    on: { pass: end, fail: work }\n';
+    const seen = [user('u0', 'go')];
+    const t = await crash(seen, seen, { workflow });
+    const run = t.store.run(t.runId)!;
+    t.store.updateRun(run.id, { status: 'done', outcome: 'done', ended_at: Date.now() });
+    t.store.insertRun({ ...run, id: 'r-gate', step_id: 'check', kind: 'gate', status: 'running', session_id: null, created_at: Date.now() + 1 });
+    await t.runner.recover();
+    await t.runner.idle();
+    expect(t.next.gates()).toBe(0);
+    expect(t.store.run('r-gate')).toMatchObject({ status: 'failed', outcome: 'interrupted' });
+    expect(chat(t.store, t.taskId).join('\n')).toContain('rerun: false');
+  });
+});
+
+/** A task whose second step is an action, left running the way a crash leaves it. */
+async function crashInAction(action: string, extra = '') {
+  const workflow = `name: X\nsteps:\n  work:\n    use: agent\n    prompt: go\n    next: ship\n  ship:\n    use: action\n    action: ${action}\n${extra}    next: end\n`;
+  const seen = [user('u0', 'go')];
+  const t = await crash(seen, seen, { workflow });
+  const run = t.store.run(t.runId)!;
+  t.store.updateRun(run.id, { status: 'done', outcome: 'done', ended_at: Date.now() });
+  t.store.insertRun({ ...run, id: 'r-ship', step_id: 'ship', kind: 'action', agent: null, status: 'running', session_id: null, created_at: Date.now() + 1 });
+  return t;
+}
+
+describe('recover, for an action that was running', () => {
+  it('runs a safe action again, because it gives the same result twice', async () => {
+    // The worktree is no repository, so git.merge finds nothing to merge: that is its `ok`.
+    const t = await crashInAction('git.merge');
+    await t.runner.recover();
+    await t.runner.idle();
+    expect(t.store.run('r-ship')).toMatchObject({ status: 'done', outcome: 'ok' });
+    expect(chat(t.store, t.taskId).join('\n')).toContain('Orstra restarted while this action ran. It is safe to run twice, so it runs again.');
+  });
+
+  it('asks you instead when the step says rerun: false', async () => {
+    const t = await crashInAction('git.merge', '    rerun: false\n');
+    await t.runner.recover();
+    await t.runner.idle();
+    expect(t.store.run('r-ship')).toMatchObject({ status: 'failed', outcome: 'interrupted' });
+    expect(chat(t.store, t.taskId).join('\n')).toContain('rerun: false');
+  });
+});
+
+describe('the note a resumed agent gets', () => {
+  it('names the commits the cut turn left, so the agent does not make them again', () => {
+    expect(resumeNote({ kind: 'mid' }, 2)).toContain('You left 2 commits on the branch before the restart.');
+    expect(resumeNote({ kind: 'cut', tool: 'Bash', summary: 'npm test' }, 1)).toContain('You left 1 commit on the branch');
+  });
+
+  it('says nothing about commits when there are none', () => {
+    expect(resumeNote({ kind: 'mid' }, 0)).not.toContain('commit');
+    expect(resumeNote({ kind: 'mid' })).not.toContain('commit');
   });
 });

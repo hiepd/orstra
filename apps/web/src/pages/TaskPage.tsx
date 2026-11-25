@@ -186,7 +186,7 @@ function TaskView({ task, view, runId, embedded }: { task: TaskDetail; view: Tas
 /** The run the task is on now, still running or waiting on you. The page says its state once, under the track. */
 const isOpenRun = (r: RunView) => r.status === 'running' || r.status === 'waiting';
 
-const KIND: Record<string, string> = { agent: 'agent', gate: 'checks', human: 'your decision', switch: 'picks a branch', action: 'action', workflow: 'starts a workflow' };
+const KIND: Record<string, string> = { agent: 'agent', gate: 'checks', human: 'your decision', switch: 'picks a branch', action: 'action', workflow: 'starts a workflow', wait: 'waits' };
 const TONE = {
   ok: { bg: 'var(--green-soft)', fg: 'var(--green-fg)' },
   fail: { bg: 'var(--red-soft)', fg: 'var(--red-fg)' },
@@ -295,6 +295,7 @@ function Overview({ task, git, onModal, embedded }: { task: TaskDetail; git: Res
               <span className="ox-k">Next</span>
               <span>{next}</span>
             </div>
+            {cur?.callbackUrl && <CallbackUrl url={cur.callbackUrl} human={cur.kind === 'human'} />}
           </section>
 
           {task.human && (
@@ -698,5 +699,33 @@ function CleanupModal({ task, onClose }: { task: TaskDetail; onClose: () => void
       </p>
       {refused && <p className="lx-error">{refused}</p>}
     </Modal>
+  );
+}
+
+/**
+ * The URL an outside system POSTs to, to end a wait or decide a human step. The secret in it is the
+ * only key, so it shows only while the run waits.
+ */
+function CallbackUrl({ url, human }: { url: string; human: boolean }) {
+  const toast = useToast();
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(url);
+      toast('Copied the callback URL');
+    } catch {
+      toast('Couldn’t copy to the clipboard. Select the URL and copy it.', { error: true });
+    }
+  };
+  return (
+    <div className="ox-next">
+      <span className="ox-k">Call back</span>
+      <span style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', minWidth: 0 }}>
+        <code className="lx-mono" style={{ overflowWrap: 'anywhere', userSelect: 'all' }}>{`POST ${url}`}</code>
+        <button type="button" className="lx-btn" onClick={() => void copy()}>
+          Copy
+        </button>
+        <small>{human ? 'Body: {"outcome": "<a choice>", "data": {"comment": "…"}}' : 'Body: {"outcome": "done", "data": {…}}'}</small>
+      </span>
+    </div>
   );
 }

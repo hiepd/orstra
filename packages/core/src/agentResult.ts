@@ -6,7 +6,8 @@ export interface Progress {
 }
 
 export interface AgentResult {
-  outcome: 'done' | 'needs_you' | 'cant_do';
+  /** done, needs_you, cant_do, or an outcome the step declares in `on:` (see agentOutcomes). */
+  outcome: string;
   /** false when the agent didn't write an OUTCOME line (outcome then defaults to done). */
   hasOutcome: boolean;
   progress: Progress;
@@ -28,6 +29,26 @@ Use needs_you when you need a human decision, and cant_do when the task cannot b
 
 const FIELD = /^(did|decided|left|avoid)\s*:\s*(.*)$/i;
 
+/** Outcomes Orstra sets itself, or an agent always has: never listed as a step's own. */
+const RESERVED = new Set(['done', 'needs_you', 'cant_do', 'timeout', 'over_budget', 'skipped', 'crashed', 'interrupted', 'setup_failed']);
+
+/**
+ * The outcomes an agent step adds to done, needs_you and cant_do: each arrow in its `on:` that is not
+ * a reserved outcome. With `on: { small: ship, large: plan }` the agent itself picks the branch.
+ */
+export function agentOutcomes(on: Record<string, unknown>): string[] {
+  return Object.keys(on).filter((k) => !RESERVED.has(k) && /^[\w-]+$/.test(k));
+}
+
+/** FINISH_INSTRUCTIONS, with the step's own outcomes on the OUTCOME line. */
+export function finishInstructions(extra: string[] = []): string {
+  if (!extra.length) return FINISH_INSTRUCTIONS;
+  return FINISH_INSTRUCTIONS.replace('OUTCOME: done | needs_you | cant_do', `OUTCOME: ${['done', ...extra].join(' | ')} | needs_you | cant_do`).replace(
+    'Use needs_you when',
+    `Pick ${extra.join(', ')} or done for how the step ended: each one leads to a different next step. Use needs_you when`,
+  );
+}
+
 /** The agent's message without the trailing "## Progress" block and OUTCOME line (those are shown separately). */
 export function stripProgressBlock(text: string): string {
   return text
@@ -37,9 +58,12 @@ export function stripProgressBlock(text: string): string {
 }
 
 /** Read the outcome line and the progress fields from an agent's final message. */
-export function parseAgentResult(text: string): AgentResult {
-  const outcomeMatch = text.match(/^\s*outcome\s*:\s*(done|needs_you|cant_do)\b/im);
-  const outcome = (outcomeMatch?.[1]?.toLowerCase() ?? 'done') as AgentResult['outcome'];
+export function parseAgentResult(text: string, extra: string[] = []): AgentResult {
+  const names = ['done', 'needs_you', 'cant_do', ...extra.filter((e) => /^[\w-]+$/.test(e))];
+  const esc = (n: string) => n.replace(/[-]/g, '\\-');
+  const outcomeMatch = text.match(new RegExp(`^\\s*outcome\\s*:\\s*(${names.map(esc).join('|')})(?![\\w-])`, 'im'));
+  const said = outcomeMatch?.[1]?.toLowerCase();
+  const outcome = names.find((n) => n.toLowerCase() === said) ?? 'done';
 
   const progress: Progress = { did: '' };
   for (const line of text.split('\n')) {

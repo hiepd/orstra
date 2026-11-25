@@ -187,3 +187,37 @@ describe('the repository the agent used last wins', () => {
     expect(await (await fetch(`${base}/api/tasks/${taskId}/file?path=same.md`)).text()).toBe('new\n');
   });
 });
+
+describe('task start with an idempotency key', () => {
+  it('starts the task once, and answers the second start with the same task', async () => {
+    const body = { workflow: join(dir, 'wf.yaml'), repo: dir, title: 'from a trigger', idempotencyKey: 'ci:build-41' };
+    const first = await post('/api/tasks', body);
+    expect(first.status).toBe(201);
+    const a = (await first.json()) as any;
+    expect(a.reused).toBe(false);
+    const second = await post('/api/tasks', { ...body, title: 'a second try' });
+    expect(second.status).toBe(200);
+    const b = (await second.json()) as any;
+    expect(b).toMatchObject({ id: a.id, reused: true, title: 'from a trigger' });
+    expect(store.tasks().filter((t) => t.idempotency_key === 'ci:build-41')).toHaveLength(1);
+  });
+});
+
+describe('the callback URL of a wait step', () => {
+  it('completes the run on a POST, and refuses a second one and an unknown URL', async () => {
+    const wf = join(dir, 'cb.yaml');
+    writeFileSync(wf, 'name: CB\nsteps:\n  ci:\n    use: wait\n    callback: true\n    next: end\n');
+    const task = runner.startTask({ workflowPath: wf, title: 'waits for CI' });
+    await new Promise((r) => setTimeout(r, 20));
+    const secret = store.runsForTask(task.id)[0].callback_secret!;
+    const view = await get(`/api/tasks/${task.id}`);
+    expect(view.runs[0].callbackUrl).toMatch(new RegExp(`/api/callbacks/${secret}$`));
+    const ok = await post(`/api/callbacks/${secret}`, { outcome: 'done', data: { build: 41 } });
+    expect(ok.status).toBe(200);
+    expect(store.task(task.id)!.status).toBe('done');
+    expect(JSON.parse(store.runsForTask(task.id)[0].data!)).toEqual({ build: 41 });
+    expect((await get(`/api/tasks/${task.id}`)).runs[0].callbackUrl).toBeNull();
+    expect((await post(`/api/callbacks/${secret}`)).status).toBe(409);
+    expect((await post(`/api/callbacks/${'a'.repeat(48)}`)).status).toBe(404);
+  });
+});

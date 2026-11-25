@@ -4,7 +4,7 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ACTION_NAMES } from '@orstra/core';
-import { ACTIONS, prBody, runAction } from '../src/actions.ts';
+import { ACTIONS, RERUN_SAFE, prBody, runAction } from '../src/actions.ts';
 import { cleanupWorktree } from '../src/cleanup.ts';
 import { openPullRequest } from '../src/github.ts';
 
@@ -50,6 +50,10 @@ afterEach(() => {
 describe('actions', () => {
   it('has exactly the actions the parser accepts', () => {
     expect(Object.keys(ACTIONS).sort()).toEqual([...ACTION_NAMES].sort());
+  });
+
+  it('says for every action if a restart may run it again', () => {
+    expect(Object.keys(RERUN_SAFE).sort()).toEqual([...ACTION_NAMES].sort());
   });
 
   it('writes a pull request body from the ticket, the ask and the progress', () => {
