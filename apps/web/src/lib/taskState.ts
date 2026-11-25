@@ -17,6 +17,7 @@ export type StateGroup = 'needs' | 'running' | 'queued' | 'done';
 export const STATE: Record<TaskState, { label: string; short: string; bg: string; fg: string; group: StateGroup }> = {
   working: { label: 'Running', short: 'Running', bg: 'var(--accent-soft)', fg: 'var(--accent-fg)', group: 'running' },
   checks: { label: 'Checks running', short: 'Checks', bg: 'var(--accent-soft)', fg: 'var(--accent-fg)', group: 'running' },
+  sleeping: { label: 'Waiting', short: 'Waiting', bg: 'var(--line-3)', fg: 'var(--grey-fg)', group: 'running' },
   queued: { label: 'Queued', short: 'Queued', bg: 'var(--line-3)', fg: 'var(--grey-fg)', group: 'queued' },
   decision: { label: 'Needs your decision', short: 'Decide', bg: 'var(--purple-soft)', fg: 'var(--purple-fg)', group: 'needs' },
   waiting_you: { label: 'Agent is waiting for you', short: 'Waiting for you', bg: 'var(--accent-soft)', fg: 'var(--accent-fg)', group: 'needs' },

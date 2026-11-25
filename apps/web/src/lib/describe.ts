@@ -50,6 +50,11 @@ export function describeTask(task: TaskDetail): { now: string; next: string } {
       return { now: `${step} is queued${attempt}. It starts on its own when a slot is free.`, next: todo.length ? `${joinSteps(todo)}.` : 'Nothing after it.' };
     case 'decision':
       return { now: `Waiting for your decision at ${step}.`, next: 'Depends on what you choose.' };
+    case 'sleeping':
+      return {
+        now: run?.kind === 'workflow' ? `${step} waits for the tasks it started.` : `${step} waits: for a timer, or for an outside system to call back.`,
+        next: `It moves on by itself. Then ${todo.length ? joinSteps(todo) : 'the task finishes'}.`,
+      };
     case 'checks':
       return { now: `${step} is running${attempt}: its checks are in progress.`, next: `${after}.` };
     case 'paused': {

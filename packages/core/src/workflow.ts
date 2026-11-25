@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { checkCron, checkTimezone } from './cron.ts';
 import { AGENT_RETRY, NO_RETRY, parseDuration, type RetryPolicy } from './duration.ts';
 
-export const STEP_KINDS = ['agent', 'gate', 'human', 'switch', 'action', 'workflow'] as const;
+export const STEP_KINDS = ['agent', 'gate', 'human', 'switch', 'action', 'workflow', 'wait'] as const;
 export type StepKind = (typeof STEP_KINDS)[number];
 
 /** The outcome that `next:` stands for, per step kind. */
@@ -14,6 +14,7 @@ export const SUCCESS_OUTCOME: Record<StepKind, string> = {
   action: 'ok',
   workflow: 'started',
   switch: 'default',
+  wait: 'done',
 };
 
 export const END = 'end';
@@ -62,6 +63,11 @@ export interface Step {
   with?: Record<string, unknown>;
   /** workflow */
   workflow?: string;
+  /** wait: a timer of this many ms, a time to wait until (ISO, templating works), or a callback URL. */
+  waitMs?: number;
+  until?: string;
+  /** wait: an outside system completes the run by a POST to its URL. `timeoutMs` ends it with `timeout`. */
+  callback?: { timeoutMs?: number };
   timeoutMinutes?: number;
   /**
    * gate, action: may a restart run this step again from the start? Unset = yes for a gate, and for
@@ -155,6 +161,9 @@ const stepSchema = z
     action: z.string().optional(),
     with: z.record(z.unknown()).optional(),
     workflow: z.string().optional(),
+    for: z.union([z.string(), z.number()]).optional(),
+    until: z.string().optional(),
+    callback: z.union([z.literal(true), z.object({ timeout: z.union([z.string(), z.number()]).optional() })]).optional(),
     timeout: z.number().positive().optional(),
     rerun: z.boolean().optional(),
     retry: z.union([
@@ -218,6 +227,19 @@ const workflowSchema = z.object({
 
 function toTarget(t: z.infer<typeof targetSchema>): Target {
   return typeof t === 'string' ? { goto: t } : { goto: t.goto, ...(t.max ? { max: t.max } : {}) };
+}
+
+/** A wait step: exactly 1 of `for`, `until` and `callback`. */
+function toWait(stepId: string, s: { for?: string | number; until?: string; callback?: true | { timeout?: string | number } }): Pick<Step, 'waitMs' | 'until' | 'callback'> {
+  const given = [s.for !== undefined, s.until !== undefined, s.callback !== undefined].filter(Boolean).length;
+  if (given !== 1) throw new Error(`Wait step "${stepId}" needs exactly 1 of for, until and callback.`);
+  const ms = (v: string | number) => {
+    try { return parseDuration(v); } catch (err: any) { throw new Error(`Wait step "${stepId}": ${err.message}`); }
+  };
+  if (s.for !== undefined) return { waitMs: ms(s.for) };
+  if (s.until !== undefined) return { until: s.until };
+  const timeout = s.callback === true ? undefined : s.callback?.timeout;
+  return { callback: timeout === undefined ? {} : { timeoutMs: ms(timeout) } };
 }
 
 /** `retry: false`, or the fields that differ from the default of the step kind. */
@@ -290,6 +312,7 @@ export function parseWorkflow(source: string): Workflow {
       action: s.action,
       with: s.with,
       workflow: s.workflow,
+      ...(s.use === 'wait' ? toWait(id, s) : {}),
       timeoutMinutes: s.timeout,
       ...(s.rerun !== undefined ? { rerun: s.rerun } : {}),
       ...(s.retry !== undefined ? { retry: toRetry(id, s.use, s.retry) } : {}),

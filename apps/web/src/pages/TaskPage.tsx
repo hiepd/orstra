@@ -186,7 +186,7 @@ function TaskView({ task, view, runId, embedded }: { task: TaskDetail; view: Tas
 /** The run the task is on now, still running or waiting on you. The page says its state once, under the track. */
 const isOpenRun = (r: RunView) => r.status === 'running' || r.status === 'waiting';
 
-const KIND: Record<string, string> = { agent: 'agent', gate: 'checks', human: 'your decision', switch: 'picks a branch', action: 'action', workflow: 'starts a workflow' };
+const KIND: Record<string, string> = { agent: 'agent', gate: 'checks', human: 'your decision', switch: 'picks a branch', action: 'action', workflow: 'starts a workflow', wait: 'waits' };
 const TONE = {
   ok: { bg: 'var(--green-soft)', fg: 'var(--green-fg)' },
   fail: { bg: 'var(--red-soft)', fg: 'var(--red-fg)' },

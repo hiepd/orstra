@@ -8,7 +8,7 @@ export type RunStatus = 'queued' | 'running' | 'waiting' | 'done' | 'failed' | '
  * Where a task stands, as the daemon works it out from the task's runs. Declared again here because
  * the web app does not depend on @orstra/core; `taskState` falls back when the 2 lists drift.
  */
-export type TaskState = 'queued' | 'working' | 'checks' | 'waiting_you' | 'paused' | 'decision' | 'blocked' | 'done' | 'stopped';
+export type TaskState = 'queued' | 'working' | 'checks' | 'sleeping' | 'waiting_you' | 'paused' | 'decision' | 'blocked' | 'done' | 'stopped';
 export type StepKind = 'agent' | 'gate' | 'human' | 'switch' | 'action' | 'workflow';
 export type AgentName = 'claude-code' | 'codex';
 export type MessageMode = 'chat' | 'note' | 'ask';

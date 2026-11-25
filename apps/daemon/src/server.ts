@@ -7,7 +7,7 @@ import { applyEdits, deriveState, parseWorkflow, taskPath, type EditGraph, type 
 import { MAX_FILE_BYTES, checkAttachments, cosFiles, mb, readAttachment, saveAttachment, taskFiles, type AttachStore } from './attachments.ts';
 import type { ArtifactRow, EventRow, RunRow, Store, TaskRow } from './db.ts';
 import { kindOf } from './artifacts.ts';
-import type { Runner } from './runner.ts';
+import { CallbackError, type Runner } from './runner.ts';
 import type { ChiefOfStaff } from './cos.ts';
 import { ScheduleError } from './schedules.ts';
 import type { Triggers } from './triggers.ts';
@@ -297,6 +297,18 @@ export function buildApi(store: Store, runner: Runner, cos?: ChiefOfStaff, trigg
           idempotencyKey: typeof b.idempotencyKey === 'string' ? b.idempotencyKey : undefined, priority });
         // 200 with reused: true when the key matched a task an earlier start made; nothing new started.
         return send(res, task.reused ? 200 : 201, { ...taskSummary(task), reused: !!task.reused }), true;
+      }
+      // A wait step's callback: an outside system (CI, a webhook, curl) completes 1 run by its secret.
+      const cb = req.method === 'POST' && p.match(/^\/api\/callbacks\/([0-9a-f]{48})$/);
+      if (cb) {
+        const b = await readJson(req).catch(() => ({}));
+        try {
+          const task = runner.completeCallback(cb[1], b ?? {});
+          return send(res, 200, { ok: true, task: task.id, status: task.status }), true;
+        } catch (err: any) {
+          if (err instanceof CallbackError) return send(res, err.status, { error: err.message }), true;
+          throw err;
+        }
       }
       if (req.method === 'GET' && p === '/api/workspaces') return send(res, 200, store.workspaces().map(workspaceView)), true;
       if (req.method === 'POST' && p === '/api/workspaces') {

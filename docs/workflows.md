@@ -35,6 +35,7 @@ A task keeps a copy of the workflow it started with. An edit to the file changes
 | `human` | Waits for your decision | 1 per choice (`approved`, `changes_requested`, `rejected`, …) |
 | `switch` | Picks a branch from the task's data | the matching case, else `default` |
 | `action` | Runs 1 named action | `ok`, `error`, `conflict`, `nothing`, `refused` |
+| `wait` | Waits for a time, or for an outside system to call back | `done`, `timeout`, or the outcome the call back names |
 
 An agent or a gate step can also end with `timeout`. An agent step can also end with `over_budget`.
 
@@ -56,6 +57,11 @@ Fields by kind:
 | `cases` | switch | Outcome to step, like `on:`. |
 | `action` | action | `git.merge`, `github.pr` or `git.cleanup`. Another name is a parse error. |
 | `with` | action | Input for the action. |
+| `for` | wait | A duration: `30s`, `5m`, `2h`, `1d`. |
+| `until` | wait | A time, such as `2026-12-01T09:00:00+01:00`. Templating works here. |
+| `callback` | wait | `true`, or `{ timeout: 3d }`. Orstra shows a URL. A `POST` to it with `{"outcome": "done", "data": {...}}` ends the step, and the outcome picks the arrow. Later steps read the data as `{{ steps.<id>.data.<field> }}`. Without a call back before the timeout, the step ends with `timeout`. |
+
+A `wait` step takes no slot and does not go to your Inbox. The board shows it as Waiting. Its due time is in the database, so it survives a restart, and a wait that came due while Orstra was off ends at once when Orstra starts. The callback URL works on this machine only (the daemon listens on 127.0.0.1). The secret in the URL is the only key, so treat the URL as a password: it completes 1 run, 1 time, and nothing while an agent works on the task.
 
 ## Arrows and outcomes
 

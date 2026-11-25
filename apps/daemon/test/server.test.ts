@@ -202,3 +202,19 @@ describe('task start with an idempotency key', () => {
     expect(store.tasks().filter((t) => t.idempotency_key === 'ci:build-41')).toHaveLength(1);
   });
 });
+
+describe('the callback URL of a wait step', () => {
+  it('completes the run on a POST, and refuses a second one and an unknown URL', async () => {
+    const wf = join(dir, 'cb.yaml');
+    writeFileSync(wf, 'name: CB\nsteps:\n  ci:\n    use: wait\n    callback: true\n    next: end\n');
+    const task = runner.startTask({ workflowPath: wf, title: 'waits for CI' });
+    await new Promise((r) => setTimeout(r, 20));
+    const secret = store.runsForTask(task.id)[0].callback_secret!;
+    const ok = await post(`/api/callbacks/${secret}`, { outcome: 'done', data: { build: 41 } });
+    expect(ok.status).toBe(200);
+    expect(store.task(task.id)!.status).toBe('done');
+    expect(JSON.parse(store.runsForTask(task.id)[0].data!)).toEqual({ build: 41 });
+    expect((await post(`/api/callbacks/${secret}`)).status).toBe(409);
+    expect((await post(`/api/callbacks/${'a'.repeat(48)}`)).status).toBe(404);
+  });
+});

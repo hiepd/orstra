@@ -25,6 +25,12 @@ describe('deriveState with an open run', () => {
   it('reads a waiting human run as decision', () =>
     expect(deriveState(input({ open: open({ kind: 'human', status: 'waiting', live: false }) })).state).toBe('decision'));
 
+  it('reads a waiting wait or workflow run as sleeping, which is no Inbox state', () => {
+    expect(deriveState(input({ open: open({ kind: 'wait', status: 'waiting', live: false }) })).state).toBe('sleeping');
+    expect(deriveState(input({ open: open({ kind: 'workflow', status: 'waiting', live: false }) })).state).toBe('sleeping');
+    expect(storedStatus('sleeping')).toBe('running');
+  });
+
   it('reads a running gate run as checks', () =>
     expect(deriveState(input({ open: open({ kind: 'gate', live: false }) })).state).toBe('checks'));
 

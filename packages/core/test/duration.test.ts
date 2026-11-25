@@ -61,3 +61,17 @@ describe('retry in a workflow', () => {
     expect(() => wf('    use: agent\n    prompt: hi\n    retry: { delay: soon }\n')).toThrow(/not a duration/);
   });
 });
+
+describe('a wait step in a workflow', () => {
+  const wf = (step: string) => parseWorkflow(`name: x\nsteps:\n  w:\n    use: wait\n${step}`);
+  it('reads for, until and callback', () => {
+    expect(wf('    for: 2h\n').steps.w.waitMs).toBe(7_200_000);
+    expect(wf('    until: "2026-12-01T09:00:00Z"\n').steps.w.until).toBe('2026-12-01T09:00:00Z');
+    expect(wf('    callback: true\n').steps.w.callback).toEqual({});
+    expect(wf('    callback: { timeout: 3d }\n').steps.w.callback).toEqual({ timeoutMs: 3 * 86_400_000 });
+  });
+  it('needs exactly 1 of them', () => {
+    expect(() => wf('    next: end\n')).toThrow(/exactly 1/);
+    expect(() => wf('    for: 1h\n    callback: true\n')).toThrow(/exactly 1/);
+  });
+});

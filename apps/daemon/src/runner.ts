@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { FINISH_INSTRUCTIONS, formatDuration, parseAgentResult, parseWorkflow, renderTemplate, retryDelay, retryPolicy, route, stripProgressBlock, switchCase, usageReset, type Progress, type Step, type Workflow } from '@orstra/core';
 import { excludeFromGit, withFiles, type Attachment } from './attachments.ts';
@@ -13,6 +13,7 @@ import { RERUN_SAFE, runAction } from './actions.ts';
 import { cleanupWorktree } from './cleanup.ts';
 import { gitCommitsBetween, gitHead } from './git.ts';
 import { copyIntoWorktree, taskCwd, workspaceView } from './workspace.ts';
+import { PORT } from './paths.ts';
 import { isSameProcess, realProcessEnv, stampOf, stopProcess, type ProcessEnv, type ProcessStamp, type StopResult } from './process.ts';
 
 export interface StartTaskInput {
@@ -81,6 +82,13 @@ export function resumeNote(where: WhereStopped, commits = 0): string {
   const rest = `${left} Continue the step from where you stopped. Do not repeat the work you finished.`;
   if (where.kind === 'cut') return `Orstra restarted while your tool call ran: ${where.tool} (${where.summary}). The call may not have finished, and its result is lost. Check what it did before you go on.${rest}`;
   return `Orstra restarted while you worked. Your session is intact.${rest}`;
+}
+
+/** A callback that Orstra refuses, with the HTTP status to answer. */
+export class CallbackError extends Error {
+  constructor(readonly status: number, message: string) {
+    super(message);
+  }
 }
 
 /** A failure of the system, not of the work: the retry policy sees it before the outcome arrows do. */
@@ -285,7 +293,7 @@ export class Runner extends EventEmitter {
     this.rebuild();
     await Promise.all(work);
     this.rebuild();
-    this.pump();
+    this.tick();
   }
 
   /** A gate or an action that ran when the daemon went: run it again when that is safe, else ask you. */
@@ -538,6 +546,9 @@ export class Runner extends EventEmitter {
     queued.sort((a, b) => order(a) - order(b));
     for (const { run, task } of queued) {
       if (!task || task.stopped_at) continue;
+      // A step that ends at once (switch, action, wait) calls pump() again from inside this loop, and
+      // that pump may start a run this list still holds as queued. Read it fresh, or it starts twice.
+      if (this.store.run(run.id)?.status !== 'queued') continue;
       // A retry waits out its delay. The timer below calls pump() again when the first one is due.
       if (run.not_before && run.not_before > now) {
         nextDue = Math.min(nextDue, run.not_before);
@@ -560,7 +571,12 @@ export class Runner extends EventEmitter {
     this.wakeFor(nextDue);
   }
 
-  /** Call pump() at `at`, unless a timer for an earlier time is set already. */
+  /**
+   * The due loop: call tick() at `at`, unless a timer for an earlier time is set already. 1 timer
+   * covers every due time Orstra keeps: a retry's not_before, a wait's wake_at, a callback's timeout.
+   * The times live in SQLite, so a restart loses none: recover() calls tick(), and a wait that came
+   * due while the daemon was off ends at once.
+   */
   private wakeFor(at: number) {
     if (at === Infinity || at >= this.wakeAt) return;
     if (this.wakeTimer) clearTimeout(this.wakeTimer);
@@ -568,9 +584,73 @@ export class Runner extends EventEmitter {
     this.wakeTimer = setTimeout(() => {
       this.wakeTimer = null;
       this.wakeAt = Infinity;
-      this.pump();
-    }, Math.max(0, at - Date.now()) + 5);
+      this.tick();
+    }, Math.min(Math.max(0, at - Date.now()) + 5, 2 ** 31 - 1));
     this.wakeTimer.unref?.();
+  }
+
+  /** End the waits that are due, start the runs that may start, and set the timer for the next due time. */
+  tick() {
+    const now = Date.now();
+    let next = Infinity;
+    for (const r of this.store.runsByStatus('waiting')) {
+      if (!r.wake_at) continue;
+      if (r.wake_at > now) {
+        next = Math.min(next, r.wake_at);
+        continue;
+      }
+      if (r.kind !== 'wait') continue;
+      if (r.wait_reason === 'callback') {
+        this.event(r.task_id, r.id, 'system', { text: 'Nothing called back before the timeout.' });
+        this.finish(r.task_id, r.id, 'timeout');
+      } else {
+        this.event(r.task_id, r.id, 'system', { text: 'The wait is over.' });
+        this.finish(r.task_id, r.id, 'done');
+      }
+    }
+    this.pump();
+    this.wakeFor(next);
+  }
+
+  /** Start a wait step: a timer, or a callback URL that an outside system completes. */
+  private startWait(task: TaskRow, run: RunRow, step: Step) {
+    const now = Date.now();
+    if (step.callback) {
+      const secret = randomBytes(24).toString('hex');
+      const wake = step.callback.timeoutMs ? now + step.callback.timeoutMs : null;
+      this.store.updateRun(run.id, { status: 'waiting', wait_reason: 'callback', callback_secret: secret, wake_at: wake });
+      const url = `http://127.0.0.1:${PORT}/api/callbacks/${secret}`;
+      this.event(task.id, run.id, 'system', { text: `Waits for a call back. To go on, POST to ${url} with a JSON body such as {"outcome": "done", "data": {}}.${wake ? ` It times out at ${new Date(wake).toLocaleString()}.` : ''}`, url });
+    } else {
+      const wake = step.waitMs !== undefined ? now + step.waitMs : Date.parse(renderTemplate(step.until ?? '', this.context(task)));
+      if (!Number.isFinite(wake)) {
+        this.event(task.id, run.id, 'system', { text: `"${step.until}" is not a time Orstra can read. Write it like 2026-12-01T09:00:00+01:00.` });
+        return this.finish(task.id, run.id, 'cant_do');
+      }
+      this.store.updateRun(run.id, { status: 'waiting', wait_reason: 'timer', wake_at: wake });
+      this.event(task.id, run.id, 'system', { text: `Waits until ${new Date(wake).toLocaleString()}.` });
+    }
+    this.project(task.id);
+    const at = this.store.run(run.id)?.wake_at;
+    if (at) this.wakeFor(at);
+  }
+
+  /**
+   * An outside system calls back: the POST to a wait step's URL. The secret in the URL names 1 run,
+   * and only an open one. The guard of decide() applies: nothing completes while an agent works.
+   */
+  completeCallback(secret: string, body: { outcome?: unknown; data?: unknown } = {}): TaskRow {
+    const run = this.store.runBySecret(secret);
+    if (!run) throw new CallbackError(404, 'No wait has this URL.');
+    if (run.status !== 'waiting' || run.wait_reason !== 'callback') throw new CallbackError(409, 'This wait is over already.');
+    if (this.working(run.task_id)) throw new CallbackError(409, 'An agent works on this task now. Call back when it is done.');
+    const outcome = typeof body.outcome === 'string' && /^[\w-]{1,64}$/.test(body.outcome) ? body.outcome : 'done';
+    const data = body.data ?? null;
+    const did = data === null ? `Called back: ${outcome}` : JSON.stringify(data).slice(0, 2000);
+    this.store.updateRun(run.id, { data: JSON.stringify(data), progress: JSON.stringify({ did }) });
+    this.event(run.task_id, run.id, 'system', { text: `Called back with the outcome ${outcome}.` });
+    this.finish(run.task_id, run.id, outcome);
+    return this.store.task(run.task_id)!;
   }
 
   /**
@@ -640,6 +720,10 @@ export class Runner extends EventEmitter {
       if (r.progress) {
         const p = JSON.parse(r.progress) as Progress;
         steps[r.step_id] = { output: p.did, progress: p, outcome: r.outcome };
+      }
+      // {{ steps.<id>.data.<field> }}: a run's structured result (a callback's data, a gate's JSON, children).
+      if (r.data && r.outcome) {
+        try { ((steps[r.step_id] ??= { outcome: r.outcome }) as Record<string, unknown>).data = JSON.parse(r.data); } catch { /* not JSON: leave it out */ }
       }
     }
     // {{ steps.<id>.artifacts }}: where that step's kept files are for the run that reads the template.
@@ -1143,6 +1227,8 @@ export class Runner extends EventEmitter {
         return this.finish(task.id, run.id, res.outcome);
       }
 
+      if (step.use === 'wait') return this.startWait(task, run, step);
+
       this.event(task.id, run.id, 'system', { text: `Step type "${step.use}" isn't built yet.` });
       return this.finish(task.id, run.id, 'cant_do');
     } finally {
@@ -1255,7 +1341,7 @@ export class Runner extends EventEmitter {
     // What the router decided is stored on the run, so a later read never has to ask the workflow
     // file again. An edit to that file cannot change what the board says about a task that ended.
     const routed = next.type === 'goto' ? `goto:${next.step}` : next.type === 'end' ? 'end' : `block:${next.reason}`;
-    this.store.updateRun(runId, { status: okOutcomes.has(outcome) || run.kind === 'switch' || run.kind === 'human' ? 'done' : 'failed', outcome, ended_at: Date.now(), routed });
+    this.store.updateRun(runId, { status: okOutcomes.has(outcome) || run.kind === 'switch' || run.kind === 'human' || (run.kind === 'wait' && outcome !== 'timeout') ? 'done' : 'failed', outcome, ended_at: Date.now(), routed });
 
     if (next.type === 'goto') {
       counts[next.edge] = (counts[next.edge] ?? 0) + 1;
