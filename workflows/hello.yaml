@@ -1,5 +1,5 @@
 name: Hello Orstra
-description: A first task that needs no repository. The agent writes a file, a check reads it, and the task is done. Start it with "orstra run hello --title ...".
+description: A first task that needs no repository. The agent writes a file, a check reads it, and the task is done.
 
 steps:
   write:

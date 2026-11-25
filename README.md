@@ -27,7 +27,7 @@ For some features only:
 - **Codex**, signed in, for a step that sets `agent: codex`.
 - **`LINEAR_API_KEY`** in the daemon's environment, for Linear triggers.
 
-Orstra is developed and run on macOS (Apple silicon). CI runs the tests on Ubuntu with Node 22. Nobody has tested it on Windows.
+Orstra is developed and run on macOS (Apple silicon). CI runs the tests on Ubuntu with Node 22. It is untested on Windows.
 
 ## Install and first run
 
@@ -47,7 +47,7 @@ Leave the daemon running. In a second terminal, start your first task:
 bin/orstra run hello --title "the Orstra team"
 ```
 
-Open the link it prints, or go to http://localhost:4317. You watch the task move: the agent writes a file and commits it, a check reads the file, and the task is done. It needs no repository of its own, so it is safe to run anywhere. It costs a few cents of Claude Code.
+Open the link it prints, or go to http://localhost:4317. You watch the task move: the agent writes a file and commits it, a check reads the file, and the task is done. It works in a scratch folder, not in a repository of yours, so it is safe to run anywhere. It is a real Claude Code session, so it spends real Claude usage: about $0.50 and 30 seconds in our runs.
 
 The other commands:
 
@@ -79,6 +79,7 @@ This is `hello`, the one you just ran:
 
 ```yaml
 name: Hello Orstra
+description: A first task that needs no repository. The agent writes a file, a check reads it, and the task is done.
 
 steps:
   write:
@@ -90,6 +91,7 @@ steps:
       Then commit it on this branch with a clear message.
     next: check
 
+  # The check runs in the task's folder. Exit code 0 is a pass, anything else is a fail.
   check:
     title: Check the file
     use: gate
@@ -147,10 +149,10 @@ workflows/    The default workflows, copied to ~/.orstra/workflows/ on first run
 Orstra is early, so the most useful thing you can send is a report of what broke.
 
 - **Found a bug, or want a feature?** [Open an issue](https://github.com/hiepd/orstra/issues). For a bug, say what you ran, what you expected and what happened, and add the daemon's output.
-- **Sending a change?** Open a pull request from a branch. Run `npx vitest run` and `npm run typecheck` first; CI runs both and will not merge a red branch. Keep the voice of [docs/design.md](docs/design.md) in the docs you touch, and add a test for behaviour you change.
+- **Sending a change?** Open a pull request from a branch. Run `npx vitest run` and `npm run typecheck` first; CI runs both on every pull request. Keep the voice of [docs/design.md](docs/design.md) in the docs you touch, and add a test for behaviour you change.
 - **Not sure it fits?** Open an issue first and ask. [docs/design.md](docs/design.md) says what Orstra is for, and the non-goals say what it will not become.
 
-Please report a security problem in a private issue rather than a public one.
+Orstra has no security contact yet. Until it has one, please do not put the details of a vulnerability in a public issue.
 
 ## License
 

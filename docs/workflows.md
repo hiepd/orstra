@@ -171,6 +171,8 @@ This is `workflows/linear-to-pr.yaml`, which Orstra ships. An agent implements a
 name: Linear ticket to PR
 description: An agent implements a Linear ticket, the tests run, you review, and Orstra opens a draft pull request.
 
+# Starts one task per open issue with this label. Needs LINEAR_API_KEY in the daemon's environment.
+# Each progress entry goes back to the issue as a comment. Remove this block to start tasks by hand only.
 triggers:
   - linear:
       label: agent-ready
