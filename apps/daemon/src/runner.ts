@@ -111,6 +111,9 @@ const id = (p: string) => `${p}-${Date.now().toString(36)}${Math.random().toStri
 const SLOT_KINDS = new Set(['agent', 'gate']);
 /** What to call a run's agent in a message to the human. */
 const agentName = (run: RunRow) => (run.agent === 'codex' ? 'Codex' : 'Claude Code');
+/** The event kinds an agent's stream writes. */
+const AGENT_KINDS = new Set(['message', 'tool', 'tool_result']);
+
 /** How an agent event is stored, or null when it stores nothing (a message that was only a progress block). */
 function storedEvent(e: StreamEvent): { kind: string; payload: unknown } | null {
   if (e.kind !== 'message') return { kind: e.kind, payload: e };
@@ -286,7 +289,10 @@ export class Runner extends EventEmitter {
     if (file) {
       const entries = readSessionLog(file);
       const from = r.log_uuid ?? this.store.sessionLogUuid(r.session_id!);
-      for (const e of entriesAfter(entries, from)) {
+      // No position, but events: an Orstra from before the checkpoint stored them. Orstra cannot tell
+      // which entries they came from, so it replays none rather than show them twice.
+      const legacy = from === null && this.store.events(r.task_id).some((e) => e.run_id === r.id && AGENT_KINDS.has(e.kind));
+      for (const e of legacy ? [] : entriesAfter(entries, from)) {
         readClaudeLine(JSON.stringify(e), {
           onEvent: () => {},
           onText: () => {},

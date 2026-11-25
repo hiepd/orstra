@@ -154,6 +154,18 @@ describe('recover, with the session log as the WAL', () => {
     expect(chat(t.store, t.taskId).at(-1)).toMatch(/restarted mid-run 4 times in 10 minutes/);
   });
 
+  it('replays nothing for a run from before the checkpoint, which has events but no position', async () => {
+    const seen = [user('u0', 'go'), said('u1', 'I look first.'), call('u2', 't1', 'ls')];
+    const t = await crash(seen, [...seen, result('u3', 't1')]);
+    // As an older Orstra left it: the events are stored, the position is not.
+    t.store.updateRun(t.runId, { log_uuid: null });
+    await t.runner.recover();
+    const lines = chat(t.store, t.taskId);
+    expect(lines.filter((l) => l === 'message:I look first.')).toHaveLength(1);
+    expect(lines.filter((l) => l === 'tool:ls')).toHaveLength(1);
+    expect(t.next.opened[0]).toMatchObject({ resume: true });
+  });
+
   it('still resumes when Claude Code left no log', async () => {
     const t = await crash([user('u0', 'go')], []);
     // No file at all, as with a session whose log was deleted.
