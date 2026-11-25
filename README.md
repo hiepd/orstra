@@ -1,94 +1,128 @@
 # Orstra
 
-A local software factory. Coding agents (Claude Code today, Codex next) run your workflows on your machine; you decide and steer. See [docs/design.md](docs/design.md) for the concepts and the rules behind them.
+[![CI](https://github.com/hiepd/orstra/actions/workflows/ci.yml/badge.svg)](https://github.com/hiepd/orstra/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-## Run it
+Orstra is a local software factory: coding agents run your workflows on your own machine, and you decide at the points you picked.
+
+A coding agent can work for an hour on its own, but someone still has to start it, watch it, and say yes. Run a few at once and your day becomes dispatch work. Orstra makes that a workflow you write once: each task gets its own git worktree, the agent works, the tests run, and you are asked only where your judgment matters. It is for a developer who already runs Claude Code or Codex every day and wants the repeat work to happen without them.
+
+![The Orstra Inbox. On the left, 4 tasks need the user: 3 decisions and 1 question from an agent. On the right, the selected task shows its steps, the review decision with the agent's progress note, the changed file, and each run with its cost.](docs/images/inbox.png)
+
+## What Orstra is not
+
+1 user, 1 machine, no team. That is the design, not a gap. Orstra runs with your credentials, your checkouts and your agent setup, and nothing leaves your computer. There is no hosted version, no cloud runner, and no account to make.
+
+It is early. The engine works and has tests, but the interfaces still change, there is no release yet, and you will find rough edges. Read [what is built, and what is not](#what-is-built-and-what-is-not) before you plan work around it.
+
+## Requirements
+
+- **Node 22.13 or later.** Orstra stores its data with `node:sqlite`, which needs that version.
+- **Claude Code, installed and signed in.** Orstra drives the `claude` CLI. It has no agent of its own.
+- **git.**
+
+For some features only:
+
+- The **GitHub CLI** (`gh`), signed in, for the `github.pr` action.
+- **Codex**, signed in, for a step that sets `agent: codex`.
+- **`LINEAR_API_KEY`** in the daemon's environment, for Linear triggers.
+
+Orstra is developed and run on macOS (Apple silicon). CI runs the tests on Ubuntu with Node 22. It is untested on Windows.
+
+## Install and first run
 
 ```sh
+git clone https://github.com/hiepd/orstra.git
+cd orstra
 npm install
-bin/orstra serve            # daemon + API on http://localhost:4317 (serves the built UI)
-npm run dev --workspace @orstra/web   # UI with hot reload on http://localhost:5317
+npm run build
+bin/orstra serve
 ```
 
-Start a task:
+`npm run build` makes the UI that the daemon serves. Skip it and port 4317 answers with 1 line of text instead of the app.
+
+Leave the daemon running. In a second terminal, start your first task:
 
 ```sh
 bin/orstra run hello --title "the Orstra team"
-bin/orstra run linear-to-pr --title "Empty state on Trending" --ref HUB-416 --repo ~/workspace/your-repo
-bin/orstra tasks
-bin/orstra sessions
 ```
 
-Or use **New task** in the UI.
+Open the link it prints, or go to http://localhost:4317. You watch the task move: the agent writes a file and commits it, a check reads the file, and the task is done. It works in a scratch folder, not in a repository of yours, so it is safe to run anywhere. It is a real Claude Code session, so it spends real Claude usage: about $0.50 and 30 seconds in our runs.
 
-## Workflows
+The other commands:
 
-YAML files in `~/.orstra/workflows/` (user config; override the folder with `ORSTRA_WORKFLOWS`). Steps are `agent`, `gate`, `human`, `switch`, `action`. Every step ends with an outcome; arrows (`next:` / `on:`) say where each outcome goes; loops need a cap (`{ goto: impl, max: 3 }`). Anything unmatched goes to your Inbox.
+```sh
+bin/orstra tasks       # every task and where it is
+bin/orstra sessions    # the agent sessions, running and recent
+bin/orstra workflows   # the workflow files Orstra found
+```
 
-A task keeps a copy of the workflow it started with, so an edit to the file changes new tasks only. The task page offers "Use the new version" for a task that is running.
+Or press **New task** in the UI.
+
+## The ideas
+
+A **task** is 1 piece of work, usually 1 ticket. It follows a **workflow**, a YAML file that holds steps and the arrows between them.
+
+A step is 1 of 5 kinds: `agent` (an agent works on a prompt), `gate` (shell commands, such as tests), `human` (your decision), `switch` (pick a branch) and `action` (merge, open a pull request, clean up).
+
+Every step ends with exactly 1 **outcome**, and each arrow is labeled with an outcome. A backward arrow needs a cap, so a loop always stops. When no arrow matches, or a cap runs out, or a step times out, the task goes to your **Inbox**. Nothing is ever silently stuck, and nothing silently passes.
+
+Each task works in its own **worktree**: `git worktree` on branch `orstra/<task>`. Each run of an agent step is a fresh session; what carries over is the task's progress entries, the worktree and git.
+
+The **chief of staff** is 1 ongoing agent session that sees every task. Ask it what needs you, tell it to retry a task, or have it watch for something and follow up.
+
+[concepts.md](docs/concepts.md) defines every word. [design.md](docs/design.md) gives the rules behind them.
+
+## A workflow
+
+This is `hello`, the one you just ran:
 
 ```yaml
 name: Hello Orstra
+description: A first task that needs no repository. The agent writes a file, a check reads it, and the task is done.
+
 steps:
   write:
+    title: Write the file
     use: agent
-    prompt: Create hello.txt with a greeting for "{{ trigger.title }}".
+    prompt: |
+      Create a file called hello.txt in this folder.
+      Write 1 short sentence in it that greets "{{ trigger.title }}".
+      Then commit it on this branch with a clear message.
     next: check
+
+  # The check runs in the task's folder. Exit code 0 is a pass, anything else is a fail.
   check:
+    title: Check the file
     use: gate
     run: [test -s hello.txt]
     on:
-      pass: approve
+      pass: end
       fail: { goto: write, max: 2 }
-  approve:
-    use: human
-    question: Is this greeting good?
-    on:
-      approved: end
-      changes_requested: { goto: write, max: 3 }
-      rejected: end
 ```
 
-More fields:
+Workflows live in `~/.orstra/workflows/`. Orstra seeds that folder from this repository's `workflows/` on its first run, and after that the folder is yours. Add a `human` step for a decision, a `linear` trigger to start a task per ticket, or an `action` step to open a pull request.
 
-```yaml
-name: Linear ticket to PR
-repo: ~/workspace/your-repo
-concurrency: 2            # at most 2 tasks of this workflow work at the same time
-budget_usd: 5             # stop agent work on a task once it cost $5
-triggers:
-  - linear: { label: agent-ready, team: HUB }   # needs LINEAR_API_KEY; progress goes back as comments
-  - schedule: { every: 1d, title: "Triage {{ date }}" }
-steps:
-  impl:
-    use: agent
-    agent: codex          # or claude-code (the default)
-    timeout: 60           # minutes; then the task goes to your Inbox
-    prompt: Implement {{ trigger.title }}.
-    next: review
-  review:
-    use: human
-    question: Open a pull request?
-    on: { approved: pr }
-  pr:
-    use: action
-    action: github.pr     # push the branch, open a draft PR with gh
-    next: end
-```
+[docs/workflows.md](docs/workflows.md) is the full reference: every field, every outcome, triggers, actions and the settings.
 
-Actions: `git.merge` (local merge into the checked-out branch, never pushed), `github.pr` (draft pull request with `gh`), `git.cleanup` (remove the worktree, and the branch when merged).
+## What is built, and what is not
 
-## How agent steps run
+Built, and covered by tests:
 
-Each run is a fresh `claude -p` session (stream-json) in the task's worktree, with a known session id. The prompt includes the task's progress entries from earlier runs and any notes you left. The agent ends with a `## Progress` block and an `OUTCOME:` line. Open any session in Claude Code with the command shown in the UI (`claude --resume <id>`).
+- The engine: parse a workflow, start a task by hand or from a trigger, run `agent`, `gate`, `human`, `switch` and `action` steps, route outcomes, cap loops, and record runs, sessions, cost and tokens.
+- `timeout:` on a step, `budget_usd` on a workflow, and `concurrency`, which caps how many of 1 workflow's tasks work at the same time.
+- Agents: Claude Code (`claude -p`, stream-json) and Codex (`codex exec --json`). A Claude Code tool call that the permission mode refuses comes to your Inbox as a question.
+- Triggers: `linear` (1 task per open issue with a label; progress goes back as comments) and `schedule`.
+- Actions: `git.merge`, `github.pr` and `git.cleanup`.
+- The UI: Inbox, Board and List, the task page with its chat and side viewer, the workflow editor, and Settings.
 
-If the agent ends a turn with no `OUTCOME:` line, Orstra asks once for it; if it is still absent, the task comes to you. A Claude Code tool call that the permission mode does not allow comes to your Inbox as a question (turn this off in Settings). Each run records its cost and tokens.
+Not built yet:
 
-A step's agent can also publish a **Claude artifact**: a page on your claude.ai account. It prints the link in its message. Turn it off in Settings → Agents, or with `ORSTRA_CLAUDE_ARTIFACT=0`. See [docs/concepts.md](docs/concepts.md#claude-artifact) for the limits.
-
-Codex steps run `codex exec --json` in the worktree, one process per turn, in a `workspace-write` sandbox.
-
-Settings via environment variables: `ORSTRA_HOME` (default `~/.orstra`), `ORSTRA_WORKFLOWS` (default `$ORSTRA_HOME/workflows`), `ORSTRA_PORT` (4317), `ORSTRA_SLOTS` (4), `ORSTRA_CLAUDE_PERMISSION` (`acceptEdits`), `ORSTRA_CLAUDE_TOOLS` (`Bash Read Edit Write Glob Grep`), `ORSTRA_CLAUDE_ARTIFACT` (`1`), `ORSTRA_COS_MODEL`, `ORSTRA_AGENT_TIMEOUT_MIN` (120), `ORSTRA_GATE_TIMEOUT_MIN` (30), `LINEAR_API_KEY`, `ORSTRA_TRIGGER_INTERVAL_S` (60), `ORSTRA_CODEX_SANDBOX` (`workspace-write`), `ORSTRA_UI_PORTS` (5317, other UI ports the API accepts), `ORSTRA_ALLOWED_HOSTS`.
+- **`workflow` steps.** The parser accepts the kind, but a task that reaches one stops and tells you it is not built. Workflows chain through triggers only.
+- **GitHub and webhook triggers**, and a step that watches CI or pull request comments.
+- **Permission questions for Codex.** Codex runs in its own sandbox instead.
+- **Artifacts:** a record on the task of the files a step produced.
+- **A morning brief**, and the chief of staff on screens other than its own.
 
 ## Security
 
@@ -97,8 +131,29 @@ The daemon listens on 127.0.0.1 only. It refuses requests from other web sites (
 ## Develop
 
 ```sh
-npx vitest run      # engine + runner tests
+npx vitest run      # engine, runner, actions and API tests
 npm run typecheck
 ```
 
 CI runs both, and the web build, on each push and pull request (`.github/workflows/ci.yml`).
+
+```
+apps/web      React + Vite UI, talks to the daemon over HTTP and SSE
+apps/daemon   Node daemon: HTTP API, SSE events, runner, SQLite store, CLI
+packages/core Workflow schema and parser, outcome routing, templating (pure, tested)
+workflows/    The default workflows, copied to ~/.orstra/workflows/ on first run
+```
+
+## Contributing
+
+Orstra is early, so the most useful thing you can send is a report of what broke.
+
+- **Found a bug, or want a feature?** [Open an issue](https://github.com/hiepd/orstra/issues). For a bug, say what you ran, what you expected and what happened, and add the daemon's output.
+- **Sending a change?** Open a pull request from a branch. Run `npx vitest run` and `npm run typecheck` first; CI runs both on every pull request. Keep the voice of [docs/design.md](docs/design.md) in the docs you touch, and add a test for behaviour you change.
+- **Not sure it fits?** Open an issue first and ask. [docs/design.md](docs/design.md) says what Orstra is for, and the non-goals say what it will not become.
+
+Orstra has no security contact yet. Until it has one, please do not put the details of a vulnerability in a public issue.
+
+## License
+
+[Apache 2.0](LICENSE).

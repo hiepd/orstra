@@ -3,6 +3,15 @@
   "private": true,
   "version": "0.1.0",
   "description": "A local software factory: coding agents run your workflows, you steer.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hiepd/orstra.git"
+  },
+  "homepage": "https://github.com/hiepd/orstra#readme",
+  "bugs": {
+    "url": "https://github.com/hiepd/orstra/issues"
+  },
   "type": "module",
   "workspaces": [
     "packages/*",

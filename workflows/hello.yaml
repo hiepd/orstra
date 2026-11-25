@@ -1,0 +1,21 @@
+name: Hello Orstra
+description: A first task that needs no repository. The agent writes a file, a check reads it, and the task is done.
+
+steps:
+  write:
+    title: Write the file
+    use: agent
+    prompt: |
+      Create a file called hello.txt in this folder.
+      Write 1 short sentence in it that greets "{{ trigger.title }}".
+      Then commit it on this branch with a clear message.
+    next: check
+
+  # The check runs in the task's folder. Exit code 0 is a pass, anything else is a fail.
+  check:
+    title: Check the file
+    use: gate
+    run: [test -s hello.txt]
+    on:
+      pass: end
+      fail: { goto: write, max: 2 }

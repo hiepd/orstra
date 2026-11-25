@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -62,9 +62,10 @@ function setup(yaml: string, reply: (text: string, n: number, opts: SessionOptio
   writeFileSync(wfPath, yaml);
   const fake = fakeExecutors(reply, gate);
   const store = new Store(':memory:');
-  const runner = new Runner(store, fake.exec, { slots, createWorktree: () => worktree ?? dir, turnGraceMs: 0 });
+  const artifactsRoot = mkdtempSync(join(tmpdir(), 'orstra-test-art-'));
+  const runner = new Runner(store, fake.exec, { slots, createWorktree: () => worktree ?? dir, turnGraceMs: 0, artifactsRoot });
   const prompts = () => fake.sent.filter((s, i) => fake.sent.findIndex((x) => x.sessionId === s.sessionId) === i && !s.resume).map((s) => s.text);
-  return { store, runner, wfPath, prompts, fake, dir };
+  return { store, runner, wfPath, prompts, fake, dir, artifactsRoot };
 }
 
 const LOOP = `
@@ -853,5 +854,113 @@ steps:
     expect(prompts()).toHaveLength(2);
     expect(prompts()[1]).toContain('Also rename the footer');
     expect(store.task(task.id)).toMatchObject({ status: 'needs_you', current_step: 'review' });
+  });
+});
+
+const SHOT = `
+name: Shot
+steps:
+  impl:
+    use: agent
+    prompt: Fix {{ trigger.title }}
+    artifacts:
+      - name: screen
+        path: out/*.png
+    next: end
+`;
+
+describe('Runner artifacts', () => {
+  it('collects a declared file and keeps it outside the worktree', async () => {
+    let dir = '';
+    const s = setup(SHOT, () => {
+      mkdirSync(join(dir, 'out'), { recursive: true });
+      writeFileSync(join(dir, 'out/shot.png'), 'png bytes');
+      return done('added the empty state');
+    });
+    dir = s.dir;
+    const task = s.runner.startTask({ workflowPath: s.wfPath, title: 'empty state' });
+    await s.runner.idle();
+
+    const rows = s.store.artifactsForTask(task.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].name).toBe('shot.png');
+    expect(rows[0].mime).toBe('image/png');
+    expect(rows[0].label).toBe('screen');
+    expect(rows[0].path!.startsWith(s.artifactsRoot)).toBe(true);
+    expect(readFileSync(rows[0].path!, 'utf8')).toBe('png bytes');
+    expect(s.prompts()[0]).toContain('- out/*.png');
+  });
+
+  it('never blocks: a step that leaves a declared file out moves on like any other', async () => {
+    const s = setup(SHOT, () => done('no picture this time'));
+    const task = s.runner.startTask({ workflowPath: s.wfPath, title: 'empty state' });
+    await s.runner.idle();
+
+    expect(s.store.runsForTask(task.id).map((r) => `${r.step_id}#${r.attempt}:${r.outcome}`)).toEqual(['impl#1:done']);
+    expect(s.store.artifactsForTask(task.id)).toEqual([]);
+    expect(s.prompts()[0]).not.toContain('required');
+  });
+});
+
+const HANDOFF = `
+name: Plan then build
+steps:
+  plan:
+    use: agent
+    prompt: Plan it
+    next: build
+  build:
+    use: agent
+    prompt: "Build it from {{ steps.plan.artifacts }}"
+    next: end
+`;
+
+describe('Runner artifacts between steps', () => {
+  it('keeps what any step writes to .orstra/artifacts/, with no workflow change', async () => {
+    let dir = '';
+    const s = setup(HANDOFF, (_t, n) => {
+      if (n === 1) {
+        mkdirSync(join(dir, '.orstra/artifacts'), { recursive: true });
+        writeFileSync(join(dir, '.orstra/artifacts/plan.md'), '# Plan\n1. empty state');
+      }
+      return done(`step ${n}`);
+    });
+    dir = s.dir;
+    const task = s.runner.startTask({ workflowPath: s.wfPath, title: 'empty state' });
+    await s.runner.idle();
+
+    const rows = s.store.artifactsForTask(task.id);
+    expect(rows.map((a) => `${a.step_id}:${a.state}:${a.name}`)).toEqual(['plan:saved:plan.md']);
+    expect(rows[0].label).toBe('artifacts');
+  });
+
+  it('hands the earlier steps’ artifacts to the next run, in the worktree and in its prompt', async () => {
+    let dir = '';
+    let seen = '';
+    const s = setup(HANDOFF, (_t, n) => {
+      if (n === 1) {
+        mkdirSync(join(dir, '.orstra/artifacts'), { recursive: true });
+        writeFileSync(join(dir, '.orstra/artifacts/plan.md'), '# Plan\n1. empty state');
+      } else {
+        seen = readFileSync(join(dir, '.orstra/inputs/plan/plan.md'), 'utf8');
+      }
+      return done(`step ${n}`);
+    });
+    dir = s.dir;
+    s.runner.startTask({ workflowPath: s.wfPath, title: 'empty state' });
+    await s.runner.idle();
+
+    expect(seen).toBe('# Plan\n1. empty state');
+    const build = s.prompts()[1];
+    expect(build).toContain('Build it from .orstra/inputs/plan/plan.md');
+    expect(build).toContain('- .orstra/inputs/plan/plan.md (plan, 1 KB)');
+    expect(s.prompts()[0]).toContain('write it under .orstra/artifacts/');
+  });
+
+  it('records no gap when a step leaves nothing and declared nothing', async () => {
+    const s = setup(HANDOFF, (_t, n) => done(`step ${n}`));
+    const task = s.runner.startTask({ workflowPath: s.wfPath, title: 'quiet' });
+    await s.runner.idle();
+    expect(s.store.artifactsForTask(task.id)).toEqual([]);
   });
 });

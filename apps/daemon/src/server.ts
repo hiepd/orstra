@@ -1,10 +1,11 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { existsSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
-import { basename, extname, join, resolve } from 'node:path';
+import { basename, extname, join, resolve, sep } from 'node:path';
 import { applyEdits, deriveState, parseWorkflow, taskPath, type EditGraph, type Progress, type Workflow } from '@orstra/core';
 import { MAX_FILE_BYTES, checkAttachments, cosFiles, mb, readAttachment, saveAttachment, taskFiles, type AttachStore } from './attachments.ts';
-import type { EventRow, RunRow, Store, TaskRow } from './db.ts';
+import type { ArtifactRow, EventRow, RunRow, Store, TaskRow } from './db.ts';
+import { kindOf } from './artifacts.ts';
 import type { Runner } from './runner.ts';
 import type { ChiefOfStaff } from './cos.ts';
 import type { Triggers } from './triggers.ts';
@@ -31,7 +32,7 @@ const MAX_INPUT_BODY = 64 * 1024;
 import { listWorkflows, resolveWorkflow } from './workflows.ts';
 export { listWorkflows, resolveWorkflow };
 import { AGENT_IDS, EFFORTS, PERMISSION_MODES, loadAgentConfig, saveAgentSettings, type AgentId } from './agentConfig.ts';
-import { COS_DIR, DB_PATH, HOME, PORT, SLOTS, WEB_DIST, WORKFLOW_DIRS, WORKTREES } from './paths.ts';
+import { ARTIFACTS, COS_DIR, DB_PATH, HOME, PORT, SLOTS, WEB_DIST, WORKFLOW_DIRS, WORKTREES } from './paths.ts';
 import { guardOptionsFromEnv, refuseReason } from './guard.ts';
 
 const MIME: Record<string, string> = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.json': 'application/json', '.png': 'image/png' };
@@ -116,8 +117,16 @@ export function makeViews(store: Store, runner: Runner) {
     try { return runner.workflowFor(task).steps[stepId]?.title ?? stepId; } catch { return stepId; }
   };
 
+  /** One file a run produced, as the UI shows it. `url` is null when there are no bytes to serve. */
+  const artifactView = (a: ArtifactRow) => ({
+    id: a.id, runId: a.run_id, stepId: a.step_id, name: a.name, label: a.label, state: a.state,
+    mime: a.mime, kind: kindOf(a.mime), bytes: a.bytes, createdAt: a.created_at,
+    url: a.state === 'saved' ? `/api/artifacts/${a.id}` : null,
+  });
+
   const runView = (task: TaskRow, r: RunRow) => ({
     id: r.id, taskId: r.task_id, stepId: r.step_id, stepTitle: stepTitle(task, r.step_id), kind: r.kind, attempt: r.attempt,
+    artifacts: store.artifactsForRun(r.id).map(artifactView),
     status: r.status, outcome: r.outcome, agent: r.agent, sessionId: r.session_id,
     progress: r.progress ? (JSON.parse(r.progress) as Progress) : null, output: r.output,
     createdAt: r.created_at, startedAt: r.started_at, endedAt: r.ended_at,
@@ -180,7 +189,16 @@ const path = taskPath(wf, runs.map((r) => r.stepId), t.current_step);
       if (waiting) {
         const step = wf.steps[waiting.stepId];
         const lastAgent = [...runs].reverse().find((r) => r.kind === 'agent' && r.progress);
-        human = { runId: waiting.id, question: step.question ?? 'Decide', choices: Object.keys(step.on), artifact: lastAgent ? { step: lastAgent.stepTitle, progress: lastAgent.progress } : null };
+        // Everything produced since your last decision, whichever step made it: a gate writes
+        // artifacts as often as an agent does.
+        const decided = [...runs].reverse().find((r) => r.kind === 'human' && r.outcome);
+        const round = decided ? runs.slice(runs.indexOf(decided) + 1) : runs;
+        // `subject` is what you decide about: what the agent said. `artifacts` is what it left behind.
+        human = {
+          runId: waiting.id, question: step.question ?? 'Decide', choices: Object.keys(step.on),
+          subject: lastAgent ? { step: lastAgent.stepTitle, attempt: lastAgent.attempt, progress: lastAgent.progress } : null,
+          artifacts: round.flatMap((r) => r.artifacts.map((a) => ({ ...a, stepTitle: r.stepTitle, attempt: r.attempt }))),
+        };
       }
     } catch (err) {
       steps = [];
@@ -218,8 +236,13 @@ const path = taskPath(wf, runs.map((r) => r.stepId), t.current_step);
       state: r.status === 'running' || r.status === 'queued' ? 'running' : r.outcome === 'pass' ? 'pass' : r.status === 'stopped' ? 'stopped' : 'fail',
       detail: (r.output ?? '').trim().split('\n').slice(-8).join('\n'), endedAt: r.ended_at,
     }));
+    // Newest run first, so the panel reads like the Runs list: what just happened is on top.
+    const attempts = new Map(store.runsForTask(t.id).map((r) => [r.id, r.attempt]));
+    const artifacts = store.artifactsForTask(t.id).reverse().map((a) => ({
+      ...artifactView(a), stepTitle: stepTitle(t, a.step_id), attempt: attempts.get(a.run_id) ?? 1,
+    }));
     return { worktree: t.worktree, branch: info?.branch ?? null, base: info?.base ?? null, ahead: info?.ahead ?? 0, uncommitted: info?.uncommitted ?? 0,
-      files: info?.files ?? [], commits: info?.commits ?? [], checks, pr: t.pr_url ? { url: t.pr_url } : null };
+      files: info?.files ?? [], commits: info?.commits ?? [], checks, artifacts, pr: t.pr_url ? { url: t.pr_url } : null };
   };
 
   return { stepTitle, runView, taskSummary, taskDetail, gitView };
@@ -372,6 +395,21 @@ export function buildApi(store: Store, runner: Runner, cos?: ChiefOfStaff, trigg
       if ((mm = m(/^\/api\/tasks\/([\w-]+)\/git$/)) && req.method === 'GET') {
         const t = store.task(mm[1]);
         return send(res, t ? 200 : 404, t ? gitView(t) : { error: 'No such task' }), true;
+      }
+      if ((mm = m(/^\/api\/artifacts\/([\w-]+)$/)) && req.method === 'GET') {
+        const a = store.artifact(mm[1]);
+        // Only files Orstra itself copied into the store, and only from inside it.
+        const file = a?.path ? resolve(a.path) : null;
+        if (!a || a.state !== 'saved' || !file || !file.startsWith(resolve(ARTIFACTS) + sep) || !existsSync(file)) {
+          return send(res, 404, { error: 'No such artifact' }), true;
+        }
+        res.writeHead(200, {
+          'content-type': a.mime,
+          'content-length': String(statSync(file).size),
+          'content-disposition': `inline; filename="${a.name.replace(/["\\]/g, '')}"`,
+          'cache-control': 'private, max-age=31536000, immutable',
+        });
+        return res.end(readFileSync(file)), true;
       }
       if ((mm = m(/^\/api\/tasks\/([\w-]+)\/diff$/)) && req.method === 'GET') {
         const t = store.task(mm[1]);
