@@ -1,6 +1,6 @@
 # Durable workflows with a human in the loop
 
-Status: built on this branch. Tasks 1 to 8 of section 11 are done, each in its own commit with tests. Section 11 says where the build differs from the plan. The reference for workflow authors is `docs/workflows.md`.
+Status: built on this branch. Tasks 1 to 8 of section 11 are done, and so are the follow-ups (schedule keys, a callback on human steps, the web UI, a new dogfood workflow), each in its own commit with tests. Section 11 says where the build differs from the plan. The reference for workflow authors is `docs/workflows.md`.
 
 Orstra already keeps the workflow state durable. Tasks, runs, outcomes, decisions and events are rows in SQLite, and a `human` step can wait for days at no cost.
 
@@ -149,7 +149,7 @@ The POST finishes the run, 1 time. The outcome in the body picks the arrow, and 
 
 The plan had a `tokens` table. The build has none. In Orstra 1 run has at most 1 wait, so the run row can hold the secret and the due time. A table would help only for a URL that exists before the wait starts, or for many waits in 1 run. Add it when 1 of those needs comes.
 
-**A human step and a callback.** Both are a run in `waiting` that something outside Orstra ends. Both refuse to end while an agent works on the task: `decide()` has that guard, and `completeCallback()` has the same one. The build keeps 2 entry points (`decide()` for the Decide button and the chief of staff, `completeCallback()` for the URL), and both end in `finish()`. A callback on a human step, so that a Linear comment or a script can decide, is a later step.
+**A human step and a callback.** Both are a run in `waiting` that something outside Orstra ends, and both refuse to end while an agent works on the task. A human step can ask for a callback too: `callback: true` gives it a URL, and a script decides by a POST with 1 of the step's choices as the outcome and a comment in `data`. The Decide button still works, and whichever comes first closes the URL. `decide()` and `completeCallback()` stay 2 entry points, and both end in `finish()`.
 
 A waiting `wait` or `workflow` run has the new task state `sleeping` ("Waiting" on the board). It takes no slot and stays out of the Inbox.
 
@@ -184,7 +184,7 @@ Add `tasks.idempotency_key`, with a unique index on `(workflow_path, idempotency
 Users of the key:
 
 - **Linear trigger:** key `linear:<issue id>`. It replaces the check in `taskBySource()`.
-- **Schedules (t-mwvo9a):** key `schedule:<schedule id>:<due time in ISO>`. This gives "at most 1 task for each due time, also across a restart" from the database, not from timing. The schedule object keeps its own `deduplicationKey`, which stops a second schedule. The task key stops a second task. They do 2 different jobs.
+- **Schedules (t-mwvo9a, merged):** the task's source `schedule:<id>@<due ms>` is also its key. Schedules already checked the source before a start. The key makes the database refuse a second task for the same due time too.
 - **Child tasks:** key `<parent run id>:<index>` (section 7).
 - **Dogfood loop:** until fan out ships, give agents the variable `ORSTRA_TASK_ID`. The `file` prompt then runs `bin/orstra run orstra-build --key "$ORSTRA_TASK_ID:<finding number>"`. A resumed or retried `file` step then cannot file a finding twice.
 
@@ -237,12 +237,14 @@ Each task ships on its own and helps on its own. The daily pain, restarts that k
 
 1. **Finish restart survival.** Done on this branch. The 3 actions rerun after a restart (`RERUN_SAFE` in `actions.ts`). A gate or an action with `rerun: false` asks you instead. Each gate runs in its own process group, and `shutdown()` stops the gates. `resumeNote()` names the commits the cut turn left. The grace time of `shutdown()` stays at 5 s: `tsx watch` kills the daemon with SIGKILL after 5 s, and that limit is fixed in tsx, so a longer grace time would not help.
 2. **Retries with backoff.** Done. `retry: { max, delay, factor, maxDelay, onTimeout }` on agent and gate steps. A fault (a crash, an API error, a usage limit) becomes a new run with `not_before`. An agent retry resumes the same session. A usage limit with a reset time waits until that time. The arrows see `cant_do` or `timeout` only when the retries run out.
-3. **Idempotency keys.** Done. `tasks.idempotency_key`, unique per workflow. `POST /api/tasks` takes `idempotencyKey` and answers `reused: true`. `bin/orstra run --key`. The Linear trigger uses `linear:<issue id>`. Every agent and gate gets `ORSTRA_TASK_ID` and `ORSTRA_BASE`. Not done: the dogfood prompt lives in `~/.orstra/workflows`, outside the repo, so I did not change it. Schedules (t-mwvo9a) do not pass a key yet.
+3. **Idempotency keys.** Done. `tasks.idempotency_key`, unique per workflow. `POST /api/tasks` takes `idempotencyKey` and answers `reused: true`. `bin/orstra run --key`. The Linear trigger uses `linear:<issue id>`, and a schedule uses its source `schedule:<id>@<due ms>`. Every agent and gate gets `ORSTRA_TASK_ID` and `ORSTRA_BASE`.
 4. **Queues.** Done. Workspace `concurrency` ("At the same time" on the Workspaces page). `Runner.capacity()` checks the 3 limits for queued runs and for held chat messages. Task `priority` in seconds.
-5. **Timer waits.** Done. `use: wait` with `for` or `until`, on 1 due loop in the runner (`tick()`). t-mwvo9a was not merged, so the loop is the runner's own. Schedules can use it when they land.
+5. **Timer waits.** Done. `use: wait` with `for` or `until`, on 1 due loop in the runner (`tick()`). It came before t-mwvo9a merged, so schedules keep their own loop in `Triggers.tick()`. Both keep their due times in SQLite, so neither loses one in a restart.
 6. **Callbacks.** Done, without a tokens table (section 6).
 7. **Gates that return JSON, agent outcomes in `on:`, and `when:`.** Done. A gate gets `ORSTRA_INPUT` and may write `{ outcome, data }` to `ORSTRA_OUTPUT`.
-8. **Child workflows.** Done. `use: workflow` with `for_each` and `wait`. A child starts from the workspace base branch. The dogfood workflow can now replace its `file` agent step with `split` (a gate that writes the picked findings as `data.items`) and a `workflow` step with `for_each`.
+8. **Child workflows.** Done. `use: workflow` with `for_each` and `wait`. A child starts from the workspace base branch. A new dogfood workflow uses it (below).
+**The dogfood workflow.** The file step no longer starts tasks itself. The agent writes the picked findings to `.orstra/artifacts/picked.json`. A gate turns that file into `data.items`, and a `workflow` step starts 1 `orstra-build` task for each item. Each child carries the key `<run id>:<index>`, so a retry or a restart files no finding twice. It is not in `~/.orstra/workflows` yet, because the daemon on main does not know `for_each`, and an early copy would break the daily dogfood until the merge.
+
 9. **Later, if needed:** parallel runs in 1 task, detached processes (Option A), persistent permission questions, named shared queues, a TTL on keys.
 
 ## 12. Questions for you
@@ -253,5 +255,5 @@ Each task ships on its own and helps on its own. The daily pain, restarts that k
 4. **Outside systems.** Should a system outside this machine (GitHub, CI) complete callbacks? That needs a tunnel or a relay, and auth beyond the secret in the URL. Or is localhost enough for now?
 5. **Shared queues.** Do you need a limit that many workflows share, for example "1 agent on the orstra repo at a time", or is the workspace limit enough?
 6. **Children and branches.** A child starts from the workspace base branch in the build. Do you also want a choice to start from the parent's branch, so a child builds on the parent's work?
-7. **Schedules.** May I ask t-mwvo9a to pass `schedule:<id>:<due time>` as the task key, and to expose its due loop so waits can use it?
+7. **Dogfood.** The new dogfood workflow is ready in `.orstra/artifacts/orstra-dogfood.yaml` (below). Copy it over `~/.orstra/workflows/orstra-dogfood.yaml` after this branch merges and the daemon restarts. Do you want it, or do you prefer the old flow where the agent starts the tasks itself?
 8. **Parallel branches.** Do you need parallel branches in 1 task, or plans with mixed step kinds, in the next few months? Those 2 needs would change section 10.
