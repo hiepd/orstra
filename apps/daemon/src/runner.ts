@@ -9,7 +9,7 @@ import type { ArtifactState, RunRow, Store, TaskRow } from './db.ts';
 import { ARTIFACT_DIR, DEFAULT_SPEC, collectArtifacts, inputPath, seenKey, stageInputs, type Input } from './artifacts.ts';
 import { locateWorkflow } from './workflows.ts';
 import { projectTask, rebuildAll } from './project.ts';
-import { runAction } from './actions.ts';
+import { RERUN_SAFE, runAction } from './actions.ts';
 import { cleanupWorktree } from './cleanup.ts';
 import { gitCommitsBetween, gitHead } from './git.ts';
 import { copyIntoWorktree, taskCwd, workspaceView } from './workspace.ts';
@@ -65,10 +65,11 @@ export const MAX_RESUMES = 3;
 export const RESUME_WINDOW_MS = 10 * 60_000;
 
 /** What a restart tells an agent that it resumes. */
-export function resumeNote(where: WhereStopped): string {
-  const rest = 'Continue the step from where you stopped. Do not repeat the work you finished.';
-  if (where.kind === 'cut') return `Orstra restarted while your tool call ran: ${where.tool} (${where.summary}). The call may not have finished, and its result is lost. Check what it did before you go on. ${rest}`;
-  return `Orstra restarted while you worked. Your session is intact. ${rest}`;
+export function resumeNote(where: WhereStopped, commits = 0): string {
+  const left = commits ? ` You left ${commits} commit${commits === 1 ? '' : 's'} on the branch before the restart.` : '';
+  const rest = `${left} Continue the step from where you stopped. Do not repeat the work you finished.`;
+  if (where.kind === 'cut') return `Orstra restarted while your tool call ran: ${where.tool} (${where.summary}). The call may not have finished, and its result is lost. Check what it did before you go on.${rest}`;
+  return `Orstra restarted while you worked. Your session is intact.${rest}`;
 }
 
 /** The limits when a step sets no `timeout:`: ORSTRA_AGENT_TIMEOUT_MIN (120) and ORSTRA_GATE_TIMEOUT_MIN (30). */
@@ -250,20 +251,15 @@ export class Runner extends EventEmitter {
    * Then look at where it stopped: a turn that ended goes on as it would have; a turn cut in the
    * middle resumes the same session, with a note that names the cut tool call.
    *
-   * A gate runs again from the start: its output is its only state. An action stops and asks you,
-   * because it may not be safe to do twice.
+   * A gate runs again from the start: its output is its only state. An action runs again when it
+   * gives the same result twice (RERUN_SAFE). A step with `rerun: false`, and any other action, stops
+   * and asks you.
    */
   async recover(): Promise<void> {
     const work: Promise<void>[] = [];
     for (const r of this.store.runsByStatus('running')) {
       if (r.kind === 'agent' && r.session_id) work.push(this.recoverAgent(r));
-      else if (r.kind === 'gate') {
-        this.store.updateRun(r.id, { status: 'queued', started_at: null });
-        this.store.addEvent(r.task_id, r.id, 'system', { text: 'Orstra restarted while this check ran. It runs again from the start.' });
-      } else {
-        this.store.updateRun(r.id, { status: 'failed', outcome: 'interrupted', ended_at: Date.now(), routed: 'block:interrupted' });
-        this.store.addEvent(r.task_id, r.id, 'system', { text: 'Orstra restarted while this step was running. Retry it or stop the task.' });
-      }
+      else this.recoverStep(r);
     }
     // A run that waited on a permission question had its agent in the middle of a tool call too.
     for (const r of this.store.runsByStatus('waiting')) {
@@ -273,6 +269,30 @@ export class Runner extends EventEmitter {
     await Promise.all(work);
     this.rebuild();
     this.pump();
+  }
+
+  /** A gate or an action that ran when the daemon went: run it again when that is safe, else ask you. */
+  private recoverStep(r: RunRow) {
+    const again = (text: string) => {
+      this.store.updateRun(r.id, { status: 'queued', started_at: null });
+      this.store.addEvent(r.task_id, r.id, 'system', { text });
+    };
+    const ask = (text: string) => {
+      this.store.updateRun(r.id, { status: 'failed', outcome: 'interrupted', ended_at: Date.now(), routed: 'block:interrupted' });
+      this.store.addEvent(r.task_id, r.id, 'system', { text });
+    };
+    const task = this.store.task(r.task_id);
+    let step: Step | undefined;
+    try { step = task ? this.workflowFor(task).steps[r.step_id] : undefined; } catch { step = undefined; }
+    const stay = 'Retry it or stop the task.';
+    if (step?.rerun === false) {
+      return ask(`Orstra restarted while this step ran. The step says rerun: false, so it does not run again on its own. Check what it did, then ${stay.toLowerCase()}`);
+    }
+    if (r.kind === 'gate') return again('Orstra restarted while this check ran. It runs again from the start.');
+    if (r.kind === 'action' && step?.action && (RERUN_SAFE as Record<string, boolean>)[step.action]) {
+      return again('Orstra restarted while this action ran. It is safe to run twice, so it runs again.');
+    }
+    ask(`Orstra restarted while this step was running. ${stay}`);
   }
 
   /** 1 agent run that was working when the daemon went: replay its log, then continue it. */
@@ -331,7 +351,7 @@ export class Runner extends EventEmitter {
     }
     if (where.kind === 'cut') said(`Orstra restarted while ${name} ran ${where.tool}: ${where.summary}.`, `${name} continues, and checks that call first.`);
     else said('Orstra restarted mid-run.', `${name} continues where it stopped.`);
-    this.resumeAfterRestart(task, r, resumeNote(where), recent);
+    this.resumeAfterRestart(task, r, resumeNote(where, gained ?? 0), recent);
   }
 
   /** A turn that ended before the restart, read from the log: route it the way onTurn would have. */
@@ -1300,6 +1320,9 @@ export class Runner extends EventEmitter {
    * process, and the sweep in `recover()` is left for a crash.
    */
   async shutdown(graceMs = 5_000): Promise<void> {
+    // A gate's commands run in their own process group, so Ctrl-C never reaches them: stop them here.
+    // The run stays `running`, and the next daemon runs the gate again (see recover()).
+    for (const ctrl of this.controllers.values()) ctrl.abort();
     const open = [...this.live.entries()];
     for (const [runId, live] of open) {
       this.disarm(runId);

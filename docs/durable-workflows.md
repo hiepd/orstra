@@ -44,7 +44,7 @@ The resumed agent does not know that it was cut off, so Orstra tells it. This is
 - It runs a database migration on a shared database.
 - It sends a message or calls a paid API.
 
-For those, add `rerun: false` to the step. A restart then sends the task to the Inbox instead. There is 1 more problem. `runShell()` uses `shell: true` with no process group, so a stop kills the shell but not its children. A rerun can then fail because an old child still holds a port. Spawn each gate in its own process group and kill the group.
+For those, add `rerun: false` to the step. A restart then sends the task to the Inbox instead. Each gate now runs in its own process group, so a stop ends the shell and every process it started, and a rerun finds no old child that holds a port.
 
 **Human step.** Durable already. The run row is `waiting` and nothing runs.
 
@@ -54,7 +54,7 @@ For those, add `rerun: false` to the step. A restart then sends the task to the 
 - `github.pr`, second time: the push is a no-op, `gh pr view` finds the open pull request, and the action returns `exists`, which maps to `ok`. Safe. 1 gap: if somebody closed that pull request without a merge, the filter on `state == "OPEN"` misses it, and the action opens a second one. Fix it with a look at `tasks.pr_url` first.
 - `git.cleanup`, second time: the worktree is gone, so it returns `removed`. Safe.
 
-So all 3 actions can rerun after a restart with no question. Main still fails an action with `interrupted` and asks you. Change that for these 3. A future action must say if it is safe to rerun. Put that flag in the `ACTIONS` table, not in the YAML.
+So all 3 actions can rerun after a restart with no question. This branch does that now. A future action must say if it is safe to rerun. Put that flag in the `ACTIONS` table, not in the YAML.
 
 ## 3. Process survival: detach, or resume
 
@@ -70,7 +70,7 @@ So all 3 actions can rerun after a restart with no question. Main still fails an
 
 **Pick: Option B.** Main shipped it in `a23bb70`. Its rules are the ones this note wanted: `recover()` waits for the stray process to stop, and a run resumes at most 3 times in 10 minutes. That limit stops a loop where the agent itself makes the daemon crash.
 
-The commit says most restarts come from `tsx watch` after a merge. Those restarts are planned. `shutdown()` closes stdin, and the agent stops at the end of its current action, but `shutdown()` kills it after 5 s. Raise that grace time to about 60 s, so a planned restart loses almost nothing. Keep Option A as a later step, only if lost turns still hurt.
+The commit says most restarts come from `tsx watch` after a merge. `shutdown()` closes stdin, and the agent stops at the end of its current action, but `tsx watch` kills the daemon with SIGKILL after 5 s, and tsx does not let us change that limit. So a planned restart can still cut a turn, and the log replay handles it. Keep Option A as a later step, only if lost turns still hurt.
 
 ## 4. Retries, apart from the outcome arrows
 
@@ -231,7 +231,7 @@ trigger.dev defines a workflow in TypeScript. LangGraph builds a graph in Python
 
 Each task ships on its own and helps on its own. The daily pain, restarts that kill runs, was fixed on main in `a23bb70`. Task 1 closes its small gaps.
 
-1. **Finish restart survival.** Raise the grace time of `shutdown()` from 5 s to about 60 s. Rerun the 3 actions after a restart, with a flag for each action in `ACTIONS`. Add `rerun: false` for gates. Spawn each gate in its own process group. Put the commits the cut turn left into `resumeNote()`.
+1. **Finish restart survival.** Done on this branch. The 3 actions rerun after a restart (`RERUN_SAFE` in `actions.ts`). A gate or an action with `rerun: false` asks you instead. Each gate runs in its own process group, and `shutdown()` stops the gates. `resumeNote()` names the commits the cut turn left. The grace time of `shutdown()` stays at 5 s: `tsx watch` kills the daemon with SIGKILL after 5 s, and that limit is fixed in tsx, so a longer grace time would not help.
 2. **Retries with backoff.** The `retry:` policy, `not_before`, and the wait for the reset time of a usage limit.
 3. **Idempotency keys.** The column, the API and CLI flag, `ORSTRA_TASK_ID`, Linear on the key, and the dogfood prompt. Merge with t-mwvo9a so schedules pass their key.
 4. **Queues.** Workspace `concurrency`, limits on held messages, task `priority`.
@@ -243,7 +243,7 @@ Each task ships on its own and helps on its own. The daily pain, restarts that k
 
 ## 12. Questions for you
 
-1. **Actions after a restart.** Main stops an action that a restart cut off, and asks you. May the 3 actions that are safe to run twice rerun on their own instead?
+1. **Actions after a restart.** This branch reruns the 3 safe actions on their own after a restart. Do you want that, or should every action ask you?
 2. **Retry of an agent.** Should a retry resume the same session (cheap, keeps the context, can keep a bad state), or start a fresh one with the progress text? I propose: resume first, and fresh for the last try.
 3. **Retry on timeout.** Off by default, as I propose, or on?
 4. **Outside systems.** Should a system outside this machine (GitHub, CI) complete tokens? That needs a tunnel or a relay, and auth beyond the token id. Or is localhost enough for now?

@@ -60,6 +60,16 @@ describe('parseWorkflow', () => {
   it('rejects unknown step kinds', () => {
     expect(() => parseWorkflow('name: x\nsteps:\n  a:\n    use: wizard\n')).toThrow();
   });
+
+  it('reads rerun: false on a gate, and leaves rerun unset when the step says nothing', () => {
+    const wf = parseWorkflow('name: x\nsteps:\n  deploy:\n    use: gate\n    run: ./deploy.sh\n    rerun: false\n    next: test\n  test:\n    use: gate\n    run: npm test\n');
+    expect(wf.steps.deploy.rerun).toBe(false);
+    expect(wf.steps.test.rerun).toBeUndefined();
+  });
+
+  it('rejects rerun on a step kind that a restart never runs again', () => {
+    expect(() => parseWorkflow('name: x\nsteps:\n  a:\n    use: agent\n    prompt: hi\n    rerun: false\n')).toThrow(/rerun/);
+  });
 });
 
 describe('parseWorkflow artifacts', () => {

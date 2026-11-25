@@ -304,9 +304,19 @@ function claudeSession(opts: SessionOptions): LiveSession {
 
 function runShell(command: string, cwd: string, onLine: (l: string) => void, signal: AbortSignal, env?: Record<string, string>): Promise<{ code: number; output: string }> {
   return new Promise((resolve) => {
-    const child = spawn(command, { cwd, shell: true, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...env } });
+    // Its own process group, so a stop ends the whole command: the shell and every process it started.
+    // Without it a test's dev server outlives the stop, holds its port, and the rerun fails.
+    const child = spawn(command, { cwd, shell: true, detached: true, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...env } });
     let output = '';
-    signal.addEventListener('abort', () => child.kill('SIGTERM'), { once: true });
+    const stop = () => {
+      try {
+        if (child.pid) process.kill(-child.pid, 'SIGTERM');
+      } catch {
+        child.kill('SIGTERM'); // the group is gone already, or this system has no groups
+      }
+    };
+    if (signal.aborted) stop();
+    else signal.addEventListener('abort', stop, { once: true });
     const take = (d: Buffer) => {
       const s = String(d);
       output += s;

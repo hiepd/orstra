@@ -62,6 +62,12 @@ export interface Step {
   /** workflow */
   workflow?: string;
   timeoutMinutes?: number;
+  /**
+   * gate, action: may a restart run this step again from the start? Unset = yes for a gate, and for
+   * an action that is safe to run twice. `false` sends the task to your Inbox instead: use it for a
+   * command that changes something outside the worktree, such as a deploy.
+   */
+  rerun?: boolean;
   /** Files this step produces, collected when the run ends. */
   artifacts?: ArtifactSpec[];
   /** outcome -> where to go */
@@ -147,6 +153,7 @@ const stepSchema = z
     with: z.record(z.unknown()).optional(),
     workflow: z.string().optional(),
     timeout: z.number().positive().optional(),
+    rerun: z.boolean().optional(),
     artifacts: z.array(artifactSchema).optional(),
     next: targetSchema.optional(),
     on: z.record(targetSchema).optional(),
@@ -248,6 +255,7 @@ export function parseWorkflow(source: string): Workflow {
       with: s.with,
       workflow: s.workflow,
       timeoutMinutes: s.timeout,
+      ...(s.rerun !== undefined ? { rerun: s.rerun } : {}),
       artifacts: s.artifacts?.map(toArtifact),
       on,
     };
@@ -268,6 +276,9 @@ export function parseWorkflow(source: string): Workflow {
       if (!(ACTION_NAMES as readonly string[]).includes(step.action)) {
         throw new Error(`Action step "${step.id}" names "${step.action}", which Orstra does not have. Use one of: ${ACTION_NAMES.join(', ')}.`);
       }
+    }
+    if (step.rerun !== undefined && step.use !== 'gate' && step.use !== 'action') {
+      throw new Error(`Step "${step.id}" sets rerun, which works on gate and action steps only.`);
     }
     for (const a of step.artifacts ?? []) checkArtifactPath(step.id, a.path);
   }

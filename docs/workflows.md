@@ -44,6 +44,7 @@ Fields by kind:
 |---|---|---|
 | `title` | all | The name on the board and in the Inbox. Default: the step id. |
 | `timeout` | agent, gate | Minutes. Default: 120 for an agent, 30 for a gate. |
+| `rerun` | gate, action | `false` = a restart does not run this step again, and the task goes to your Inbox. Default: a gate runs again, and the 3 actions run again because each one gives the same result twice. Set it on a command that changes something outside the worktree, such as a deploy. |
 | `prompt` | agent | Required. The instruction. Templating works here. |
 | `agent` | agent | `claude-code` (default) or `codex`. |
 | `model` | agent | A model for this step only, such as `opus`. |
