@@ -46,6 +46,13 @@ export interface TaskRow {
    * step gets it after its own prompt, so a workflow needs no placeholder for it. Null for most tasks.
    */
   prompt?: string | null;
+  /** Set by whoever started the task. A second start with the same key and workflow returns this task. */
+  idempotency_key?: string | null;
+  /** Seconds: the queue treats the task's runs as if they were queued this much earlier. */
+  priority?: number | null;
+  /** The task and the `workflow` step run that started this task as a child. */
+  parent_task_id?: string | null;
+  parent_run_id?: string | null;
 }
 
 /** Where a task's code is: 1 repo, the branch new tasks start from, and how to prepare a fresh worktree. */
@@ -64,6 +71,8 @@ export interface WorkspaceRow {
   copy_files: string;
   /** JSON Record<string, string>: environment variables for every agent and gate in this workspace. */
   env: string;
+  /** How many agent and gate runs of this workspace may work at the same time. Null = no limit. */
+  concurrency?: number | null;
   created_at: number;
   updated_at: number;
 }
@@ -115,6 +124,16 @@ export interface RunRow {
   log_uuid: string | null;
   /** When restarts resumed this run on their own, as a JSON list of times. It stops a crash loop. */
   resumed_at: string | null;
+  /** A queued run does not start before this time: the delay before a retry. */
+  not_before?: number | null;
+  /** How many retries after a fault came before this run, in a row. */
+  retries?: number | null;
+  /** A waiting run ends at this time: a timer is due, or a callback times out. */
+  wake_at?: number | null;
+  /** The secret in a callback URL. Whoever holds it can complete this 1 run, and nothing else. */
+  callback_secret?: string | null;
+  /** JSON: the structured result of the run (a callback's data, a gate's ORSTRA_OUTPUT, the children). */
+  data?: string | null;
 }
 
 /** saved = the bytes are in the store. skipped = over a size cap; the row says why. */
@@ -280,17 +299,23 @@ export class Store {
     // nobody. Keep the newest open run of each task and close the rest.
     this.closeDuplicateOpenRuns();
     this.db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS runs_one_open ON runs(task_id) WHERE status IN ('queued','running','waiting');`);
+    this.db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS tasks_idempotency ON tasks(workflow_path, idempotency_key) WHERE idempotency_key IS NOT NULL;`);
+    this.db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS runs_callback ON runs(callback_secret) WHERE callback_secret IS NOT NULL;`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS tasks_parent_run ON tasks(parent_run_id) WHERE parent_run_id IS NOT NULL;`);
   }
 
   /** Add the columns that came after the first release. Each one is added once, when it is absent. Returns what it added. */
   private migrate(): string[] {
     const want: Record<string, Record<string, string>> = {
       tasks: { stopped_at: 'INTEGER', workflow_yaml: 'TEXT', pr_url: 'TEXT', source: 'TEXT', archived_at: 'INTEGER',
-        workspace_id: 'TEXT', base_branch: 'TEXT', base_commit: 'TEXT', subdir: 'TEXT', setup_at: 'INTEGER', prompt: 'TEXT' },
+        workspace_id: 'TEXT', base_branch: 'TEXT', base_commit: 'TEXT', subdir: 'TEXT', setup_at: 'INTEGER', prompt: 'TEXT',
+        idempotency_key: 'TEXT', priority: 'INTEGER', parent_task_id: 'TEXT', parent_run_id: 'TEXT' },
       schedules: { prompt: 'TEXT', file_path: 'TEXT' },
       runs: { last_turn_at: 'INTEGER', wait_reason: 'TEXT', routed: 'TEXT', cost_usd: 'REAL', tokens_in: 'INTEGER', tokens_out: 'INTEGER',
         agent_pid: 'INTEGER', agent_boot_id: 'TEXT', agent_started_at: 'TEXT',
-        head_before: 'TEXT', head_after: 'TEXT', log_uuid: 'TEXT', resumed_at: 'TEXT' },
+        head_before: 'TEXT', head_after: 'TEXT', log_uuid: 'TEXT', resumed_at: 'TEXT',
+        not_before: 'INTEGER', retries: 'INTEGER', wake_at: 'INTEGER', callback_secret: 'TEXT', data: 'TEXT' },
+      workspaces: { concurrency: 'INTEGER' },
     };
     const added: string[] = [];
     for (const [table, columns] of Object.entries(want)) {
@@ -330,12 +355,13 @@ export class Store {
   insertTask(t: TaskRow) {
     this.db
       .prepare(
-        `INSERT INTO tasks (id, ref, title, description, workflow_path, workflow_name, status, current_step, inbox_reason, edge_counts, worktree, created_at, updated_at, stopped_at, workflow_yaml, pr_url, source, archived_at, workspace_id, base_branch, base_commit, subdir, setup_at, prompt)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO tasks (id, ref, title, description, workflow_path, workflow_name, status, current_step, inbox_reason, edge_counts, worktree, created_at, updated_at, stopped_at, workflow_yaml, pr_url, source, archived_at, workspace_id, base_branch, base_commit, subdir, setup_at, prompt, idempotency_key, priority, parent_task_id, parent_run_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(t.id, t.ref, t.title, t.description, t.workflow_path, t.workflow_name, t.status, t.current_step, t.inbox_reason, t.edge_counts, t.worktree, t.created_at, t.updated_at,
         t.stopped_at ?? null, t.workflow_yaml ?? null, t.pr_url ?? null, t.source ?? null, t.archived_at ?? null,
-        t.workspace_id ?? null, t.base_branch ?? null, t.base_commit ?? null, t.subdir ?? null, t.setup_at ?? null, t.prompt ?? null);
+        t.workspace_id ?? null, t.base_branch ?? null, t.base_commit ?? null, t.subdir ?? null, t.setup_at ?? null, t.prompt ?? null,
+        t.idempotency_key ?? null, t.priority ?? null, t.parent_task_id ?? null, t.parent_run_id ?? null);
   }
 
   updateTask(id: string, patch: Partial<TaskRow>) {
@@ -348,6 +374,21 @@ export class Store {
 
   task(id: string): TaskRow | undefined {
     return this.db.prepare('SELECT * FROM tasks WHERE id = ?').get(id) as TaskRow | undefined;
+  }
+
+  /** The task an earlier start made with this idempotency key and workflow, if any. */
+  taskByKey(workflowPath: string, key: string): TaskRow | undefined {
+    return this.db.prepare('SELECT * FROM tasks WHERE workflow_path = ? AND idempotency_key = ? LIMIT 1').get(workflowPath, key) as TaskRow | undefined;
+  }
+
+  /** The tasks a `workflow` step run started as its children, oldest first. */
+  childTasks(parentRunId: string): TaskRow[] {
+    return this.db.prepare('SELECT * FROM tasks WHERE parent_run_id = ? ORDER BY created_at, rowid').all(parentRunId) as unknown as TaskRow[];
+  }
+
+  /** The run a callback URL points at. */
+  runBySecret(secret: string): RunRow | undefined {
+    return this.db.prepare('SELECT * FROM runs WHERE callback_secret = ?').get(secret) as RunRow | undefined;
   }
 
   /** The task a trigger started for this source (e.g. a Linear issue) with this workflow, if any. */
@@ -388,11 +429,11 @@ export class Store {
   insertRun(r: RunRow) {
     this.db
       .prepare(
-        `INSERT INTO runs (id, task_id, step_id, kind, attempt, status, outcome, agent, session_id, progress, output, created_at, started_at, ended_at, last_turn_at, wait_reason, routed, cost_usd, tokens_in, tokens_out)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO runs (id, task_id, step_id, kind, attempt, status, outcome, agent, session_id, progress, output, created_at, started_at, ended_at, last_turn_at, wait_reason, routed, cost_usd, tokens_in, tokens_out, not_before, retries)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(r.id, r.task_id, r.step_id, r.kind, r.attempt, r.status, r.outcome, r.agent, r.session_id, r.progress, r.output, r.created_at, r.started_at, r.ended_at,
-        r.last_turn_at ?? null, r.wait_reason ?? null, r.routed ?? null, r.cost_usd ?? null, r.tokens_in ?? null, r.tokens_out ?? null);
+        r.last_turn_at ?? null, r.wait_reason ?? null, r.routed ?? null, r.cost_usd ?? null, r.tokens_in ?? null, r.tokens_out ?? null, r.not_before ?? null, r.retries ?? null);
   }
 
   updateRun(id: string, patch: Partial<RunRow>) {

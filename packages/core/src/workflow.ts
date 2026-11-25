@@ -1,6 +1,7 @@
 import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
 import { checkCron, checkTimezone } from './cron.ts';
+import { AGENT_RETRY, NO_RETRY, parseDuration, type RetryPolicy } from './duration.ts';
 
 export const STEP_KINDS = ['agent', 'gate', 'human', 'switch', 'action', 'workflow'] as const;
 export type StepKind = (typeof STEP_KINDS)[number];
@@ -68,6 +69,8 @@ export interface Step {
    * command that changes something outside the worktree, such as a deploy.
    */
   rerun?: boolean;
+  /** agent, gate: what to do after a fault. Unset = AGENT_RETRY for an agent, no retry for a gate. */
+  retry?: RetryPolicy;
   /** Files this step produces, collected when the run ends. */
   artifacts?: ArtifactSpec[];
   /** outcome -> where to go */
@@ -154,6 +157,16 @@ const stepSchema = z
     workflow: z.string().optional(),
     timeout: z.number().positive().optional(),
     rerun: z.boolean().optional(),
+    retry: z.union([
+      z.literal(false),
+      z.object({
+        max: z.number().int().min(0).optional(),
+        delay: z.union([z.string(), z.number()]).optional(),
+        factor: z.number().min(1).optional(),
+        maxDelay: z.union([z.string(), z.number()]).optional(),
+        onTimeout: z.boolean().optional(),
+      }),
+    ]).optional(),
     artifacts: z.array(artifactSchema).optional(),
     next: targetSchema.optional(),
     on: z.record(targetSchema).optional(),
@@ -207,6 +220,29 @@ function toTarget(t: z.infer<typeof targetSchema>): Target {
   return typeof t === 'string' ? { goto: t } : { goto: t.goto, ...(t.max ? { max: t.max } : {}) };
 }
 
+/** `retry: false`, or the fields that differ from the default of the step kind. */
+function toRetry(stepId: string, use: StepKind, r: false | { max?: number; delay?: string | number; factor?: number; maxDelay?: string | number; onTimeout?: boolean }): RetryPolicy {
+  if (use !== 'agent' && use !== 'gate') throw new Error(`Step "${stepId}" sets retry, which works on agent and gate steps only.`);
+  const base = use === 'agent' ? AGENT_RETRY : { ...NO_RETRY, max: 2 };
+  if (r === false) return { ...base, max: 0 };
+  const ms = (v: string | number | undefined, d: number) => {
+    if (v === undefined) return d;
+    try { return parseDuration(v); } catch (err: any) { throw new Error(`Step "${stepId}", retry: ${err.message}`); }
+  };
+  return {
+    max: r.max ?? base.max,
+    delayMs: ms(r.delay, base.delayMs),
+    factor: r.factor ?? base.factor,
+    maxDelayMs: ms(r.maxDelay, base.maxDelayMs),
+    onTimeout: r.onTimeout ?? base.onTimeout,
+  };
+}
+
+/** The retry policy a step follows: its own, or the default of its kind. */
+export function retryPolicy(step: Step): RetryPolicy {
+  return step.retry ?? (step.use === 'agent' ? AGENT_RETRY : NO_RETRY);
+}
+
 function toArtifact(a: z.infer<typeof artifactSchema>): ArtifactSpec {
   const path = typeof a === 'string' ? a : a.path;
   const name = typeof a === 'string' ? path : a.name ?? path;
@@ -256,6 +292,7 @@ export function parseWorkflow(source: string): Workflow {
       workflow: s.workflow,
       timeoutMinutes: s.timeout,
       ...(s.rerun !== undefined ? { rerun: s.rerun } : {}),
+      ...(s.retry !== undefined ? { retry: toRetry(id, s.use, s.retry) } : {}),
       artifacts: s.artifacts?.map(toArtifact),
       on,
     };

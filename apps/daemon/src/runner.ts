@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
-import { FINISH_INSTRUCTIONS, parseAgentResult, parseWorkflow, renderTemplate, route, stripProgressBlock, switchCase, type Progress, type Step, type Workflow } from '@orstra/core';
+import { FINISH_INSTRUCTIONS, formatDuration, parseAgentResult, parseWorkflow, renderTemplate, retryDelay, retryPolicy, route, stripProgressBlock, switchCase, usageReset, type Progress, type Step, type Workflow } from '@orstra/core';
 import { excludeFromGit, withFiles, type Attachment } from './attachments.ts';
 import { readClaudeLine, summarizeTool, type Executors, type LiveSession, type StreamEvent, type TurnEnd, type TurnUsage } from './executors.ts';
 import { entriesAfter, findSessionLog, readSessionLog, whereStopped, type WhereStopped } from './sessionLog.ts';
@@ -71,6 +71,9 @@ export function resumeNote(where: WhereStopped, commits = 0): string {
   if (where.kind === 'cut') return `Orstra restarted while your tool call ran: ${where.tool} (${where.summary}). The call may not have finished, and its result is lost. Check what it did before you go on.${rest}`;
   return `Orstra restarted while you worked. Your session is intact.${rest}`;
 }
+
+/** A failure of the system, not of the work: the retry policy sees it before the outcome arrows do. */
+export type Fault = 'crash' | 'error' | 'timeout';
 
 /** The limits when a step sets no `timeout:`: ORSTRA_AGENT_TIMEOUT_MIN (120) and ORSTRA_GATE_TIMEOUT_MIN (30). */
 export function defaultTimeoutsFromEnv(): { agent: number; gate: number } {
@@ -152,6 +155,9 @@ export class Runner extends EventEmitter {
   private deadlines = new Map<string, NodeJS.Timeout>();
   /** Runs that hit their timeout, so the gate's abort reads as a timeout and not as a stop. */
   private timedOut = new Set<string>();
+  /** The 1 timer that calls pump() when the earliest delayed run comes due. */
+  private wakeTimer: NodeJS.Timeout | null = null;
+  private wakeAt = Infinity;
   /** Permission questions by id, open or answered in the last minute. */
   private permissions = new Map<string, PendingPermission>();
   /**
@@ -479,9 +485,16 @@ export class Runner extends EventEmitter {
       const t = this.store.task(r.task_id);
       if (t) perWorkflow.set(t.workflow_path, (perWorkflow.get(t.workflow_path) ?? 0) + 1);
     }
+    const now = Date.now();
+    let nextDue = Infinity;
     for (const run of this.store.runsByStatus('queued')) {
       const task = this.store.task(run.task_id);
       if (!task || task.stopped_at) continue;
+      // A retry waits out its delay. The timer below calls pump() again when the first one is due.
+      if (run.not_before && run.not_before > now) {
+        nextDue = Math.min(nextDue, run.not_before);
+        continue;
+      }
       if (SLOT_KINDS.has(run.kind)) {
         if (busy >= this.opts.slots) continue;
         let cap = Infinity;
@@ -495,13 +508,79 @@ export class Runner extends EventEmitter {
       this.execute(task, { ...run, status: 'running' }).catch((err) => {
         // The handler for a crash must not crash: an unhandled rejection here ends the daemon.
         try {
-          this.event(task.id, run.id, 'system', { text: `Run crashed: ${err?.message ?? err}` });
-          this.finish(task.id, run.id, 'cant_do');
+          this.fault(task.id, run.id, 'crash', `Run crashed: ${err?.message ?? err}`);
         } catch (inner: any) {
           console.error(`[orstra] could not record the crash of run ${run.id} on task ${task.id}:`, inner?.message ?? inner);
         }
       });
     }
+    this.wakeFor(nextDue);
+  }
+
+  /** Call pump() at `at`, unless a timer for an earlier time is set already. */
+  private wakeFor(at: number) {
+    if (at === Infinity || at >= this.wakeAt) return;
+    if (this.wakeTimer) clearTimeout(this.wakeTimer);
+    this.wakeAt = at;
+    this.wakeTimer = setTimeout(() => {
+      this.wakeTimer = null;
+      this.wakeAt = Infinity;
+      this.pump();
+    }, Math.max(0, at - Date.now()) + 5);
+    this.wakeTimer.unref?.();
+  }
+
+  /**
+   * A run failed for a reason outside the work: its process crashed, the API gave an error, or
+   * (when the step says so) it timed out. Retry it after a delay while the step's retry policy
+   * allows. After that the fault goes to the router as `cant_do` or `timeout`, as it always did.
+   *
+   * A retry is a new run of the same step. An agent's retry resumes the same session, so the work
+   * of the try before stays.
+   */
+  private fault(taskId: string, runId: string, kind: Fault, text: string, notBefore?: number | null) {
+    const run = this.store.run(runId);
+    const task = this.store.task(taskId);
+    const final = kind === 'timeout' ? 'timeout' : 'cant_do';
+    if (!run || !task || task.stopped_at || !OPEN_STATUSES.has(run.status)) return this.finish(taskId, runId, final);
+    let step: Step | undefined;
+    try { step = this.workflowFor(task).steps[run.step_id]; } catch { step = undefined; }
+    const policy = step ? retryPolicy(step) : undefined;
+    const n = (run.retries ?? 0) + 1;
+    if (!step || !policy || n > policy.max || (kind === 'timeout' && !policy.onTimeout)) {
+      // onTimeout() already said that the step timed out.
+      if (kind !== 'timeout') this.event(taskId, runId, 'system', { text });
+      return this.finish(taskId, runId, final);
+    }
+    this.disarm(runId);
+    this.timedOut.delete(runId);
+    this.collect(task, run, step);
+    const now = Date.now();
+    const at = notBefore && notBefore > now ? notBefore : now + retryDelay(policy, n);
+    this.store.updateRun(runId, { status: 'failed', outcome: kind === 'timeout' ? 'timeout' : 'crashed', ended_at: now, routed: 'retry', output: text });
+    const attempt = this.store.runsForTask(taskId).filter((r) => r.step_id === run.step_id).length + 1;
+    this.store.insertRun({
+      id: id('r'), task_id: taskId, step_id: run.step_id, kind: run.kind, attempt, status: 'queued', outcome: null,
+      agent: run.agent, session_id: run.session_id, progress: null, output: null, created_at: now, started_at: null, ended_at: null,
+      last_turn_at: null, wait_reason: null, routed: null, cost_usd: null, tokens_in: null, tokens_out: null, agent_pid: null, agent_boot_id: null,
+      agent_started_at: null, head_before: null, head_after: null, log_uuid: null, resumed_at: null, not_before: at, retries: n,
+    });
+    const why = notBefore && notBefore > now ? 'when the usage limit lifts' : `in ${formatDuration(at - now)}`;
+    this.event(taskId, runId, 'system', { text: `${text} Orstra retries this step ${why} (retry ${n} of ${policy.max}).` });
+    this.project(taskId);
+    this.pump();
+  }
+
+  /** What a resumed session is told when its run is a retry after a fault. */
+  private retryNote(task: TaskRow, run: RunRow): string {
+    const before = this.store.runsForTask(task.id).filter((r) => r.step_id === run.step_id && r.routed === 'retry' && r.id !== run.id).pop();
+    const step = this.workflowFor(task).steps[run.step_id];
+    const max = step ? retryPolicy(step).max : run.retries ?? 1;
+    return [
+      '--- Orstra ---',
+      `Your last try of this step ended with a fault, not with an outcome: ${before?.output ?? 'the process stopped'}. This is retry ${run.retries} of ${max}. Check what the last try left (git status, the files you changed), then continue the step from where it stopped. Do not repeat the work you finished.`,
+      FINISH_INSTRUCTIONS.trim(),
+    ].join('\n\n');
   }
 
   /** Resolves when nothing is running or queued and no turn is about to close (used by tests and the CLI). */
@@ -728,10 +807,9 @@ export class Runner extends EventEmitter {
       return;
     }
     if (t.isError) {
-      this.event(taskId, runId, 'system', { text: t.text || 'Claude Code hit an error.' });
       live.finished = true;
       live.session.end();
-      return this.finish(taskId, runId, 'cant_do');
+      return this.fault(taskId, runId, 'error', t.text || 'Claude Code hit an error.', usageReset(t.text ?? ''));
     }
 
     const parsed = parseAgentResult(t.text);
@@ -909,8 +987,7 @@ export class Runner extends EventEmitter {
     const task = this.store.task(taskId);
     if (!run || !task || task.status === 'stopped' || run.status === 'stopped') return;
     if (run.status === 'waiting') return; // it's waiting for you; your next message resumes the session
-    this.event(taskId, runId, 'system', { text: res.error ?? 'Claude Code exited before finishing the step.' });
-    this.finish(taskId, runId, 'cant_do');
+    this.fault(taskId, runId, 'crash', res.error ?? 'Claude Code exited before finishing the step.', usageReset(res.error ?? ''));
   }
 
   /** Start the clock on a run. It stops the run and sends the task to the Inbox (`timeout`) when it runs out. */
@@ -941,7 +1018,7 @@ export class Runner extends EventEmitter {
     if (live) {
       live.finished = true;
       live.session.kill();
-      return this.finish(taskId, runId, 'timeout');
+      return this.fault(taskId, runId, 'timeout', 'The step timed out.');
     }
     // A gate: abort its command; execute() sees the timeout and finishes the run.
     this.controllers.get(runId)?.abort();
@@ -961,6 +1038,14 @@ export class Runner extends EventEmitter {
 
     if (step.use === 'agent') {
       if (this.overBudget(task.id)) return this.finish(task.id, run.id, 'over_budget');
+      if (run.retries && run.session_id) {
+        // A retry after a fault: the same session continues, so the work of the last try stays.
+        this.store.updateRun(run.id, { head_before: task.worktree ? gitHead(task.worktree) : null });
+        const live = this.openSession(task, run, { sessionId: run.session_id, resume: true, routes: true, model: step.model });
+        this.arm(task.id, run.id, step);
+        live.session.send(this.retryNote(task, run));
+        return;
+      }
       const sessionId = randomUUID();
       this.store.updateRun(run.id, { session_id: sessionId, head_before: task.worktree ? gitHead(task.worktree) : null });
       const inputs = this.stage(task, run);
@@ -981,7 +1066,7 @@ export class Runner extends EventEmitter {
         this.disarm(run.id);
         if (this.timedOut.delete(run.id)) {
           this.store.updateRun(run.id, { output: res.output });
-          return this.finish(task.id, run.id, 'timeout');
+          return this.fault(task.id, run.id, 'timeout', 'The check timed out.');
         }
         if (ctrl.signal.aborted) return;
         this.store.updateRun(run.id, { output: res.output });

@@ -44,6 +44,7 @@ Fields by kind:
 |---|---|---|
 | `title` | all | The name on the board and in the Inbox. Default: the step id. |
 | `timeout` | agent, gate | Minutes. Default: 120 for an agent, 30 for a gate. |
+| `retry` | agent, gate | What to do after a fault: a crash, an API error, or a usage limit. `{ max, delay, factor, maxDelay, onTimeout }`. Default for an agent: 2 retries, after 1 min and then 4 min, in the same session. A gate: none. `retry: false` = none. A usage limit with a reset time waits until that time. A timeout is retried only with `onTimeout: true`. A fault is never an outcome: the arrows see `cant_do` or `timeout` only when the retries run out. |
 | `rerun` | gate, action | `false` = a restart does not run this step again, and the task goes to your Inbox. Default: a gate runs again, and the 3 actions run again because each one gives the same result twice. Set it on a command that changes something outside the worktree, such as a deploy. |
 | `prompt` | agent | Required. The instruction. Templating works here. |
 | `agent` | agent | `claude-code` (default) or `codex`. |
