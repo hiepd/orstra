@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from '../src/db.ts';
@@ -15,20 +15,23 @@ const HUMAN = `steps:\n  review:\n    use: human\n    question: ok?\n    on: { a
 const PLAIN = `name: Plain\n${HUMAN}`;
 const t = (s: string) => Date.parse(s);
 
-/** A daemon over the database at `db`. Call it again with the same `db` to restart it. */
-function daemon(db: string, files: Record<string, string>, clock: { now: number }) {
+/** A daemon over the database at `db`, with workflow files and trigger files. Call it again with the same `db` to restart it. */
+function daemon(db: string, files: Record<string, string>, clock: { now: number }, triggerFiles: Record<string, string> = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'orstra-sch-'));
   const list = Object.entries(files).map(([file, yaml]) => {
     const path = join(dir, file);
     writeFileSync(path, yaml);
     return { path, file };
   });
+  const triggersDir = join(dir, 'triggers');
+  mkdirSync(triggersDir);
+  for (const [file, yaml] of Object.entries(triggerFiles)) writeFileSync(join(triggersDir, file), yaml);
   const store = new Store(db);
   const runner = new Runner(store, {} as Executors, { slots: 1, createWorktree: () => dir });
-  const opts = { now: () => clock.now, workflows: () => list };
+  const opts = { now: () => clock.now, workflows: () => list, triggersDir };
   const schedules = new Schedules(store, runner, opts);
   const triggers = new Triggers(store, runner, { ...opts, schedules });
-  return { store, runner, schedules, triggers, dir, list };
+  return { store, runner, schedules, triggers, dir, list, triggersDir };
 }
 
 const tmpDb = () => join(mkdtempSync(join(tmpdir(), 'orstra-schdb-')), 'orstra.db');
@@ -135,9 +138,9 @@ describe('the inputs of a scheduled task', () => {
     expect(text).not.toContain('Prompt:');
   });
 
-  it('reads a prompt from a declarative schedule in YAML', () => {
-    const yaml = `name: D\ntriggers:\n  - schedule: { cron: "0 9 * * *", title: Daily, prompt: "Check the logs." }\n${HUMAN}`;
-    const { schedules } = daemon(':memory:', { 'd.yaml': yaml }, { now: Date.now() });
+  it('reads a prompt from a trigger file', () => {
+    const trig = `workflow: d\nschedule: { cron: "0 9 * * *" }\ntitle: Daily\nprompt: Check the logs.\n`;
+    const { schedules } = daemon(':memory:', { 'd.yaml': `name: D\n${HUMAN}` }, { now: Date.now() }, { 'daily.yaml': trig });
     expect(schedules.list()[0].prompt).toBe('Check the logs.');
   });
 });
@@ -197,20 +200,27 @@ describe('1 task per due time, across a restart', () => {
   });
 });
 
-describe('declarative schedules', () => {
-  const DOGFOOD = `name: Dogfood\ntriggers:\n  - schedule: { cron: "0 9 * * 1-5", timezone: Europe/London, title: "Dogfood {{ date }}" }\n${HUMAN}`;
+describe('declarative schedules: trigger files', () => {
+  const DOGFOOD_WF = `name: Dogfood\n${HUMAN}`;
+  const MORNING = `workflow: dogfood\nschedule:\n  cron: "0 9 * * 1-5"\n  timezone: Europe/London\ntitle: "Dogfood {{ date }}"\n`;
 
-  it('come from the workflow file, with a next run', async () => {
+  it('come from a trigger file that names the workflow, with a next run', () => {
     const clock = { now: t('2026-11-25T12:00:00Z') };
-    const { schedules } = daemon(':memory:', { 'dogfood.yaml': DOGFOOD }, clock);
+    const { schedules } = daemon(':memory:', { 'dogfood.yaml': DOGFOOD_WF }, clock, { 'morning.yaml': MORNING });
     const [s] = schedules.list();
-    expect(s).toMatchObject({ id: 'yaml:dogfood.yaml#0', kind: 'declarative', cron: '0 9 * * 1-5', timezone: 'Europe/London', active: true });
-    expect(s.workflowPath).toMatch(/dogfood\.yaml$/);
+    expect(s).toMatchObject({ id: 'file:morning.yaml', kind: 'declarative', workflow: 'dogfood.yaml', workflowName: 'Dogfood', cron: '0 9 * * 1-5', timezone: 'Europe/London', active: true });
+    expect(s.filePath).toMatch(/triggers\/morning\.yaml$/);
     expect(new Date(s.nextRunAt!).toISOString()).toBe('2026-11-26T09:00:00.000Z');
   });
 
-  it('cannot be changed, turned off or deleted through Schedules: edit the workflow file', () => {
-    const { schedules } = daemon(':memory:', { 'dogfood.yaml': DOGFOOD }, { now: Date.now() });
+  it('can be many for 1 workflow, each with its own id', () => {
+    const evening = MORNING.replace('0 9 * * 1-5', '0 18 * * 5');
+    const { schedules } = daemon(':memory:', { 'dogfood.yaml': DOGFOOD_WF }, { now: Date.now() }, { 'morning.yaml': MORNING, 'evening.yaml': evening });
+    expect(schedules.list().map((s) => s.id).sort()).toEqual(['file:evening.yaml', 'file:morning.yaml']);
+  });
+
+  it('cannot be changed, turned off or deleted through Schedules: edit the trigger file', () => {
+    const { schedules } = daemon(':memory:', { 'dogfood.yaml': DOGFOOD_WF }, { now: Date.now() }, { 'morning.yaml': MORNING });
     const [s] = schedules.list();
     for (const act of [() => schedules.update(s.id, { title: 'x' }), () => schedules.setActive(s.id, false), () => schedules.setActive(s.id, true), () => schedules.remove(s.id)]) {
       let err: unknown;
@@ -221,14 +231,14 @@ describe('declarative schedules', () => {
       }
       expect(err).toBeInstanceOf(ScheduleError);
       expect((err as ScheduleError).status).toBe(409);
-      expect((err as Error).message).toMatch(/Edit the workflow file/);
+      expect((err as Error).message).toMatch(/Edit the trigger file/);
     }
     expect(schedules.get(s.id)).toMatchObject({ title: 'Dogfood {{ date }}', active: true });
   });
 
   it('cannot be changed through the API, and an imperative one can', async () => {
     const clock = { now: t('2026-11-25T12:00:00Z') };
-    const d = daemon(':memory:', { 'dogfood.yaml': DOGFOOD, 'plain.yaml': PLAIN }, clock);
+    const d = daemon(':memory:', { 'dogfood.yaml': DOGFOOD_WF, 'plain.yaml': PLAIN }, clock, { 'morning.yaml': MORNING });
     const api = buildApi(d.store, d.runner, undefined, d.triggers);
     const server: Server = createServer((req, res) => void api(req, res).then((done) => done || res.writeHead(404).end()));
     await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
@@ -244,7 +254,7 @@ describe('declarative schedules', () => {
       for (const [method, path, body] of [['PATCH', `/${enc}`, { title: 'x' }], ['POST', `/${enc}/deactivate`], ['POST', `/${enc}/activate`], ['DELETE', `/${enc}`]] as const) {
         const r = await call(method, path, body);
         expect(r.status).toBe(409);
-        expect(r.body.error).toMatch(/Edit the workflow file/);
+        expect(r.body.error).toMatch(/Edit the trigger file/);
       }
 
       const made = await call('POST', '', { workflow: 'plain', cron: '30 8 * * *', timezone: 'UTC', title: 'Mine' });
@@ -261,26 +271,98 @@ describe('declarative schedules', () => {
     }
   });
 
-  it('a changed cron in the file gets a new next run; a trigger that left the file loses its row', () => {
+  it('a changed cron gets a new next run; a removed file loses its row; a wrong file keeps it and says why', () => {
     const clock = { now: t('2026-11-25T12:00:00Z') };
-    const d = daemon(':memory:', { 'dogfood.yaml': DOGFOOD }, clock);
+    const d = daemon(':memory:', { 'dogfood.yaml': DOGFOOD_WF }, clock, { 'morning.yaml': MORNING });
+    const path = join(d.triggersDir, 'morning.yaml');
     d.schedules.sync();
-    writeFileSync(d.list[0].path, DOGFOOD.replace('0 9 * * 1-5', '0 18 * * *'));
+    writeFileSync(path, MORNING.replace('0 9 * * 1-5', '0 18 * * *'));
     d.schedules.sync();
-    expect(new Date(d.schedules.get('yaml:dogfood.yaml#0').nextRunAt!).toISOString()).toBe('2026-11-25T18:00:00.000Z');
-    writeFileSync(d.list[0].path, `name: Dogfood\n${HUMAN}`);
+    expect(new Date(d.schedules.get('file:morning.yaml').nextRunAt!).toISOString()).toBe('2026-11-25T18:00:00.000Z');
+
+    writeFileSync(path, MORNING.replace('0 9 * * 1-5', 'at nine'));
+    d.schedules.sync();
+    expect(d.schedules.get('file:morning.yaml').cron).toBe('0 18 * * *');
+    expect(d.triggers.view()).toEqual([expect.objectContaining({ kind: 'file', label: 'morning.yaml', lastError: expect.stringMatching(/cron/) })]);
+
+    writeFileSync(path, MORNING.replace('workflow: dogfood', 'workflow: nothing'));
+    d.schedules.sync();
+    expect(d.schedules.fileErrors()[0].error).toMatch(/no workflow with that name/);
+
+    rmSync(path);
     d.schedules.sync();
     expect(d.store.schedules()).toHaveLength(0);
+    expect(d.schedules.fileErrors()).toHaveLength(0);
+  });
+});
+
+describe('moving triggers out of workflow files', () => {
+  const OLD = `# The dogfood loop.\nname: Dogfood\ntriggers:\n  - schedule: { every: 1d, title: "Dogfood Orstra", prompt: Try it. }\n  - linear: { label: dogfood, team: HUB }\n${HUMAN}`;
+
+  it('writes each entry as a trigger file, removes the list, keeps a backup, and starts nothing', async () => {
+    const clock = { now: t('2026-11-25T12:00:00Z') };
+    const d = daemon(':memory:', { 'dogfood.yaml': OLD }, clock);
+    await d.triggers.tick();
+    expect(readdirSync(d.triggersDir).sort()).toEqual(['dogfood-linear-2.yaml', 'dogfood-schedule-1.yaml']);
+    const sched = readFileSync(join(d.triggersDir, 'dogfood-schedule-1.yaml'), 'utf8');
+    expect(sched).toContain('workflow: dogfood');
+    expect(sched).toContain('every: 1d');
+    expect(sched).toContain('prompt: Try it.');
+    expect(readFileSync(join(d.triggersDir, 'dogfood-linear-2.yaml'), 'utf8')).toMatch(/linear:\n\s+label: dogfood\n\s+team: HUB/);
+
+    const wf = readFileSync(d.list[0].path, 'utf8');
+    expect(wf).not.toContain('triggers');
+    expect(wf).toContain('# The dogfood loop.');
+    expect(existsSync(`${d.list[0].path}.bak-20261125`)).toBe(true);
+    expect(readFileSync(`${d.list[0].path}.bak-20261125`, 'utf8')).toBe(OLD);
+
+    expect(d.schedules.list()).toEqual([expect.objectContaining({ id: 'file:dogfood-schedule-1.yaml', everyMinutes: 1440, prompt: 'Try it.' })]);
+    expect(d.store.tasks()).toHaveLength(0);
+    await d.triggers.tick();
+    expect(readdirSync(d.triggersDir)).toHaveLength(2);
   });
 
-  it('keeps the time an every: schedule last fired from before schedules had rows', () => {
+  it('keeps the schedule state: the row moves to the new id, with its last task and next run', async () => {
+    const clock = { now: t('2026-11-25T12:00:00Z') };
+    const d = daemon(':memory:', { 'dogfood.yaml': OLD }, clock);
+    const lastRun = t('2026-11-25T02:00:00Z');
+    d.store.insertSchedule({
+      id: 'yaml:dogfood.yaml#0', kind: 'declarative', workflow: 'dogfood.yaml', workflow_path: d.list[0].path, file_path: null, cron: null, every_minutes: 1440, timezone: null,
+      title: 'Dogfood Orstra', description: '', prompt: null, workspace_id: null, workspace_name: null, repo: null, active: 1, dedup_key: null,
+      spec: JSON.stringify([null, 1440, null]), last_run_at: lastRun, last_task_id: 't-old', next_run_at: lastRun + 86_400_000, last_error: null, created_at: 0, updated_at: 0,
+    });
+    await d.triggers.tick();
+    expect(d.store.schedule('yaml:dogfood.yaml#0')).toBeUndefined();
+    expect(d.store.schedule('file:dogfood-schedule-1.yaml')).toMatchObject({ last_run_at: lastRun, last_task_id: 't-old', next_run_at: lastRun + 86_400_000 });
+    expect(d.store.tasks()).toHaveLength(0);
+  });
+
+  it('keeps the time an every: schedule last fired from before schedules had rows', async () => {
     const clock = { now: t('2026-11-25T12:00:00Z') };
     const db = tmpDb();
     const pre = new Store(db);
     pre.set('schedule:dogfood.yaml#0', String(t('2026-11-25T02:00:00Z')));
     pre.db.close();
     const d = daemon(db, { 'dogfood.yaml': `name: Dogfood\ntriggers:\n  - schedule: { every: 1d, title: Dogfood }\n${HUMAN}` }, clock);
+    await d.triggers.tick();
     const [s] = d.schedules.list();
-    expect(s).toMatchObject({ everyMinutes: 1440, when: 'Every 1 day', lastRunAt: t('2026-11-25T02:00:00Z'), nextRunAt: t('2026-11-26T02:00:00Z') });
+    expect(s).toMatchObject({ id: 'file:dogfood-schedule.yaml', everyMinutes: 1440, when: 'Every 1 day', lastRunAt: t('2026-11-25T02:00:00Z'), nextRunAt: t('2026-11-26T02:00:00Z') });
+    expect(d.store.tasks()).toHaveLength(0);
+  });
+
+  it('changes nothing in the workflow file but the list: long lines stay on 1 line', async () => {
+    const long = 'An agent uses a private copy of Orstra, reports what is broken or confusing, you pick, and each pick becomes a task.';
+    const before = `name: "Orstra: dogfood"\ndescription: '${long}'\n\ntriggers:\n  - schedule: { every: 1d, title: "Dogfood Orstra" }\n\n${HUMAN}`;
+    const d = daemon(':memory:', { 'dogfood.yaml': before }, { now: Date.now() });
+    await d.triggers.tick();
+    expect(readFileSync(d.list[0].path, 'utf8')).toBe(`name: "Orstra: dogfood"\ndescription: '${long}'\n\n${HUMAN}`);
+  });
+
+  it('leaves a workflow file that does not parse alone', async () => {
+    const bad = `name: Bad\ntriggers:\n  - schedule: { every: 1d, title: X }\nsteps: {}\n`;
+    const d = daemon(':memory:', { 'bad.yaml': bad }, { now: Date.now() });
+    await d.triggers.tick();
+    expect(readFileSync(d.list[0].path, 'utf8')).toBe(bad);
+    expect(readdirSync(d.triggersDir)).toHaveLength(0);
   });
 });

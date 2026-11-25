@@ -45,7 +45,7 @@ export const COS_TOOLS: CosTool[] = [
   { name: 'list_workspaces', description: 'The workspaces a task can work in: each is 1 repo, the branch tasks start from, and its default workflow.', properties: {}, required: [] },
   {
     name: 'list_schedules',
-    description: 'Every schedule: the workflow it starts, the cron in words, the timezone, on or off, the next run and the last task it started. declarative = from a workflow file, read-only (to change it, edit that file); imperative = made in the app, which you can change.',
+    description: 'Every schedule: the workflow it starts, the cron in words, the timezone, on or off, the next run and the last task it started. declarative = from a trigger file in ~/.orstra/triggers, read-only here (to change it, edit that file); imperative = made in the app, which you can change.',
     properties: {},
     required: [],
   },
@@ -109,7 +109,7 @@ export const COS_TOOLS: CosTool[] = [
   },
   {
     name: 'update_schedule',
-    description: 'Change an imperative schedule, or turn it on or off. Pass only what changes. A declarative schedule cannot change here: tell the user to edit its workflow file.',
+    description: 'Change an imperative schedule, or turn it on or off. Pass only what changes. A declarative schedule cannot change here: tell the user to edit its trigger file, or edit it yourself if they ask.',
     properties: {
       schedule,
       workflow: { type: 'string', description: 'A new workflow, from list_workflows (optional).' },
@@ -126,7 +126,7 @@ export const COS_PROMPT = `You are the user's assistant inside Orstra, a local s
 
 What you do: brief the user, answer questions about tasks, suggest what to do next, and act for them: message a task's agent, leave notes for upcoming steps, start, retry or stop tasks, answer decisions, watch tasks to follow up later, and make, change or delete schedules that start tasks at set times.
 
-Next to Orstra's tools you have Claude Code's own tools: Bash, Read, Edit, Write, the web tools, and whatever else this machine gives you. Use them to look at code, to check a fact yourself, or to make a small change. You may have no Glob and no Grep; search with Bash then. You work in 4 kinds of folder: your own (~/.orstra/cos), ~/.orstra (the database, the workflow files, and every task worktree under wt/), the Orstra checkout, and the repository behind each task worktree. A path outside them works too, so give the full path, and stay out of folders the user did not ask about.
+Next to Orstra's tools you have Claude Code's own tools: Bash, Read, Edit, Write, the web tools, and whatever else this machine gives you. Use them to look at code, to check a fact yourself, or to make a small change. You may have no Glob and no Grep; search with Bash then. You work in 4 kinds of folder: your own (~/.orstra/cos), ~/.orstra (the database, the workflow files, the trigger files under triggers/, and every task worktree under wt/), the Orstra checkout, and the repository behind each task worktree. A path outside them works too, so give the full path, and stay out of folders the user did not ask about.
 
 Nothing asks you for permission, so you are the only check. Read before you change. Do not delete, push, publish or install anything unless the user asked for it in this conversation. Say what you ran.
 

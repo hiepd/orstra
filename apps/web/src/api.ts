@@ -359,7 +359,10 @@ export interface Settings {
 
 export interface TriggerStatus {
   workflow: string;
-  kind: 'linear' | 'schedule';
+  /** 'file': a trigger file that is wrong; lastError says why. */
+  kind: 'linear' | 'schedule' | 'file';
+  /** The trigger file. */
+  file?: string;
   label: string;
   lastCheck: number | null;
   lastError: string | null;
@@ -375,8 +378,9 @@ export interface Schedule {
   kind: 'declarative' | 'imperative';
   workflow: string;
   workflowName: string;
-  /** For a declarative schedule: the file to edit. */
   workflowPath: string | null;
+  /** For a declarative schedule: the trigger file to edit. */
+  filePath: string | null;
   cron: string | null;
   everyMinutes: number | null;
   /** IANA timezone. Null = UTC. */

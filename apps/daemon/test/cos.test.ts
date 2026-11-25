@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -72,8 +72,11 @@ function setup() {
   const runner = new Runner(store, exec, { slots: 2, createWorktree: () => dir, turnGraceMs: 0 });
   // A workflow file with a declarative schedule, next to the one tasks use.
   const declPath = join(dir, 'decl.yaml');
-  writeFileSync(declPath, WF.replace(/^name: .*$/m, 'name: Decl\ntriggers:\n  - schedule: { cron: "0 9 * * *", title: Daily }'));
-  const schedules = new Schedules(store, runner, { workflows: () => [{ path: wfPath, file: 'wf.yaml' }, { path: declPath, file: 'decl.yaml' }] });
+  writeFileSync(declPath, WF.replace(/^name: .*$/m, 'name: Decl'));
+  const triggersDir = join(dir, 'triggers');
+  mkdirSync(triggersDir);
+  writeFileSync(join(triggersDir, 'daily.yaml'), 'workflow: decl\nschedule: { cron: "0 9 * * *" }\ntitle: Daily\n');
+  const schedules = new Schedules(store, runner, { workflows: () => [{ path: wfPath, file: 'wf.yaml' }, { path: declPath, file: 'decl.yaml' }], triggersDir });
   const cos = new ChiefOfStaff(store, runner, exec, makeViews(store, runner), { cwd: cosDir, toolArgs: ['--tools', ''], schedules });
   runner.on('change', (e: { taskId: string }) => cos.onTaskChange(e.taskId));
   const kinds = () => store.events(COS_ID).map((e) => e.kind);
@@ -258,8 +261,8 @@ describe('ChiefOfStaff and schedules', () => {
     const decl = list.find((s: any) => s.kind === 'declarative');
     expect(decl).toMatchObject({ workflow: 'Decl', when: 'At 09:00', timezone: 'UTC', active: true });
     const before = kinds().filter((k) => k === 'plan').length;
-    await expect(cos.tool('update_schedule', { schedule: decl.id, active: 'off' })).rejects.toThrow(/Edit the workflow file/);
-    await expect(cos.tool('delete_schedule', { schedule: decl.id })).rejects.toThrow(/Edit the workflow file/);
+    await expect(cos.tool('update_schedule', { schedule: decl.id, active: 'off' })).rejects.toThrow(/Edit the trigger file/);
+    await expect(cos.tool('delete_schedule', { schedule: decl.id })).rejects.toThrow(/Edit the trigger file/);
     await expect(cos.tool('create_schedule', { workflow: 'wf', cron: 'weekdays at 9', title: 'x' })).rejects.toThrow(/cron/);
     expect(kinds().filter((k) => k === 'plan').length).toBe(before);
   });

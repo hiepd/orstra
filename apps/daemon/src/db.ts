@@ -179,7 +179,7 @@ CREATE INDEX IF NOT EXISTS events_task ON events(task_id);
 CREATE INDEX IF NOT EXISTS events_run ON events(run_id);
 CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS schedules (
-  id TEXT PRIMARY KEY, kind TEXT NOT NULL, workflow TEXT NOT NULL, workflow_path TEXT,
+  id TEXT PRIMARY KEY, kind TEXT NOT NULL, workflow TEXT NOT NULL, workflow_path TEXT, file_path TEXT,
   cron TEXT, every_minutes INTEGER, timezone TEXT, title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
   prompt TEXT, workspace_id TEXT, workspace_name TEXT, repo TEXT, active INTEGER NOT NULL DEFAULT 1, dedup_key TEXT,
   spec TEXT NOT NULL DEFAULT '', last_run_at INTEGER, last_task_id TEXT, next_run_at INTEGER, last_error TEXT,
@@ -204,7 +204,7 @@ CREATE TABLE IF NOT EXISTS watches (
 
 /**
  * A schedule: it starts a task with a workflow each time its cron matches.
- * - declarative: copied from a `schedule` trigger in a workflow file on each check. Id `yaml:<file>#<n>`.
+ * - declarative: copied from a trigger file (~/.orstra/triggers) on each check. Id `file:<trigger file>`.
  *   Only an edit of the file changes it.
  * - imperative: made in the app or by the chief of staff. The API changes it.
  */
@@ -215,6 +215,8 @@ export interface ScheduleRow {
   workflow: string;
   /** Where the workflow file is, for a declarative schedule. */
   workflow_path: string | null;
+  /** Where the trigger file is, for a declarative schedule: the file to edit. */
+  file_path: string | null;
   cron: string | null;
   /** Only a declarative schedule can have an interval instead of a cron (`every: 1d`). */
   every_minutes: number | null;
@@ -285,7 +287,7 @@ export class Store {
     const want: Record<string, Record<string, string>> = {
       tasks: { stopped_at: 'INTEGER', workflow_yaml: 'TEXT', pr_url: 'TEXT', source: 'TEXT', archived_at: 'INTEGER',
         workspace_id: 'TEXT', base_branch: 'TEXT', base_commit: 'TEXT', subdir: 'TEXT', setup_at: 'INTEGER', prompt: 'TEXT' },
-      schedules: { prompt: 'TEXT' },
+      schedules: { prompt: 'TEXT', file_path: 'TEXT' },
       runs: { last_turn_at: 'INTEGER', wait_reason: 'TEXT', routed: 'TEXT', cost_usd: 'REAL', tokens_in: 'INTEGER', tokens_out: 'INTEGER',
         agent_pid: 'INTEGER', agent_boot_id: 'TEXT', agent_started_at: 'TEXT',
         head_before: 'TEXT', head_after: 'TEXT', log_uuid: 'TEXT', resumed_at: 'TEXT' },
@@ -517,6 +519,11 @@ export class Store {
     this.db
       .prepare(`UPDATE schedules SET ${keys.map((k) => `${k} = ?`).join(', ')} WHERE id = ?`)
       .run(...keys.map((k) => (fields as Record<string, unknown>)[k] as never), id);
+  }
+
+  /** Give a schedule a new id. Used once, when a trigger moves from a workflow file into its own file. */
+  renameSchedule(from: string, to: string) {
+    this.db.prepare('UPDATE schedules SET id = ? WHERE id = ?').run(to, from);
   }
 
   deleteSchedule(id: string) {

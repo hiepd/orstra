@@ -16,7 +16,8 @@ function setup(yaml: string, linear?: LinearClient, now = () => Date.now()) {
   writeFileSync(path, yaml);
   const store = new Store(':memory:');
   const runner = new Runner(store, {} as Executors, { slots: 1, createWorktree: () => dir });
-  const triggers = new Triggers(store, runner, { linear, now, workflows: () => [{ path, file: 'wf.yaml' }] });
+  // A folder of its own: the first check moves the workflow's triggers: list into trigger files there.
+  const triggers = new Triggers(store, runner, { linear, now, workflows: () => [{ path, file: 'wf.yaml' }], triggersDir: join(dir, 'triggers') });
   return { store, runner, triggers, path };
 }
 

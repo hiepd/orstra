@@ -351,7 +351,7 @@ export class ChiefOfStaff extends EventEmitter {
       return `Create a schedule: “${c.title}” · ${c.workflowName} · ${c.when} (${c.timezone})${c.workspace ? ` · in ${c.workspace}` : ''}${a.prompt ? ` · prompt “${clip(String(a.prompt), 300)}”` : ''}`;
     }
     if (!sid) throw new Error('Say which schedule: its id, from list_schedules.');
-    const s = this.schedules.editable(sid); // "edit the workflow file" for a declarative one
+    const s = this.schedules.editable(sid); // "edit the trigger file" for a declarative one
     if (tool === 'delete_schedule') return `Delete the schedule “${s.title}” · ${s.workflowName} · ${s.when}`;
     const input = this.scheduleInput(a, false);
     const c = this.schedules.check(input, sid);
@@ -517,7 +517,7 @@ export class ChiefOfStaff extends EventEmitter {
         return json(this.view().watches);
       case 'list_schedules':
         return json(this.schedules.list().map((s) => ({
-          id: s.id, kind: s.kind, workflow: s.workflowName, workflowFile: s.kind === 'declarative' ? s.workflowPath : s.workflow,
+          id: s.id, kind: s.kind, workflow: s.workflowName, workflowFile: s.workflow, triggerFile: s.filePath,
           cron: s.cron, every: s.everyMinutes ? `${s.everyMinutes} min` : null, when: s.when, timezone: s.timezone ?? (s.cron ? 'UTC' : null),
           title: s.title, workspace: s.workspace?.name ?? null, active: s.active,
           nextRun: s.nextRunAt ? new Date(s.nextRunAt).toISOString() : null,

@@ -34,6 +34,7 @@ export function TriggersPage() {
   const toast = useToast();
   const s = res.data;
   const linear = (s?.triggers ?? []).filter((t) => t.kind === 'linear');
+  const broken = (s?.triggers ?? []).filter((t) => t.kind === 'file');
   const list = sched.data ?? [];
 
   const toggle = async (x: Schedule) => {
@@ -77,9 +78,9 @@ export function TriggersPage() {
                 title="Schedules"
                 note={
                   <>
-                    A schedule from a workflow file changes only when you edit that file, for example{' '}
-                    <code>triggers: [{'{'} schedule: {'{'} cron: "0 9 * * 1-5", timezone: Europe/London, title: Triage {'}'} {'}'}]</code>. Times show in
-                    your browser’s timezone. A run missed while Orstra was off starts once when it is back.
+                    A schedule from a trigger file changes only when you edit that file. Add one as a file in ~/.orstra/triggers, for example{' '}
+                    <code>workflow: triage · schedule: {'{'} cron: "0 9 * * 1-5", timezone: Europe/London {'}'} · title: Triage</code>. Times show in your
+                    browser’s timezone. A run missed while Orstra was off starts once when it is back.
                   </>
                 }
               >
@@ -102,13 +103,20 @@ export function TriggersPage() {
                 )}
               </SettingsCard>
             )}
+            {broken.length > 0 && (
+              <SettingsCard title="Trigger files with errors" note="Fix the file. Until then, a schedule from it keeps its last good version.">
+                {broken.map((t) => (
+                  <SettingsValue key={t.label} label={t.label} help={<span style={{ color: 'var(--red-fg)' }}>{t.lastError}</span>} value={shortPath(t.file ?? t.label)} mono />
+                ))}
+              </SettingsCard>
+            )}
             {s && (
               <SettingsCard
                 title="Linear"
                 note={
                   <>
-                    Set LINEAR_API_KEY in the daemon’s environment, and add <code>triggers: [{'{'} linear: {'{'} label: agent-ready {'}'} {'}'}]</code> to a workflow
-                    file. Orstra checks every trigger once a minute (ORSTRA_TRIGGER_INTERVAL_S).
+                    Set LINEAR_API_KEY in the daemon’s environment, and add a trigger file such as <code>workflow: linear-to-pr · linear: {'{'} label: agent-ready {'}'}</code> to
+                    ~/.orstra/triggers. Orstra checks every trigger once a minute (ORSTRA_TRIGGER_INTERVAL_S).
                   </>
                 }
               >
@@ -184,8 +192,8 @@ function ScheduleRow({ s, onEdit, onToggle }: { s: Schedule; onEdit: () => void;
       </span>
       <span className="ox-schacts">
         {declared ? (
-          <span className="ox-schsub ox-trunc" title={`Declared in ${s.workflowPath ?? s.workflow}. Edit that file to change it.`}>
-            In {shortPath(s.workflowPath ?? s.workflow)}
+          <span className="ox-schsub ox-trunc" title={`Declared in the trigger file ${s.filePath ?? s.id}. Edit that file to change it.`}>
+            In {shortPath(s.filePath ?? s.id)}
           </span>
         ) : (
           <>

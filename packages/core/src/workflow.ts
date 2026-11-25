@@ -72,13 +72,16 @@ export interface Step {
  * What starts tasks on its own.
  * - linear: one task per open Linear issue with the label (and team and state, when set). With
  *   `comment` (default true), each progress entry goes back to the issue as a comment.
+ * Triggers now live in their own files (see triggerFile.ts). A workflow file can still have a `triggers:`
+ * list: the daemon moves each entry into a trigger file and removes the list. It is still parsed, so a
+ * task that started before that, and keeps its workflow as it was, still reads.
  * - schedule: a declarative schedule. It starts one task each time `cron` matches in `timezone`
  *   (UTC when unset), or every `everyMinutes`. An interval counts from when Orstra first saw the trigger.
  *   It has exactly 1 of the 2. Only an edit of the workflow file changes it; the app makes imperative
  *   schedules, which the daemon keeps in its database.
  */
 export type Trigger =
-  | { kind: 'linear'; label: string; team?: string; state?: string; repo?: string; comment: boolean }
+  | { kind: 'linear'; label: string; team?: string; state?: string; repo?: string; workspace?: string; comment: boolean }
   | {
       kind: 'schedule';
       cron?: string;

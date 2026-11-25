@@ -15,7 +15,11 @@ export const REPO_ROOT = resolve(fileURLToPath(new URL('../../..', import.meta.u
 export const WORKFLOWS_DIR = process.env.ORSTRA_WORKFLOWS ?? join(HOME, 'workflows');
 /** Default workflows shipped in the repo, copied into WORKFLOWS_DIR on first run. */
 export const SEED_WORKFLOWS = join(REPO_ROOT, 'workflows');
+/** Default trigger files shipped in the repo, copied into TRIGGERS_DIR on first run. */
+export const SEED_TRIGGERS = join(REPO_ROOT, 'triggers');
 export const WORKFLOW_DIRS = [WORKFLOWS_DIR];
+/** Declarative triggers: 1 YAML file each, naming the workflow it starts. The file name is the id. */
+export const TRIGGERS_DIR = process.env.ORSTRA_TRIGGERS ?? join(HOME, 'triggers');
 export const WEB_DIST = join(REPO_ROOT, 'apps/web/dist');
 export const PORT = Number(process.env.ORSTRA_PORT ?? 4317);
 export const SLOTS = Number(process.env.ORSTRA_SLOTS ?? 4);
@@ -27,11 +31,17 @@ export function ensureDirs() {
   mkdirSync(HOME, { recursive: true });
   mkdirSync(WORKTREES, { recursive: true });
   mkdirSync(ARTIFACTS, { recursive: true });
-  // First run: seed the workflow folder from the repo's defaults. After that it is the user's, never touched.
+  // First run: seed the workflow folder from the repo's defaults. After that it is the user's. The only
+  // change Orstra makes: it moves an old `triggers:` list into trigger files (see triggerFiles.ts).
   const firstRun = !existsSync(WORKFLOWS_DIR);
   mkdirSync(WORKFLOWS_DIR, { recursive: true });
   if (firstRun && existsSync(SEED_WORKFLOWS)) cpSync(SEED_WORKFLOWS, WORKFLOWS_DIR, { recursive: true });
   mkdirSync(COS_DIR, { recursive: true });
+  // First run of trigger files: seed them only with a fresh workflow folder, so an install from before
+  // trigger files gets no trigger it did not have. Its own triggers: lists move on the first check.
+  const firstTriggers = !existsSync(TRIGGERS_DIR);
+  mkdirSync(TRIGGERS_DIR, { recursive: true });
+  if (firstTriggers && firstRun && existsSync(SEED_TRIGGERS)) cpSync(SEED_TRIGGERS, TRIGGERS_DIR, { recursive: true });
 }
 
 export function expandHome(p: string): string {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { checkCron, dateIn, describeCron, fillDate, fillSchedule, nextCron, parseWorkflow, timeIn } from '../src/index.ts';
+import { checkCron, dateIn, describeCron, fillDate, fillSchedule, nextCron, parseTriggerFile, parseWorkflow, timeIn, triggerFileFromEntry } from '../src/index.ts';
 
 const HUMAN = `steps:\n  review:\n    use: human\n    question: ok?\n    on: { approved: end }\n`;
 const iso = (ms: number | null) => (ms === null ? null : new Date(ms).toISOString());
@@ -72,5 +72,33 @@ describe('the schedule trigger in YAML', () => {
     expect(() => parseWorkflow(`name: X\ntriggers:\n  - schedule: { cron: "0 9 * * *", every: 1d, title: T }\n${HUMAN}`)).toThrow(/either cron/);
     expect(() => parseWorkflow(`name: X\ntriggers:\n  - schedule: { every: 1d, timezone: UTC, title: T }\n${HUMAN}`)).toThrow(/only with cron/);
     expect(() => parseWorkflow(`name: X\ntriggers:\n  - schedule: { cron: "0 9 * * *", timezone: Nowhere, title: T }\n${HUMAN}`)).toThrow(/not a timezone/);
+  });
+});
+
+describe('trigger files', () => {
+  it('reads a schedule that names its workflow', () => {
+    const f = parseTriggerFile('workflow: dogfood\nschedule:\n  cron: "0 9 * * 1-5"\n  timezone: Europe/London\ntitle: "Dogfood {{ date }}"\nprompt: Try the Inbox.\nworkspace: orstra\n');
+    expect(f).toEqual({ workflow: 'dogfood', trigger: { kind: 'schedule', cron: '0 9 * * 1-5', timezone: 'Europe/London', title: 'Dogfood {{ date }}', prompt: 'Try the Inbox.', workspace: 'orstra' } });
+  });
+
+  it('reads an interval and a Linear trigger', () => {
+    expect(parseTriggerFile('workflow: d\nschedule: { every: 1d }\ntitle: D\n').trigger).toEqual({ kind: 'schedule', everyMinutes: 1440, title: 'D' });
+    expect(parseTriggerFile('workflow: l\nlinear: { label: agent-ready }\nworkspace: hub\n').trigger).toEqual({ kind: 'linear', label: 'agent-ready', comment: true, workspace: 'hub' });
+  });
+
+  it('refuses a file that is wrong, readably', () => {
+    expect(() => parseTriggerFile('schedule: { every: 1d }\ntitle: D\n')).toThrow();
+    expect(() => parseTriggerFile('workflow: d\nschedule: { every: 1d }\nlinear: { label: x }\ntitle: D\n')).toThrow(/either schedule: or linear:/);
+    expect(() => parseTriggerFile('workflow: d\nschedule: { cron: "0 9 * * *" }\n')).toThrow(/title:/);
+    expect(() => parseTriggerFile('workflow: d\nlinear: { label: x }\ntitle: T\n')).toThrow(/from the issue/);
+    expect(() => parseTriggerFile('workflow: d\nschedule: { cron: "0 9 * * *" }\ntitle: D\ncolour: red\n')).toThrow();
+  });
+
+  it('writes an old triggers: entry as a file that reads back the same', () => {
+    const entry = { schedule: { every: '1d', title: 'Dogfood', repo: '~/x' } };
+    const text = triggerFileFromEntry('dogfood', entry);
+    expect(parseTriggerFile(text)).toEqual({ workflow: 'dogfood', trigger: { kind: 'schedule', everyMinutes: 1440, title: 'Dogfood', repo: '~/x' } });
+    const lin = triggerFileFromEntry('l', { linear: { label: 'x', repo: '~/y', comment: false } });
+    expect(parseTriggerFile(lin).trigger).toEqual({ kind: 'linear', label: 'x', comment: false, repo: '~/y' });
   });
 });

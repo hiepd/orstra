@@ -1,8 +1,10 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
-import { checkCron, checkTimezone, describeCron, fillSchedule, nextCron, parseWorkflow, type Trigger, type Workflow } from '@orstra/core';
+import { checkCron, checkTimezone, describeCron, fillSchedule, nextCron, parseTriggerFile, parseWorkflow, type Trigger, type TriggerFile, type Workflow } from '@orstra/core';
 import type { ScheduleRow, Store, TaskRow } from './db.ts';
+import { TRIGGERS_DIR } from './paths.ts';
 import type { Runner } from './runner.ts';
+import { listTriggerFiles, type FileRef } from './triggerFiles.ts';
 import { listWorkflows } from './workflows.ts';
 import { findWorkspace, pickWorkspace } from './workspace.ts';
 
@@ -10,8 +12,9 @@ import { findWorkspace, pickWorkspace } from './workspace.ts';
  * Schedules, the way trigger.dev has them. A schedule points at a workflow and starts 1 task each time
  * its cron matches.
  *
- * - Declarative: a `schedule` trigger in a workflow file. `sync()` copies each one into the database on
- *   every check, so it has a last run and a next run like the others. Only an edit of the file changes it.
+ * - Declarative: a trigger file with `schedule:` in the trigger folder (see triggerFiles.ts). `sync()` copies
+ *   each one into the database on every check, so it has a last run and a next run like the others. Only
+ *   an edit of the file changes it.
  * - Imperative: made in the app or by the chief of staff, and kept only in the database.
  *
  * Firing: 1 loop (`fireDue`, called by Triggers.tick) fires both kinds.
@@ -50,8 +53,10 @@ export interface ScheduleView {
   kind: ScheduleRow['kind'];
   workflow: string;
   workflowName: string;
-  /** For a declarative schedule: the file to edit. */
+  /** Where the workflow file is. */
   workflowPath: string | null;
+  /** For a declarative schedule: the trigger file to edit. */
+  filePath: string | null;
   cron: string | null;
   everyMinutes: number | null;
   timezone: string | null;
@@ -74,6 +79,13 @@ export interface ScheduleView {
 type ScheduleTrigger = Extract<Trigger, { kind: 'schedule' }>;
 type WorkflowFile = { path: string; file: string; name?: string };
 
+/** A trigger file as read on 1 check: what it says and which workflow file it names, or why it is wrong. */
+export interface ReadTriggerFile extends FileRef {
+  parsed?: TriggerFile;
+  workflow?: WorkflowFile;
+  error?: string;
+}
+
 const id = () => `s-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 
 /** "Every 1 day", "Every 6 hours", "Every 30 minutes". */
@@ -89,8 +101,46 @@ export class Schedules {
   constructor(
     private store: Store,
     private runner: Runner,
-    private opts: { now?: () => number; workflows?: () => WorkflowFile[] } = {},
+    private opts: { now?: () => number; workflows?: () => WorkflowFile[]; triggersDir?: string } = {},
   ) {}
+
+  /** The folder of the trigger files. */
+  get triggersDir(): string {
+    return this.opts.triggersDir ?? TRIGGERS_DIR;
+  }
+
+  /** The workflow files, for the migration of old `triggers:` lists. */
+  workflowFiles(): WorkflowFile[] {
+    return this.workflows();
+  }
+
+  /** Read every trigger file: what it says, and the workflow file it names. Never throws. */
+  readTriggerFiles(): ReadTriggerFile[] {
+    return listTriggerFiles(this.triggersDir).map((f) => {
+      try {
+        const parsed = parseTriggerFile(readFileSync(f.path, 'utf8'));
+        const workflow = this.locateWorkflow(parsed.workflow);
+        if (!workflow) return { ...f, parsed, error: `It names the workflow "${parsed.workflow}", and there is no workflow with that name.` };
+        return { ...f, parsed, workflow };
+      } catch (err: any) {
+        const msg = err?.issues ? err.issues.map((i: any) => `${i.path.join('.') || 'file'}: ${i.message}`).join('; ') : err?.message ?? String(err);
+        return { ...f, error: msg };
+      }
+    });
+  }
+
+  /** The trigger files that are wrong after the last sync, for the Triggers page. */
+  fileErrors(): { file: string; path: string; error: string }[] {
+    return this.lastErrors;
+  }
+  private lastErrors: { file: string; path: string; error: string }[] = [];
+
+  /** A workflow file by file name, file name without .yaml, or name. Does not parse it. */
+  private locateWorkflow(ref: string): WorkflowFile | undefined {
+    const r = ref.trim();
+    const all = this.workflows();
+    return all.find((w) => w.file === r || w.file.replace(/\.ya?ml$/, '') === r) ?? all.find((w) => w.name === r || this.workflowName(w.file) === r);
+  }
 
   private now() {
     return (this.opts.now ?? Date.now)();
@@ -125,44 +175,41 @@ export class Schedules {
   // ---- declarative ----
 
   /**
-   * Copy the `schedule` triggers of every workflow file into the database. A changed cron or timezone
-   * gets a new next run. A trigger that left its file loses its row. A file that does not parse keeps
-   * its rows as they were: the Workflows screen shows the error.
+   * Copy the schedule trigger files into the database. A changed cron or timezone gets a new next run.
+   * A file that left the folder loses its row. A file that is wrong keeps its row as it was, and its
+   * error shows on the Triggers page.
    */
   sync() {
     const now = this.now();
     const seen = new Set<string>();
-    const broken = new Set<string>();
-    for (const w of this.workflows()) {
-      let wf: Workflow;
-      try {
-        wf = parseWorkflow(readFileSync(w.path, 'utf8'));
-      } catch {
-        broken.add(w.file);
+    const errors: { file: string; path: string; error: string }[] = [];
+    for (const f of this.readTriggerFiles()) {
+      const sid = `file:${f.file}`;
+      if (f.error || !f.parsed || !f.workflow) {
+        seen.add(sid); // keep the row as it was
+        errors.push({ file: f.file, path: f.path, error: f.error ?? 'It does not parse.' });
         continue;
       }
-      wf.triggers.forEach((t, i) => {
-        if (t.kind !== 'schedule') return;
-        const sid = `yaml:${w.file}#${i}`;
-        seen.add(sid);
-        this.syncOne(sid, w, t, now);
-      });
+      if (f.parsed.trigger.kind !== 'schedule') continue;
+      seen.add(sid);
+      this.syncOne(sid, f, f.workflow, f.parsed.trigger, now);
     }
+    this.lastErrors = errors;
     for (const r of this.store.schedules()) {
-      if (r.kind === 'declarative' && !seen.has(r.id) && !broken.has(r.workflow)) this.store.deleteSchedule(r.id);
+      if (r.kind === 'declarative' && !seen.has(r.id)) this.store.deleteSchedule(r.id);
     }
   }
 
-  private syncOne(sid: string, w: WorkflowFile, t: ScheduleTrigger, now: number) {
+  private syncOne(sid: string, file: FileRef, w: WorkflowFile, t: ScheduleTrigger, now: number) {
     const fields = {
-      workflow: w.file, workflow_path: w.path, cron: t.cron ?? null, every_minutes: t.everyMinutes ?? null, timezone: t.timezone ?? null,
+      workflow: w.file, workflow_path: w.path, file_path: file.path, cron: t.cron ?? null, every_minutes: t.everyMinutes ?? null, timezone: t.timezone ?? null,
       title: t.title, description: t.description ?? '', prompt: t.prompt?.trim() || null, workspace_name: t.workspace ?? null, repo: t.repo ?? null,
     };
     const spec = specOf(fields);
     const old = this.store.schedule(sid);
     if (!old) {
-      // Before schedules had rows, an interval kept the time it last fired in kv. Carry it over once.
-      const kvKey = `schedule:${w.file}#${i(sid)}`;
+      // An interval from before schedules had rows kept the time it last fired in kv; the migration put it here.
+      const kvKey = `schedule-last:${sid}`;
       const legacy = Number(this.store.get(kvKey) ?? 0);
       const next = legacy && fields.every_minutes ? legacy + fields.every_minutes * 60_000 : this.nextAfter(fields, now);
       this.store.insertSchedule({
@@ -179,12 +226,12 @@ export class Schedules {
 
   // ---- imperative ----
 
-  /** Throws when the schedule is declarative: only an edit of its workflow file changes it. */
+  /** Throws when the schedule is declarative: only an edit of its trigger file changes it. */
   private imperative(sid: string): ScheduleRow {
     const r = this.store.schedule(sid);
     if (!r) throw new ScheduleError(`There is no schedule with the id ${sid}.`, 404);
     if (r.kind === 'declarative') {
-      throw new ScheduleError(`This schedule is declared in the workflow file ${r.workflow_path ?? r.workflow}. Edit the workflow file to change it.`, 409);
+      throw new ScheduleError(`This schedule is declared in the trigger file ${r.file_path ?? r.id.replace(/^file:/, '')}. Edit the trigger file to change it.`, 409);
     }
     return r;
   }
@@ -244,7 +291,7 @@ export class Schedules {
     const active = input.active ?? true;
     const sid = id();
     this.store.insertSchedule({
-      id: sid, kind: 'imperative', ...f, workflow_path: null, every_minutes: null, workspace_name: null, repo: null,
+      id: sid, kind: 'imperative', ...f, workflow_path: null, file_path: null, every_minutes: null, workspace_name: null, repo: null,
       active: active ? 1 : 0, dedup_key, spec: specOf({ ...f, every_minutes: null }),
       last_run_at: null, last_task_id: null, next_run_at: active ? this.nextAfter({ ...f, every_minutes: null }, now) : null,
       last_error: null, created_at: now, updated_at: now,
@@ -290,7 +337,7 @@ export class Schedules {
     return { workflowName: this.findWorkflow(f.workflow).name ?? f.workflow, when: describeCron(f.cron), timezone: f.timezone ?? 'UTC', workspace: ws?.name ?? null, title: f.title };
   }
 
-  /** The imperative schedule with this id, or throws "edit the workflow file" for a declarative one. */
+  /** The imperative schedule with this id, or throws "edit the trigger file" for a declarative one. */
   editable(sid: string): ScheduleView {
     return this.view(this.imperative(sid));
   }
@@ -337,7 +384,8 @@ export class Schedules {
     const t = r.last_task_id ? this.store.task(r.last_task_id) : undefined;
     const name = this.workflowName(r.workflow);
     return {
-      id: r.id, kind: r.kind, workflow: r.workflow, workflowName: name ?? r.workflow, workflowPath: r.kind === 'declarative' ? r.workflow_path : null,
+      id: r.id, kind: r.kind, workflow: r.workflow, workflowName: name ?? r.workflow, workflowPath: r.workflow_path ?? this.workflows().find((w) => w.file === r.workflow)?.path ?? null,
+      filePath: r.kind === 'declarative' ? r.file_path : null,
       cron: r.cron, everyMinutes: r.every_minutes, timezone: r.timezone,
       when: r.cron ? describeCron(r.cron) : r.every_minutes ? describeEvery(r.every_minutes) : '',
       title: r.title, description: r.description, prompt: r.prompt,
@@ -420,9 +468,4 @@ export class Schedules {
       prompt: r.prompt ? fillSchedule(r.prompt, at) : undefined,
     });
   }
-}
-
-/** The trigger index from a declarative id `yaml:<file>#<n>`. */
-function i(sid: string): string {
-  return sid.slice(sid.lastIndexOf('#') + 1);
 }
