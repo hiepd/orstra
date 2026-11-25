@@ -2422,3 +2422,13 @@ textarea.ox-wsin{min-height:56px}
 /* The text an agent writes now: a soft caret at the end shows it is still coming. */
 .ox-draft > :last-child::after{content:'';display:inline-block;width:7px;height:1em;margin-left:2px;vertical-align:-2px;border-radius:2px;background:var(--accent-fg);opacity:.6;animation:ox-caret 1s steps(2) infinite}
 @keyframes ox-caret{50%{opacity:0}}
+
+/* Triggers: the schedules table, both kinds in 1 list. */
+.ox-schrow{display:grid;grid-template-columns:10px minmax(0,1.4fr) minmax(0,1.3fr) minmax(0,1fr) minmax(0,1fr) minmax(120px,auto);align-items:center;gap:12px;min-height:52px;padding:8px 18px;border-bottom:1px solid var(--line-3);font-size:13px}
+.ox-schrow:last-child{border-bottom:0}
+.ox-schhead{min-height:34px;padding-top:0;padding-bottom:0;font-size:12px;font-weight:500;color:var(--faint)}
+.ox-schoff .ox-schcell{opacity:.6}
+.ox-schcell{display:flex;flex-direction:column;gap:2px;min-width:0}
+.ox-schsub{font-size:12px;color:var(--muted)}
+.ox-schacts{display:flex;justify-content:flex-end;align-items:center;gap:6px;min-width:0}
+@media (max-width:900px){.ox-schrow{grid-template-columns:10px minmax(0,1fr) minmax(0,1fr)}.ox-schhead{display:none}.ox-schacts{grid-column:2/-1;justify-content:flex-start}}

@@ -14,6 +14,16 @@ export interface CosTool {
   required: string[];
 }
 
+const schedule: Prop = { type: 'string', description: 'The schedule id, from list_schedules.' };
+const scheduleFields: Record<string, Prop> = {
+  cron: { type: 'string', description: 'A 5-field cron expression: minute hour day-of-month month day-of-week. "0 9 * * 1-5" = every weekday at 09:00.' },
+  timezone: { type: 'string', description: 'An IANA timezone, such as Europe/London. Default: this machine’s timezone. "UTC" for UTC.' },
+  title: { type: 'string', description: 'The title of each task it starts. {{ date }} and {{ time }} become when it is due (in its timezone), {{ last_run }} the date it last started a task or "never". E.g. "Dogfood {{ date }}".' },
+  description: { type: 'string', description: 'The description of each task it starts, as in start_task: what the task is about, shown on the task (optional).' },
+  prompt: { type: 'string', description: 'What the agents of each task are told to do. Every agent step gets it after its own prompt, so the workflow needs no change. The same placeholders work, e.g. "Review what merged since {{ last_run }}." Put the instructions here, not in the description.' },
+  workspace: { type: 'string', description: 'The workspace its tasks work in, by name, from list_workspaces. Needed when there is more than 1.' },
+};
+
 const task: Prop = { type: 'string', description: 'The task: its ticket (e.g. HUB-416) or its id (e.g. t-mwstn0x45zr6, or a unique prefix).' };
 
 export const WATCH_UNTIL = ['done', 'needs_you', 'stopped', 'finished'] as const;
@@ -33,6 +43,12 @@ export const COS_TOOLS: CosTool[] = [
   { name: 'read_task_file', description: 'Read a text file in a task’s worktree (for example a spec the agent wrote).', properties: { task, path: { type: 'string', description: 'Path relative to the worktree.' } }, required: ['task', 'path'] },
   { name: 'list_workflows', description: 'The workflows tasks can be started with, and their steps.', properties: {}, required: [] },
   { name: 'list_workspaces', description: 'The workspaces a task can work in: each is 1 repo, the branch tasks start from, and its default workflow.', properties: {}, required: [] },
+  {
+    name: 'list_schedules',
+    description: 'Every schedule: the workflow it starts, the cron in words, the timezone, on or off, the next run and the last task it started. declarative = from a trigger file in ~/.orstra/triggers, read-only here (to change it, edit that file); imperative = made in the app, which you can change.',
+    properties: {},
+    required: [],
+  },
   { name: 'list_watches', description: 'The follow-ups you are currently watching for.', properties: {}, required: [] },
   {
     name: 'show_tasks',
@@ -85,14 +101,32 @@ export const COS_TOOLS: CosTool[] = [
     properties: { task, until: { type: 'string', enum: [...WATCH_UNTIL], description: 'When to wake you.' }, instruction: { type: 'string', description: 'What to do then, e.g. "Retry HUB-405 Implement with the note: setup is fixed; rebase first."' } },
     required: ['task', 'until', 'instruction'],
   },
+  {
+    name: 'create_schedule',
+    description: 'Make an imperative schedule: it starts a task with the workflow each time the cron matches, in the timezone. Use it for "start X every weekday at 9". Making the same schedule again changes the one that exists. Always needs the user’s OK.',
+    properties: { workflow: { type: 'string', description: 'Workflow file name or name, from list_workflows.' }, ...scheduleFields },
+    required: ['workflow', 'cron', 'title'],
+  },
+  {
+    name: 'update_schedule',
+    description: 'Change an imperative schedule, or turn it on or off. Pass only what changes. A declarative schedule cannot change here: tell the user to edit its trigger file, or edit it yourself if they ask.',
+    properties: {
+      schedule,
+      workflow: { type: 'string', description: 'A new workflow, from list_workflows (optional).' },
+      ...scheduleFields,
+      active: { type: 'string', enum: ['on', 'off'], description: 'Turn it on or off (optional).' },
+    },
+    required: ['schedule'],
+  },
+  { name: 'delete_schedule', description: 'Delete an imperative schedule. Tasks it started stay. Always needs the user’s OK.', properties: { schedule }, required: ['schedule'] },
   { name: 'unwatch', description: 'Stop a follow-up.', properties: { watch_id: { type: 'string', description: 'From list_watches.' } }, required: ['watch_id'] },
 ];
 
 export const COS_PROMPT = `You are the user's assistant inside Orstra, a local software factory. Coding agents (Claude Code, Codex) run workflows on tasks. A task moves through steps; each agent step runs in its own session in the task's worktree (its own git branch). Gate steps run checks; human steps wait for the user's decision.
 
-What you do: brief the user, answer questions about tasks, suggest what to do next, and act for them: message a task's agent, leave notes for upcoming steps, start, retry or stop tasks, answer decisions, and watch tasks to follow up later.
+What you do: brief the user, answer questions about tasks, suggest what to do next, and act for them: message a task's agent, leave notes for upcoming steps, start, retry or stop tasks, answer decisions, watch tasks to follow up later, and make, change or delete schedules that start tasks at set times.
 
-Next to Orstra's tools you have Claude Code's own tools: Bash, Read, Edit, Write, the web tools, and whatever else this machine gives you. Use them to look at code, to check a fact yourself, or to make a small change. You may have no Glob and no Grep; search with Bash then. You work in 4 kinds of folder: your own (~/.orstra/cos), ~/.orstra (the database, the workflow files, and every task worktree under wt/), the Orstra checkout, and the repository behind each task worktree. A path outside them works too, so give the full path, and stay out of folders the user did not ask about.
+Next to Orstra's tools you have Claude Code's own tools: Bash, Read, Edit, Write, the web tools, and whatever else this machine gives you. Use them to look at code, to check a fact yourself, or to make a small change. You may have no Glob and no Grep; search with Bash then. You work in 4 kinds of folder: your own (~/.orstra/cos), ~/.orstra (the database, the workflow files, the trigger files under triggers/, and every task worktree under wt/), the Orstra checkout, and the repository behind each task worktree. A path outside them works too, so give the full path, and stay out of folders the user did not ask about.
 
 Nothing asks you for permission, so you are the only check. Read before you change. Do not delete, push, publish or install anything unless the user asked for it in this conversation. Say what you ran.
 

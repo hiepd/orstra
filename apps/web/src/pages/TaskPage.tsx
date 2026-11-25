@@ -351,6 +351,14 @@ function Overview({ task, git, onModal, embedded }: { task: TaskDetail; git: Res
             </section>
           )}
 
+          {task.prompt && (
+            <section>
+              <h2 className="ox-h2">Prompt</h2>
+              <div className="lx-hint" style={{ marginTop: -4, marginBottom: 6 }}>From the trigger that started this task. Every agent step gets it.</div>
+              <p className="ox-desc">{task.prompt}</p>
+            </section>
+          )}
+
           <section>
             <h2 className="ox-h2">
               Runs<span className="ox-gn">{task.runs.length}</span>

@@ -22,7 +22,7 @@ A task keeps a copy of the workflow it started with. An edit to the file changes
 | `concurrency` | How many of this workflow's tasks may work at the same time. Default 3. Only agent and gate steps count. |
 | `budget_usd` | Stop agent work on a task once its runs cost this much. |
 | `start` | The first step. Default: the first step in the file. |
-| `triggers` | What starts tasks without you. |
+| `triggers` | The old form. Orstra moves it into trigger files: see [Triggers](#triggers). |
 | `steps` | Required. The steps, by id. |
 | `layout` | Where each step sits on the canvas. The editor writes this; you do not need it. |
 
@@ -77,6 +77,7 @@ The task goes to your Inbox when the outcome has no arrow, when a cap runs out, 
 | `{{ trigger.description }}` | Its description |
 | `{{ trigger.ref }}` | Its ticket, such as `HUB-416` |
 | `{{ trigger.id }}` | The ticket, or the task id when there is none |
+| `{{ trigger.prompt }}` | The prompt the trigger gave the task, or empty. You rarely need it: every agent step gets it anyway (see below) |
 | `{{ task.id }}` | The task id |
 | `{{ steps.impl.output }}` | What the `impl` step said it did |
 | `{{ steps.impl.outcome }}` | How `impl` ended |
@@ -86,32 +87,62 @@ A path that does not exist becomes an empty string.
 
 ## Triggers
 
-Orstra checks every trigger each `ORSTRA_TRIGGER_INTERVAL_S` seconds (60 by default). It reads the files on each check, so a trigger you add works on the next check, with no restart.
+A workflow is a recipe, and a trigger starts it. A workflow does not list its triggers. Each trigger names the workflow it starts. 1 trigger starts 1 workflow, and 1 workflow can have many triggers.
 
-**`linear`** starts 1 task per open Linear issue with a label. It needs `LINEAR_API_KEY` in the daemon's environment.
+There are 2 kinds:
 
-```yaml
-triggers:
-  - linear:
-      label: agent-ready     # required
-      team: HUB              # optional, the team key
-      state: Todo            # optional; the default is every issue that is not completed or canceled
-      repo: ~/workspace/app  # optional, the repository for these tasks
-      comment: true          # default true: each progress entry goes back as a comment on the issue
-```
+- **Declarative**: a YAML file in `~/.orstra/triggers` (`ORSTRA_TRIGGERS` changes the folder). The file name is the trigger's id. Only an edit of the file changes it. Keep the folder in git if you like.
+- **Imperative**: a schedule made on the Triggers page, by the API, or by the chief of staff. Orstra keeps it in its database. You change it, turn it off, or delete it there.
 
-**`schedule`** starts 1 task every interval.
+The Triggers page lists both kinds. Orstra reads the trigger folder on each check (every `ORSTRA_TRIGGER_INTERVAL_S` seconds, 60 by default), so a file you add works on the next check, with no restart. A file that is wrong shows its error on the Triggers page.
+
+**A schedule** starts 1 task each time a cron expression matches, or every interval.
 
 ```yaml
-triggers:
-  - schedule:
-      every: 1d                    # "30m", "6h", "1d", or a number of minutes. 1 minute at least
-      title: "Triage {{ date }}"   # {{ date }} becomes 2026-11-25
-      description: Look at what came in.
-      repo: ~/workspace/app
+# ~/.orstra/triggers/morning-triage.yaml
+workflow: triage                   # the workflow file without .yaml, or its name
+schedule:
+  cron: "0 9 * * 1-5"              # 5 fields: minute hour day-of-month month day-of-week
+  timezone: Europe/London          # optional IANA name; the default is UTC
+title: "Triage {{ date }}"         # the task title
+prompt: |                          # what the agents of each task are told to do
+  Triage what came in since {{ last_run }}.
+description: The morning triage.   # optional, shown on the task
+workspace: app                     # optional, the workspace by name
 ```
 
-The first task starts 1 interval after Orstra first sees the trigger, not right away.
+`schedule:` has `cron` or `every`, not both. `every: 1d` (or `30m`, `6h`, a number of minutes) counts from when Orstra first saw the trigger. `repo:` instead of `workspace:` gives a bare repository path.
+
+**A Linear trigger** starts 1 task per open Linear issue with a label. It needs `LINEAR_API_KEY` in the daemon's environment. The task takes its title and description from the issue.
+
+```yaml
+# ~/.orstra/triggers/agent-ready.yaml
+workflow: linear-to-pr
+linear:
+  label: agent-ready     # required
+  team: HUB              # optional, the team key
+  state: Todo            # optional; the default is every issue that is not completed or canceled
+  comment: true          # default true: each progress entry goes back as a comment on the issue
+workspace: app           # optional
+```
+
+**What a trigger gives the task.** The trigger fills the task, and the workflow reads only the task:
+
+- `title`: the task's title.
+- `prompt`: what the agents of the task are told to do. Every agent step gets it after its own prompt, under "Prompt:". The workflow does not name it, so 1 workflow serves many triggers, and the same workflow works for tasks you start by hand.
+- `description`: what the task is about, shown on the task, as in the New task form. Agents see it as the task's description.
+
+In the title, the prompt and the description of a schedule, these placeholders are filled when the task starts:
+
+| Placeholder | Becomes |
+|---|---|
+| `{{ date }}` | The date it is due, such as 2026-11-25, in its timezone |
+| `{{ time }}` | The time it is due, such as 09:00, in its timezone |
+| `{{ last_run }}` | The date the schedule last started a task, or `never` |
+
+A schedule starts at most 1 task per due time, also across a restart. If due times passed while Orstra was off, it starts 1 task when it is back, and then waits for the next due time.
+
+**A `triggers:` list in a workflow file** is the old form. On its next check, Orstra moves each entry into its own trigger file, named `<workflow>-<kind>.yaml` (with `-1`, `-2` when there are more). It then removes the list from the workflow file and keeps a copy of the file as `<file>.bak-YYYYMMDD`. A schedule keeps its last run and its next run. A workflow file that does not parse is left alone.
 
 ## Actions
 

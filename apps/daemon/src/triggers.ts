@@ -1,8 +1,10 @@
-import { readFileSync } from 'node:fs';
-import { parseWorkflow, type Progress, type Trigger } from '@orstra/core';
+import { basename } from 'node:path';
+import type { Progress, Trigger } from '@orstra/core';
 import type { Store, TaskRow } from './db.ts';
 import type { Runner } from './runner.ts';
-import { listWorkflows } from './workflows.ts';
+import { Schedules } from './schedules.ts';
+import { migrateWorkflowTriggers } from './triggerFiles.ts';
+import { findWorkspace } from './workspace.ts';
 
 /** One Linear issue, as the trigger reads it. */
 export interface LinearIssue {
@@ -56,7 +58,10 @@ export function progressComment(stepTitle: string, attempt: number, outcome: str
 
 export interface TriggerStatus {
   workflow: string;
-  kind: Trigger['kind'];
+  /** 'file': a trigger file that is wrong. Its error is in lastError. */
+  kind: Trigger['kind'] | 'file';
+  /** The trigger file. */
+  file?: string;
   label: string;
   lastCheck: number | null;
   lastError: string | null;
@@ -64,19 +69,22 @@ export interface TriggerStatus {
 }
 
 /**
- * Starts tasks from triggers, and sends progress back to Linear. It reads the workflow files on each
+ * Starts tasks from triggers, and sends progress back to Linear. It reads the trigger files on each
  * check, so a trigger you add or change works on the next check without a restart.
+ * Schedules, declarative and imperative, fire in the same check (see schedules.ts).
  */
 export class Triggers {
   private status = new Map<string, TriggerStatus>();
   private timer: NodeJS.Timeout | null = null;
   private running = false;
+  readonly schedules: Schedules;
 
   constructor(
     private store: Store,
     private runner: Runner,
-    private opts: { linear?: LinearClient | null; now?: () => number; workflows?: () => { path: string; file: string }[] } = {},
+    private opts: { linear?: LinearClient | null; now?: () => number; workflows?: () => { path: string; file: string }[]; triggersDir?: string; schedules?: Schedules } = {},
   ) {
+    this.schedules = opts.schedules ?? new Schedules(store, runner, { now: opts.now, workflows: opts.workflows, triggersDir: opts.triggersDir });
     runner.on('progress', (e: { taskId: string; runId: string; outcome?: string }) => void this.mirror(e.taskId, e.runId, e.outcome));
   }
 
@@ -94,8 +102,12 @@ export class Triggers {
     if (this.timer) clearInterval(this.timer);
   }
 
+  /** The Linear triggers and how their last check went, and the trigger files that are wrong. Schedules have their own view (schedules.list()). */
   view(): TriggerStatus[] {
-    return [...this.status.values()];
+    const broken: TriggerStatus[] = this.schedules.fileErrors().map((e) => ({
+      workflow: '', kind: 'file', file: e.path, label: e.file, lastCheck: null, lastError: e.error, started: 0,
+    }));
+    return [...this.status.values(), ...broken];
   }
 
   /** Check every trigger once. A second call while one runs does nothing. */
@@ -103,29 +115,39 @@ export class Triggers {
     if (this.running) return;
     this.running = true;
     try {
-      for (const w of (this.opts.workflows ?? listWorkflows)()) {
-        let triggers: Trigger[];
-        try {
-          triggers = parseWorkflow(readFileSync(w.path, 'utf8')).triggers;
-        } catch {
-          continue; // The Workflows screen shows the parse error.
-        }
-        for (const [i, t] of triggers.entries()) {
-          const key = `${w.file}#${i}`;
-          const st: TriggerStatus = this.status.get(key) ?? {
-            workflow: w.file, kind: t.kind, label: t.kind === 'linear' ? `Linear label "${t.label}"${t.team ? ` in ${t.team}` : ''}` : `Every ${t.everyMinutes} min: ${t.title}`,
-            lastCheck: null, lastError: null, started: 0,
-          };
-          this.status.set(key, st);
-          try {
-            st.started += t.kind === 'linear' ? await this.checkLinear(w.path, t) : this.checkSchedule(w.path, key, t);
-            st.lastError = null;
-          } catch (err: any) {
-            st.lastError = err?.message ?? String(err);
-          }
-          st.lastCheck = this.now();
-        }
+      // An old `triggers:` list in a workflow file moves into trigger files first.
+      try {
+        migrateWorkflowTriggers(this.store, this.schedules.workflowFiles(), this.schedules.triggersDir, this.now());
+      } catch (err) {
+        console.error('Moving triggers out of workflow files:', err);
       }
+      // 1 loop for every schedule: copy the declarative ones from the files, then fire what is due.
+      try {
+        this.schedules.sync();
+        this.schedules.fireDue();
+      } catch (err) {
+        console.error('Schedules:', err);
+      }
+      const seen = new Set<string>();
+      for (const f of this.schedules.readTriggerFiles()) {
+        const t = f.parsed?.trigger;
+        if (!t || t.kind !== 'linear' || !f.workflow) continue;
+        seen.add(f.file);
+        const st: TriggerStatus = this.status.get(f.file) ?? {
+          workflow: f.workflow.file, kind: 'linear', file: f.path, label: `Linear label "${t.label}"${t.team ? ` in ${t.team}` : ''}`,
+          lastCheck: null, lastError: null, started: 0,
+        };
+        st.workflow = f.workflow.file;
+        this.status.set(f.file, st);
+        try {
+          st.started += await this.checkLinear(f.workflow.path, t);
+          st.lastError = null;
+        } catch (err: any) {
+          st.lastError = err?.message ?? String(err);
+        }
+        st.lastCheck = this.now();
+      }
+      for (const k of [...this.status.keys()]) if (!seen.has(k)) this.status.delete(k);
     } finally {
       this.running = false;
     }
@@ -138,28 +160,15 @@ export class Triggers {
     for (const issue of (data?.issues?.nodes ?? []) as LinearIssue[]) {
       const source = `linear:${issue.id}`;
       if (this.store.taskBySource(source, workflowPath)) continue;
+      const workspaceId = t.workspace ? findWorkspace(this.store, t.workspace)?.id : undefined;
+      if (t.workspace && !workspaceId) throw new Error(`There is no workspace called ${t.workspace}.`);
       this.runner.startTask({
-        workflowPath, title: issue.title, ref: issue.identifier, repo: t.repo, source,
+        workflowPath, title: issue.title, ref: issue.identifier, repo: t.repo, workspaceId, source,
         description: [issue.description?.trim(), `Linear: ${issue.url}`].filter(Boolean).join('\n\n'),
       });
       n++;
     }
     return n;
-  }
-
-  private checkSchedule(workflowPath: string, key: string, t: Extract<Trigger, { kind: 'schedule' }>): number {
-    const kv = `schedule:${key}`;
-    const last = Number(this.store.get(kv) ?? 0);
-    const now = this.now();
-    if (!last) {
-      this.store.set(kv, String(now));
-      return 0;
-    }
-    if (now - last < t.everyMinutes * 60_000) return 0;
-    this.store.set(kv, String(now));
-    const day = new Date(now).toISOString().slice(0, 10);
-    this.runner.startTask({ workflowPath, title: t.title.replace(/\{\{\s*date\s*\}\}/g, day), description: t.description, repo: t.repo, source: `schedule:${key}` });
-    return 1;
   }
 
   /** Send a run's progress entry to the Linear issue the task came from, when its trigger says so. */
@@ -178,11 +187,9 @@ export class Triggers {
     }
   }
 
+  /** A Linear trigger file for the task's workflow says `comment: true` (the default). */
   private commentsOn(task: TaskRow): boolean {
-    try {
-      return this.runner.workflowFor(task).triggers.some((t) => t.kind === 'linear' && t.comment);
-    } catch {
-      return false;
-    }
+    const file = basename(task.workflow_path);
+    return this.schedules.readTriggerFiles().some((f) => f.workflow?.file === file && f.parsed?.trigger.kind === 'linear' && f.parsed.trigger.comment);
   }
 }

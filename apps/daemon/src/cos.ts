@@ -8,6 +8,7 @@ import type { Store, TaskRow, WatchRow } from './db.ts';
 import type { Executors, LiveSession } from './executors.ts';
 import { gitDiff } from './git.ts';
 import type { Runner } from './runner.ts';
+import type { ScheduleInput, Schedules } from './schedules.ts';
 import type { Views } from './server.ts';
 import { listWorkflows, resolveWorkflow } from './workflows.ts';
 import { pickWorkspace, workspaceView } from './workspace.ts';
@@ -25,13 +26,23 @@ const GATE: Record<string, Permission | 'always'> = {
   retry_step: 'start',
   decide: 'always',
   stop_task: 'always',
+  // A schedule starts tasks again and again with nobody there, so making or deleting one always asks.
+  // Changing one asks like starting a task does.
+  create_schedule: 'always',
+  update_schedule: 'start',
+  delete_schedule: 'always',
 };
+
+/** This machine's timezone: what "at 9" means when the user names none. */
+const localTimezone = () => Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 
 export interface CosOptions {
   cwd: string;
   /** Claude Code flags for its tools and folders; see cosToolArgs in cos-tools.ts. */
   toolArgs: string[];
   model?: string;
+  /** The schedules the daemon fires (Triggers.schedules). Without it, the schedule tools say so. */
+  schedules?: Schedules;
 }
 
 export interface PlanAction {
@@ -298,6 +309,7 @@ export class ChiefOfStaff extends EventEmitter {
       const ws = this.startWorkspace(a);
       return `Start a task: “${a.title}” · ${wf}${ws ? ` · in ${ws.name}` : ''}`;
     }
+    if (tool.endsWith('_schedule')) return this.describeSchedule(tool, a);
     const t = this.task(a.task);
     const stepTitle = (s: unknown) => this.runner.workflowFor(t).steps[this.stepId(t, s)]?.title ?? String(s);
     switch (tool) {
@@ -314,6 +326,38 @@ export class ChiefOfStaff extends EventEmitter {
       default:
         return tool;
     }
+  }
+
+  private get schedules(): Schedules {
+    if (!this.opts.schedules) throw new Error('Schedules are not available in this daemon.');
+    return this.opts.schedules;
+  }
+
+  /** The tool's arguments as a schedule input. A new schedule with no timezone gets this machine's. */
+  private scheduleInput(a: Record<string, any>, creating: boolean): ScheduleInput {
+    const str = (v: unknown) => (v === undefined || v === null ? undefined : String(v));
+    const input: ScheduleInput = { workflow: str(a.workflow), cron: str(a.cron), title: str(a.title), description: str(a.description), prompt: str(a.prompt), workspace: str(a.workspace) };
+    if (a.timezone !== undefined) input.timezone = String(a.timezone).toUpperCase() === 'UTC' ? null : String(a.timezone);
+    else if (creating) input.timezone = localTimezone();
+    if (a.active !== undefined) input.active = a.active === 'on' || a.active === true;
+    return input;
+  }
+
+  /** The plan-card line for a schedule tool. It checks the input first, so a wrong cron fails before the card. */
+  private describeSchedule(tool: string, a: Record<string, any>): string {
+    const sid = a.schedule ? String(a.schedule) : undefined;
+    if (tool === 'create_schedule') {
+      const c = this.schedules.check(this.scheduleInput(a, true));
+      return `Create a schedule: “${c.title}” · ${c.workflowName} · ${c.when} (${c.timezone})${c.workspace ? ` · in ${c.workspace}` : ''}${a.prompt ? ` · prompt “${clip(String(a.prompt), 300)}”` : ''}`;
+    }
+    if (!sid) throw new Error('Say which schedule: its id, from list_schedules.');
+    const s = this.schedules.editable(sid); // "edit the trigger file" for a declarative one
+    if (tool === 'delete_schedule') return `Delete the schedule “${s.title}” · ${s.workflowName} · ${s.when}`;
+    const input = this.scheduleInput(a, false);
+    const c = this.schedules.check(input, sid);
+    const onOff = input.active === undefined ? '' : input.active ? ' · turn it on' : ' · turn it off';
+    const promptNote = input.prompt === undefined ? '' : input.prompt ? ` · prompt “${clip(input.prompt, 300)}”` : ' · no prompt';
+    return `Change the schedule “${s.title}” to: “${c.title}” · ${c.workflowName} · ${c.when} (${c.timezone})${c.workspace ? ` · in ${c.workspace}` : ''}${promptNote}${onOff}`;
   }
 
   /** The workspace a start_task names, or the only one. A workflow that names its own repo needs none. */
@@ -334,6 +378,20 @@ export class ChiefOfStaff extends EventEmitter {
       const ws = this.startWorkspace(a);
       const t = this.runner.startTask({ workflowPath: path, title: String(a.title), description: a.description ? String(a.description) : undefined, ref: a.ref ? String(a.ref) : undefined, workspaceId: ws?.id, via: 'cos' });
       return { text: `Started ${named(t)} · ${t.workflow_name}`, taskId: t.id };
+    }
+    if (tool === 'create_schedule') {
+      const r = this.schedules.create(this.scheduleInput(a, true));
+      const s = r.schedule;
+      return { text: `${r.created ? 'Created' : 'Changed'} the schedule “${s.title}” · ${s.workflowName} · ${s.when} (${s.timezone ?? 'UTC'})`, view: 'triggers' };
+    }
+    if (tool === 'update_schedule') {
+      const s = this.schedules.update(String(a.schedule), this.scheduleInput(a, false));
+      return { text: `Changed the schedule “${s.title}” · ${s.when} (${s.timezone ?? 'UTC'}) · ${s.active ? 'on' : 'off'}`, view: 'triggers' };
+    }
+    if (tool === 'delete_schedule') {
+      const s = this.schedules.editable(String(a.schedule));
+      this.schedules.remove(s.id);
+      return { text: `Deleted the schedule “${s.title}” · ${s.workflowName}`, view: 'triggers' };
     }
     const t = this.task(a.task);
     switch (tool) {
@@ -457,6 +515,15 @@ export class ChiefOfStaff extends EventEmitter {
         );
       case 'list_watches':
         return json(this.view().watches);
+      case 'list_schedules':
+        return json(this.schedules.list().map((s) => ({
+          id: s.id, kind: s.kind, workflow: s.workflowName, workflowFile: s.workflow, triggerFile: s.filePath,
+          cron: s.cron, every: s.everyMinutes ? `${s.everyMinutes} min` : null, when: s.when, timezone: s.timezone ?? (s.cron ? 'UTC' : null),
+          title: s.title, workspace: s.workspace?.name ?? null, active: s.active,
+          nextRun: s.nextRunAt ? new Date(s.nextRunAt).toISOString() : null,
+          lastTask: s.lastTask ? { ref: s.lastTask.ref, title: s.lastTask.title, status: s.lastTask.status, task: s.lastTask.ref ?? s.lastTask.id } : null,
+          lastError: s.lastError,
+        })));
       case 'list_workspaces':
         return json(this.store.workspaces().map((w) => {
           const v = workspaceView(w);

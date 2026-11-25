@@ -181,6 +181,8 @@ export interface Awaiting {
 
 export interface TaskDetail extends TaskSummary {
   description: string | null;
+  /** What the trigger that started the task tells its agents, such as a schedule's prompt. */
+  prompt: string | null;
   worktree: string | null;
   /** The branch the task started from and its commit then. Fixed at start. */
   baseBranch: string | null;
@@ -357,11 +359,58 @@ export interface Settings {
 
 export interface TriggerStatus {
   workflow: string;
-  kind: 'linear' | 'schedule';
+  /** 'file': a trigger file that is wrong; lastError says why. */
+  kind: 'linear' | 'schedule' | 'file';
+  /** The trigger file. */
+  file?: string;
   label: string;
   lastCheck: number | null;
   lastError: string | null;
   started: number;
+}
+
+/**
+ * A schedule: it starts a task with a workflow each time its cron matches. Declarative ones come from a
+ * workflow file and only an edit of the file changes them; imperative ones are made in the app.
+ */
+export interface Schedule {
+  id: string;
+  kind: 'declarative' | 'imperative';
+  workflow: string;
+  workflowName: string;
+  workflowPath: string | null;
+  /** For a declarative schedule: the trigger file to edit. */
+  filePath: string | null;
+  cron: string | null;
+  everyMinutes: number | null;
+  /** IANA timezone. Null = UTC. */
+  timezone: string | null;
+  /** The timing in words. */
+  when: string;
+  title: string;
+  description: string;
+  /** What the agents of each task get, after each step's own prompt. */
+  prompt: string | null;
+  workspace: { id: string; name: string } | null;
+  active: boolean;
+  dedupKey: string | null;
+  nextRunAt: number | null;
+  lastRunAt: number | null;
+  lastTask: { id: string; ref: string | null; title: string; status: TaskStatus } | null;
+  lastError: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ScheduleInput {
+  workflow?: string;
+  cron?: string;
+  timezone?: string | null;
+  title?: string;
+  description?: string;
+  prompt?: string | null;
+  workspace?: string | null;
+  active?: boolean;
 }
 
 /** Per-agent defaults saved in ~/.orstra/agents.json. A missing field means the agent's own default. */
@@ -382,7 +431,7 @@ export type CosEvent = { id: number; ts: number } & (
   | { kind: 'tool'; name: string; summary: string }
   | { kind: 'show'; title: string; taskIds: string[] }
   | { kind: 'plan'; planId: string }
-  | { kind: 'did'; text: string; detail?: string; taskId: string | null; view?: 'chat' | null; watch?: boolean }
+  | { kind: 'did'; text: string; detail?: string; taskId: string | null; view?: 'chat' | 'triggers' | null; watch?: boolean }
   | { kind: 'system'; text: string }
 );
 
@@ -499,6 +548,13 @@ export const api = {
   stopDevServer: (taskId: string) => request<DevServerView>('POST', `/api/tasks/${encodeURIComponent(taskId)}/devserver/stop`, {}),
   saveWorkflow: (file: string, graph: WorkflowGraphInput) => request<WorkflowDetail>('PUT', `/api/workflows/${encodeURIComponent(file)}`, graph),
   createTask: (input: NewTaskInput) => request<TaskSummary>('POST', '/api/tasks', input),
+  schedules: () => request<Schedule[]>('GET', '/api/schedules'),
+  createSchedule: (input: ScheduleInput) => request<{ schedule: Schedule; created: boolean }>('POST', '/api/schedules', input),
+  updateSchedule: (id: string, input: ScheduleInput) => request<Schedule>('PATCH', `/api/schedules/${encodeURIComponent(id)}`, input),
+  setScheduleActive: (id: string, on: boolean) => request<Schedule>('POST', `/api/schedules/${encodeURIComponent(id)}/${on ? 'activate' : 'deactivate'}`),
+  deleteSchedule: (id: string) => request<{ ok: true }>('DELETE', `/api/schedules/${encodeURIComponent(id)}`),
+  previewSchedule: (cron: string, timezone: string) =>
+    request<{ cron: string; when: string; next: number[] }>('GET', `/api/schedules/preview?cron=${encodeURIComponent(cron)}&timezone=${encodeURIComponent(timezone)}`),
   workspaces: () => request<Workspace[]>('GET', '/api/workspaces'),
   createWorkspace: (input: WorkspaceInput) => request<Workspace>('POST', '/api/workspaces', input),
   updateWorkspace: (id: string, input: WorkspaceInput) => request<Workspace>('PATCH', `/api/workspaces/${encodeURIComponent(id)}`, input),

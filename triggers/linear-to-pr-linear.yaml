@@ -1,0 +1,6 @@
+# Starts 1 task with "Linear ticket to PR" per open Linear issue with the label agent-ready.
+# Needs LINEAR_API_KEY in the daemon's environment. Each progress entry goes back to the issue as a
+# comment. Delete this file to start those tasks by hand only.
+workflow: linear-to-pr
+linear:
+  label: agent-ready

@@ -41,6 +41,11 @@ export interface TaskRow {
   subdir?: string | null;
   /** When the workspace's setup commands passed in this task's worktree. */
   setup_at?: number | null;
+  /**
+   * What the trigger that started the task tells its agents, such as a schedule's prompt. Every agent
+   * step gets it after its own prompt, so a workflow needs no placeholder for it. Null for most tasks.
+   */
+  prompt?: string | null;
 }
 
 /** Where a task's code is: 1 repo, the branch new tasks start from, and how to prepare a fresh worktree. */
@@ -173,6 +178,14 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE INDEX IF NOT EXISTS events_task ON events(task_id);
 CREATE INDEX IF NOT EXISTS events_run ON events(run_id);
 CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS schedules (
+  id TEXT PRIMARY KEY, kind TEXT NOT NULL, workflow TEXT NOT NULL, workflow_path TEXT, file_path TEXT,
+  cron TEXT, every_minutes INTEGER, timezone TEXT, title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
+  prompt TEXT, workspace_id TEXT, workspace_name TEXT, repo TEXT, active INTEGER NOT NULL DEFAULT 1, dedup_key TEXT,
+  spec TEXT NOT NULL DEFAULT '', last_run_at INTEGER, last_task_id TEXT, next_run_at INTEGER, last_error TEXT,
+  created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS schedules_dedup ON schedules(dedup_key) WHERE dedup_key IS NOT NULL;
 CREATE TABLE IF NOT EXISTS workspaces (
   id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, repo_path TEXT NOT NULL, base_branch TEXT NOT NULL,
   subdir TEXT NOT NULL DEFAULT '', default_workflow TEXT, setup TEXT NOT NULL DEFAULT '[]',
@@ -188,6 +201,48 @@ CREATE TABLE IF NOT EXISTS watches (
   created_at INTEGER NOT NULL, fired_at INTEGER, removed_at INTEGER
 );
 `;
+
+/**
+ * A schedule: it starts a task with a workflow each time its cron matches.
+ * - declarative: copied from a trigger file (~/.orstra/triggers) on each check. Id `file:<trigger file>`.
+ *   Only an edit of the file changes it.
+ * - imperative: made in the app or by the chief of staff. The API changes it.
+ */
+export interface ScheduleRow {
+  id: string;
+  kind: 'declarative' | 'imperative';
+  /** The workflow file name, such as `orstra-dogfood.yaml`. */
+  workflow: string;
+  /** Where the workflow file is, for a declarative schedule. */
+  workflow_path: string | null;
+  /** Where the trigger file is, for a declarative schedule: the file to edit. */
+  file_path: string | null;
+  cron: string | null;
+  /** Only a declarative schedule can have an interval instead of a cron (`every: 1d`). */
+  every_minutes: number | null;
+  /** IANA timezone. Null = UTC. */
+  timezone: string | null;
+  /** The title, description and prompt of the task it starts. Placeholders are filled when it fires. */
+  title: string;
+  description: string;
+  /** What the agents of each task get: the schedule's own instructions. */
+  prompt: string | null;
+  workspace_id: string | null;
+  /** A declarative schedule names its workspace; Orstra looks it up when it fires. */
+  workspace_name: string | null;
+  repo: string | null;
+  active: number;
+  /** An imperative schedule with the same key is the same schedule: creating it again changes it. */
+  dedup_key: string | null;
+  /** What the timing was when `next_run_at` was worked out. When it changes, the next run is worked out again. */
+  spec: string;
+  last_run_at: number | null;
+  last_task_id: string | null;
+  next_run_at: number | null;
+  last_error: string | null;
+  created_at: number;
+  updated_at: number;
+}
 
 /** A batch of actions the chief of staff wants to take that need your OK first. */
 export interface PlanRow {
@@ -231,7 +286,8 @@ export class Store {
   private migrate(): string[] {
     const want: Record<string, Record<string, string>> = {
       tasks: { stopped_at: 'INTEGER', workflow_yaml: 'TEXT', pr_url: 'TEXT', source: 'TEXT', archived_at: 'INTEGER',
-        workspace_id: 'TEXT', base_branch: 'TEXT', base_commit: 'TEXT', subdir: 'TEXT', setup_at: 'INTEGER' },
+        workspace_id: 'TEXT', base_branch: 'TEXT', base_commit: 'TEXT', subdir: 'TEXT', setup_at: 'INTEGER', prompt: 'TEXT' },
+      schedules: { prompt: 'TEXT', file_path: 'TEXT' },
       runs: { last_turn_at: 'INTEGER', wait_reason: 'TEXT', routed: 'TEXT', cost_usd: 'REAL', tokens_in: 'INTEGER', tokens_out: 'INTEGER',
         agent_pid: 'INTEGER', agent_boot_id: 'TEXT', agent_started_at: 'TEXT',
         head_before: 'TEXT', head_after: 'TEXT', log_uuid: 'TEXT', resumed_at: 'TEXT' },
@@ -274,12 +330,12 @@ export class Store {
   insertTask(t: TaskRow) {
     this.db
       .prepare(
-        `INSERT INTO tasks (id, ref, title, description, workflow_path, workflow_name, status, current_step, inbox_reason, edge_counts, worktree, created_at, updated_at, stopped_at, workflow_yaml, pr_url, source, archived_at, workspace_id, base_branch, base_commit, subdir, setup_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO tasks (id, ref, title, description, workflow_path, workflow_name, status, current_step, inbox_reason, edge_counts, worktree, created_at, updated_at, stopped_at, workflow_yaml, pr_url, source, archived_at, workspace_id, base_branch, base_commit, subdir, setup_at, prompt)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(t.id, t.ref, t.title, t.description, t.workflow_path, t.workflow_name, t.status, t.current_step, t.inbox_reason, t.edge_counts, t.worktree, t.created_at, t.updated_at,
         t.stopped_at ?? null, t.workflow_yaml ?? null, t.pr_url ?? null, t.source ?? null, t.archived_at ?? null,
-        t.workspace_id ?? null, t.base_branch ?? null, t.base_commit ?? null, t.subdir ?? null, t.setup_at ?? null);
+        t.workspace_id ?? null, t.base_branch ?? null, t.base_commit ?? null, t.subdir ?? null, t.setup_at ?? null, t.prompt ?? null);
   }
 
   updateTask(id: string, patch: Partial<TaskRow>) {
@@ -436,6 +492,47 @@ export class Store {
       .prepare('INSERT INTO events (task_id, run_id, ts, kind, payload) VALUES (?, ?, ?, ?, ?)')
       .run(taskId, runId, ts, kind, JSON.stringify(payload));
     return { id: Number(res.lastInsertRowid), task_id: taskId, run_id: runId, ts, kind, payload: JSON.stringify(payload) };
+  }
+
+  schedules(): ScheduleRow[] {
+    return this.db.prepare("SELECT * FROM schedules ORDER BY workflow, kind, created_at").all() as unknown as ScheduleRow[];
+  }
+
+  schedule(id: string): ScheduleRow | undefined {
+    return this.db.prepare('SELECT * FROM schedules WHERE id = ?').get(id) as ScheduleRow | undefined;
+  }
+
+  scheduleByKey(dedupKey: string): ScheduleRow | undefined {
+    return this.db.prepare('SELECT * FROM schedules WHERE dedup_key = ?').get(dedupKey) as ScheduleRow | undefined;
+  }
+
+  insertSchedule(r: ScheduleRow) {
+    const keys = Object.keys(r) as (keyof ScheduleRow)[];
+    this.db
+      .prepare(`INSERT INTO schedules (${keys.join(', ')}) VALUES (${keys.map(() => '?').join(', ')})`)
+      .run(...keys.map((k) => r[k] as never));
+  }
+
+  updateSchedule(id: string, patch: Partial<ScheduleRow>) {
+    const fields = { ...patch, updated_at: Date.now() };
+    const keys = Object.keys(fields);
+    this.db
+      .prepare(`UPDATE schedules SET ${keys.map((k) => `${k} = ?`).join(', ')} WHERE id = ?`)
+      .run(...keys.map((k) => (fields as Record<string, unknown>)[k] as never), id);
+  }
+
+  /** Give a schedule a new id. Used once, when a trigger moves from a workflow file into its own file. */
+  renameSchedule(from: string, to: string) {
+    this.db.prepare('UPDATE schedules SET id = ? WHERE id = ?').run(to, from);
+  }
+
+  deleteSchedule(id: string) {
+    this.db.prepare('DELETE FROM schedules WHERE id = ?').run(id);
+  }
+
+  /** The task with this source, whatever its workflow. A schedule uses it to start 1 task per due time. */
+  taskWithSource(source: string): TaskRow | undefined {
+    return this.db.prepare('SELECT * FROM tasks WHERE source = ? LIMIT 1').get(source) as TaskRow | undefined;
   }
 
   get(key: string): string | null {
