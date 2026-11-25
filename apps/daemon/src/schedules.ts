@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
-import { checkCron, checkTimezone, describeCron, fillDate, nextCron, parseWorkflow, type Trigger, type Workflow } from '@orstra/core';
+import { checkCron, checkTimezone, dateIn, describeCron, fillSchedule, nextCron, timeIn, parseWorkflow, type Trigger, type Workflow } from '@orstra/core';
 import type { ScheduleRow, Store, TaskRow } from './db.ts';
 import type { Runner } from './runner.ts';
 import { listWorkflows } from './workflows.ts';
@@ -408,11 +408,48 @@ export class Schedules {
       if (!w) throw new Error(`There is no workspace called ${r.workspace_name}.`);
       workspaceId = w.id;
     }
+    const at = { due, timezone: r.timezone, lastRun: r.last_run_at };
     return this.runner.startTask({
       workflowPath, workspaceId, repo: r.repo ?? undefined, source,
-      title: fillDate(r.title, due, r.timezone), description: fillDate(r.description, due, r.timezone) || undefined,
+      title: fillSchedule(r.title, at), description: fillSchedule(r.description, at) || undefined,
     });
   }
+}
+
+/** What a step prompt reads as `{{ trigger.schedule.* }}` for a task a schedule started. */
+export interface ScheduleContext {
+  id: string;
+  /** The due time, as an ISO string in UTC. */
+  due: string;
+  /** The due date (YYYY-MM-DD) and time (HH:mm), in the schedule's timezone. */
+  date: string;
+  time: string;
+  timezone: string;
+  /** The date of the task this schedule started before this one, or "never". */
+  last_run: string;
+}
+
+/**
+ * The schedule facts of a task, from its source `schedule:<id>@<due ms>`. Null for any other task.
+ * The last run is the latest earlier task of the same schedule, so it stays right after the schedule
+ * fires again or is deleted. A deleted schedule's timezone is unknown, so it falls back to UTC.
+ */
+export function scheduleContext(store: Store, source: string | null): ScheduleContext | null {
+  const m = source?.match(/^schedule:(.+)@(\d+)$/);
+  if (!m) return null;
+  const [, sid, dueText] = m;
+  const due = Number(dueText);
+  const tz = store.schedule(sid)?.timezone ?? null;
+  const prefix = `schedule:${sid}@`;
+  let last: number | null = null;
+  for (const s of store.sourcesWithPrefix(prefix)) {
+    const d = Number(s.slice(prefix.length));
+    if (Number.isFinite(d) && d < due && (last === null || d > last)) last = d;
+  }
+  return {
+    id: sid, due: new Date(due).toISOString(), date: dateIn(due, tz), time: timeIn(due, tz), timezone: tz ?? 'UTC',
+    last_run: last === null ? 'never' : dateIn(last, tz),
+  };
 }
 
 /** The trigger index from a declarative id `yaml:<file>#<n>`. */

@@ -347,10 +347,10 @@ function ScheduleForm({ s, onClose, onSaved }: { s?: Schedule; onClose: () => vo
         <SettingsRow label="Timezone" help="An IANA name. The cron's hours are in it.">
           <input className="lx-input lx-mono ox-wsin" aria-label="Timezone" value={timezone} onChange={(e) => setTimezone(e.target.value)} placeholder="Europe/London" />
         </SettingsRow>
-        <SettingsRow label="Task title" help="{{ date }} becomes the date it is due.">
+        <SettingsRow label="Task title" help="{{ date }} and {{ time }} become when it is due, {{ last_run }} the date it last ran.">
           <input className="lx-input ox-wsin" aria-label="Task title" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Triage {{ date }}" />
         </SettingsRow>
-        <SettingsRow label="Description" help="The first step's agent reads it. Optional.">
+        <SettingsRow label="Description" help="Steps read it as {{ trigger.description }}. The same placeholders work here. Optional.">
           <textarea className="lx-field ox-wsin" aria-label="Description" value={description} onChange={(e) => setDescription(e.target.value)} />
         </SettingsRow>
         <SettingsRow label="Workspace" help="Where each task works.">

@@ -520,6 +520,12 @@ export class Store {
     return this.db.prepare('SELECT * FROM tasks WHERE source = ? LIMIT 1').get(source) as TaskRow | undefined;
   }
 
+  /** The sources of the tasks whose source starts with `prefix`. Compared as text, so `%` and `_` in it mean themselves. */
+  sourcesWithPrefix(prefix: string): string[] {
+    const rows = this.db.prepare('SELECT source FROM tasks WHERE substr(source, 1, ?) = ?').all(prefix.length, prefix) as { source: string }[];
+    return rows.map((r) => r.source);
+  }
+
   get(key: string): string | null {
     const row = this.db.prepare('SELECT value FROM kv WHERE key = ?').get(key) as { value: string } | undefined;
     return row ? row.value : null;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { checkCron, dateIn, describeCron, fillDate, nextCron, parseWorkflow } from '../src/index.ts';
+import { checkCron, dateIn, describeCron, fillDate, fillSchedule, nextCron, parseWorkflow, timeIn } from '../src/index.ts';
 
 const HUMAN = `steps:\n  review:\n    use: human\n    question: ok?\n    on: { approved: end }\n`;
 const iso = (ms: number | null) => (ms === null ? null : new Date(ms).toISOString());
@@ -43,6 +43,16 @@ describe('cron with a timezone', () => {
     expect(dateIn(ms)).toBe('2026-11-25');
     expect(dateIn(ms, 'Asia/Tokyo')).toBe('2026-11-26');
     expect(fillDate('Triage {{ date }}', ms, 'America/New_York')).toBe('Triage 2026-11-25');
+  });
+});
+
+describe('the inputs of a scheduled task', () => {
+  it('fills date, time and last_run in the timezone, and leaves other placeholders alone', () => {
+    const due = t('2026-11-26T14:30:00Z');
+    expect(timeIn(due, 'America/New_York')).toBe('09:30');
+    expect(fillSchedule('{{ date }} {{time}} since {{ last_run }} · {{ trigger.title }}', { due, timezone: 'America/New_York', lastRun: t('2026-11-25T14:30:00Z') }))
+      .toBe('2026-11-26 09:30 since 2026-11-25 · {{ trigger.title }}');
+    expect(fillSchedule('since {{ last_run }}', { due })).toBe('since never');
   });
 });
 

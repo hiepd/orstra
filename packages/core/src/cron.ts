@@ -57,7 +57,26 @@ export function dateIn(ms: number, tz?: string | null): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: tz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ms));
 }
 
+/** The clock time (HH:mm, 24 hours) of `ms` in the timezone. */
+export function timeIn(ms: number, tz?: string | null): string {
+  return new Intl.DateTimeFormat('en-GB', { timeZone: tz || 'UTC', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(ms));
+}
+
 /** Fill `{{ date }}` in a schedule's title or description. */
 export function fillDate(text: string, ms: number, tz?: string | null): string {
   return text.replace(/\{\{\s*date\s*\}\}/g, dateIn(ms, tz));
+}
+
+/**
+ * Fill the placeholders of a schedule's title or description:
+ * - `{{ date }}`: the date it is due (YYYY-MM-DD), in its timezone.
+ * - `{{ time }}`: the time it is due (HH:mm), in its timezone.
+ * - `{{ last_run }}`: the date the schedule last started a task, or "never".
+ * Other `{{ … }}` stay as they are, so a step's own template is not touched.
+ */
+export function fillSchedule(text: string, at: { due: number; timezone?: string | null; lastRun?: number | null }): string {
+  return text
+    .replace(/\{\{\s*date\s*\}\}/g, dateIn(at.due, at.timezone))
+    .replace(/\{\{\s*time\s*\}\}/g, timeIn(at.due, at.timezone))
+    .replace(/\{\{\s*last_run\s*\}\}/g, at.lastRun ? dateIn(at.lastRun, at.timezone) : 'never');
 }

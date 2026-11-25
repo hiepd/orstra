@@ -99,6 +99,28 @@ describe('imperative schedules', () => {
   });
 });
 
+describe('the inputs of a scheduled task', () => {
+  it('fills {{ last_run }} in the title, and gives step prompts trigger.schedule', async () => {
+    const clock = { now: t('2026-11-25T08:00:00Z') };
+    const { store, runner, schedules, triggers } = daemon(':memory:', { 'plain.yaml': PLAIN }, clock);
+    const { schedule } = schedules.create({ workflow: 'plain', cron: '30 9 * * *', timezone: 'Europe/Paris', title: 'Digest {{ date }} {{ time }} since {{ last_run }}' });
+    clock.now = t('2026-11-25T08:31:00Z');
+    await triggers.tick();
+    clock.now = t('2026-11-26T08:31:00Z');
+    await triggers.tick();
+    const [second, first] = store.tasks();
+    expect(first.title).toBe('Digest 2026-11-25 09:30 since never');
+    expect(second.title).toBe('Digest 2026-11-26 09:30 since 2026-11-25');
+
+    const ctx = (runner as any).context(second);
+    expect(ctx.trigger.schedule).toEqual({ id: schedule.id, due: '2026-11-26T08:30:00.000Z', date: '2026-11-26', time: '09:30', timezone: 'Europe/Paris', last_run: '2026-11-25' });
+    expect((runner as any).context(first).trigger.schedule.last_run).toBe('never');
+    // A task you started yourself has no schedule facts.
+    const own = runner.startTask({ workflowPath: (schedules as any).workflows()[0].path, title: 'mine' });
+    expect((runner as any).context(own).trigger.schedule).toBeUndefined();
+  });
+});
+
 describe('1 task per due time, across a restart', () => {
   it('a restarted daemon does not start the same due time again', async () => {
     const db = tmpDb();

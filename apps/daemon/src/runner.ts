@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { FINISH_INSTRUCTIONS, parseAgentResult, parseWorkflow, renderTemplate, route, stripProgressBlock, switchCase, type Progress, type Step, type Workflow } from '@orstra/core';
+import { scheduleContext } from './schedules.ts';
 import { excludeFromGit, withFiles, type Attachment } from './attachments.ts';
 import { readClaudeLine, summarizeTool, type Executors, type LiveSession, type StreamEvent, type TurnEnd, type TurnUsage } from './executors.ts';
 import { entriesAfter, findSessionLog, readSessionLog, whereStopped, type WhereStopped } from './sessionLog.ts';
@@ -502,7 +503,9 @@ export class Runner extends EventEmitter {
       const s = (steps[i.stepId] ??= {}) as { artifacts?: string[] };
       (s.artifacts ??= []).push(inputPath(i.stepId, i.name));
     }
-    const trigger = { title: task.title, description: task.description, ref: task.ref, id: task.ref ?? task.id };
+    // A task a schedule started also has {{ trigger.schedule.date }}, .time, .last_run and the rest.
+    const schedule = scheduleContext(this.store, task.source);
+    const trigger = { title: task.title, description: task.description, ref: task.ref, id: task.ref ?? task.id, ...(schedule ? { schedule } : {}) };
     return { trigger, task: { id: task.id, ref: task.ref, title: task.title }, steps };
   }
 

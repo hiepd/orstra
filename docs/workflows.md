@@ -118,6 +118,22 @@ triggers:
 
 A schedule has `cron` or `every`, not both. An interval counts from when Orstra first saw the trigger.
 
+The input of a scheduled task is its title and description. Steps read them as `{{ trigger.title }}` and `{{ trigger.description }}`, as for any task. In the title and the description of a schedule, these placeholders are filled when the task starts:
+
+| Placeholder | Becomes |
+|---|---|
+| `{{ date }}` | The date it is due, such as 2026-11-25, in its timezone |
+| `{{ time }}` | The time it is due, such as 09:00, in its timezone |
+| `{{ last_run }}` | The date the schedule last started a task, or `never` |
+
+A step prompt in a task that a schedule started can also read `{{ trigger.schedule.date }}`, `.time`, `.timezone`, `.last_run`, `.due` (the due time in UTC, ISO 8601) and `.id`. In any other task they are empty.
+
+```yaml
+prompt: |
+  {{ trigger.description }}
+  Look only at what changed since {{ trigger.schedule.last_run }}.
+```
+
 You can also make imperative schedules on the Triggers page, or ask the chief of staff. Orstra keeps them in its database, and you can change, turn off, or delete them there. The Triggers page lists both kinds.
 
 A schedule starts at most 1 task per due time, also across a restart. If due times passed while Orstra was off, it starts 1 task when it is back, and then waits for the next due time.
