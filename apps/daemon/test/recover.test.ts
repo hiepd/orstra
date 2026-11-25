@@ -96,18 +96,19 @@ describe('the stamp openSession writes', () => {
 });
 
 describe('recover', () => {
-  it('leaves an agent run waiting, so your next message resumes the session', async () => {
+  it('resumes the agent run on its own, in the same session', async () => {
     const t = await restart(sameBox);
-    t.runner.recover();
+    await t.runner.recover();
     const run = t.store.run(t.runId)!;
-    expect(run.status).toBe('waiting');
-    expect(run.session_id).toBeTruthy();
+    expect(run.status).toBe('running');
+    expect(t.opened).toHaveLength(1);
+    expect(t.opened[0]).toMatchObject({ sessionId: run.session_id, resume: true });
     expect(systemText(t.store, t.taskId)).toContain('Orstra restarted mid-run');
   });
 
   it('stops an agent that outlived the daemon, and says which process it was', async () => {
     const t = await restart(sameBox);
-    t.runner.recover();
+    await t.runner.recover();
     await new Promise((r) => setTimeout(r, 20));
     expect(t.stopped).toEqual([AGENT_PID]);
     const text = systemText(t.store, t.taskId);
@@ -117,7 +118,7 @@ describe('recover', () => {
 
   it('stops nothing when the agent process is already gone', async () => {
     const t = await restart({ before: machine('boot-1', { [AGENT_PID]: 'nine' }), after: machine('boot-1', {}) });
-    t.runner.recover();
+    await t.runner.recover();
     await new Promise((r) => setTimeout(r, 20));
     expect(t.stopped).toEqual([]);
     expect(systemText(t.store, t.taskId)).not.toContain('was still working');
@@ -125,21 +126,21 @@ describe('recover', () => {
 
   it('stops nothing after a reboot, because that pid is somebody else now', async () => {
     const t = await restart({ before: machine('boot-1', { [AGENT_PID]: 'nine' }), after: machine('boot-2', { [AGENT_PID]: 'nine' }) });
-    t.runner.recover();
+    await t.runner.recover();
     await new Promise((r) => setTimeout(r, 20));
     expect(t.stopped).toEqual([]);
   });
 
   it('stops nothing when the system gave that pid to someone else', async () => {
     const t = await restart({ before: machine('boot-1', { [AGENT_PID]: 'nine' }), after: machine('boot-1', { [AGENT_PID]: 'much later' }) });
-    t.runner.recover();
+    await t.runner.recover();
     await new Promise((r) => setTimeout(r, 20));
     expect(t.stopped).toEqual([]);
   });
 
   it('clears the stamp, so a later restart does not chase the same process twice', async () => {
     const t = await restart(sameBox);
-    t.runner.recover();
+    await t.runner.recover();
     const run = t.store.run(t.runId)!;
     expect(run.agent_pid).toBeNull();
     expect(run.agent_boot_id).toBeNull();
@@ -177,7 +178,7 @@ describe('the commit range a run leaves', () => {
     expect(before).toMatch(/^[0-9a-f]{40}$/);
     expect(t.store.run(t.runId)!.head_after).toBeNull();
 
-    t.runner.recover();
+    await t.runner.recover();
     const run = t.store.run(t.runId)!;
     // Nothing was committed while the agent worked, so the range is empty, and it is readable.
     expect(run.head_after).toBe(before);
@@ -186,7 +187,7 @@ describe('the commit range a run leaves', () => {
   it('records nothing for a worktree that is not a repository', async () => {
     const t = await restart(sameBox);
     expect(t.store.run(t.runId)!.head_before).toBeNull();
-    t.runner.recover();
+    await t.runner.recover();
     expect(t.store.run(t.runId)!.head_after).toBeNull();
   });
 });
@@ -201,13 +202,13 @@ describe('what the restart says about the lost turn', () => {
     git('add', '-A');
     git('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'the work');
 
-    t.runner.recover();
+    await t.runner.recover();
     expect(systemText(t.store, t.taskId)).toContain('It left 1 commit on the branch');
   });
 
   it('says nothing about commits when the agent made none', async () => {
     const t = await restart({ ...sameBox, git: true });
-    t.runner.recover();
+    await t.runner.recover();
     expect(systemText(t.store, t.taskId)).not.toContain('on the branch');
   });
 });

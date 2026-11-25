@@ -608,6 +608,19 @@ export function startServer(store: Store, runner: Runner, port: number, cos?: Ch
       for (const taskId of ids) broadcast({ taskId });
     }, 100);
   });
+  // The text an agent writes now, token by token. A named event, so it never asks for a refetch. Each
+  // run sends its newest draft at most once per 50 ms: the draft is whole each time, so a skipped one
+  // loses nothing.
+  const drafts = new Map<string, { taskId: string; runId: string; text: string; after: number }>();
+  let draftFlush: NodeJS.Timeout | null = null;
+  runner.on('draft', (d: { taskId: string; runId: string; text: string; after: number }) => {
+    drafts.set(d.runId, d);
+    draftFlush ??= setTimeout(() => {
+      draftFlush = null;
+      for (const x of drafts.values()) write(`event: draft\ndata: ${JSON.stringify(x)}\n\n`);
+      drafts.clear();
+    }, 50);
+  });
   cos?.on('change', broadcast);
   devServers.on('change', (taskId: string) => broadcast({ taskId }));
   runner.on('cleanup', (taskId: string) => {

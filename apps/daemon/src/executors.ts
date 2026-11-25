@@ -57,6 +57,13 @@ export interface SessionOptions {
   /** Codex picks its own session id; this reports it so the runner can resume that session. */
   onSessionId?: (id: string) => void;
   onEvent: (e: StreamEvent) => void;
+  /**
+   * A line of the stream with its position in the session log (Claude Code only). Set, it takes the
+   * events of such a line instead of onEvent, so the runner can store them with the position.
+   */
+  onLog?: (uuid: string, events: StreamEvent[]) => void;
+  /** A chunk of the text the agent is writing now. It is not stored: the full message follows. */
+  onDelta?: (text: string) => void;
   onTurn: (t: TurnEnd) => void;
 }
 
@@ -155,6 +162,8 @@ export function claudeArgs(opts: Pick<SessionOptions, 'sessionId' | 'resume' | '
     '--input-format', 'stream-json',
     '--output-format', 'stream-json',
     '--verbose',
+    // Text chunks as the model writes them, so the chat can show the reply token by token.
+    '--include-partial-messages',
     ...(opts.toolArgs ?? ['--permission-mode', cfg.permissionMode ?? process.env.ORSTRA_CLAUDE_PERMISSION ?? 'acceptEdits', '--allowedTools', allowedTools(cfg)]),
     ...ask,
     ...(opts.resume ? ['--resume', opts.sessionId] : ['--session-id', opts.sessionId]),
@@ -178,6 +187,13 @@ function toolResultText(body: unknown): string {
 
 export interface ClaudeHandlers {
   onEvent: (e: StreamEvent) => void;
+  /**
+   * A line with a uuid: its events, all together, and its position in the session log. Set, it
+   * replaces onEvent for such lines, so the caller can store the events and the position as 1 write.
+   */
+  onLine?: (uuid: string, events: StreamEvent[]) => void;
+  /** A chunk of the text the agent is writing now. The full text comes after, as a message. */
+  onDelta?: (text: string) => void;
   /** The agent's latest text block. The session keeps it, for a turn whose result carries none. */
   onText: (text: string) => void;
   onResult: (r: { result: string | null; isError: boolean; subtype: string | null; usage?: TurnUsage }) => void;
@@ -193,22 +209,30 @@ export interface ClaudeHandlers {
 export function readClaudeLine(line: string, h: ClaudeHandlers): void {
   let msg: any;
   try { msg = JSON.parse(line); } catch { return; }
+  if (msg.type === 'stream_event') {
+    const e = msg.event;
+    if (e?.type === 'content_block_delta' && e.delta?.type === 'text_delta' && typeof e.delta.text === 'string') h.onDelta?.(e.delta.text);
+    return;
+  }
+  const events: StreamEvent[] = [];
   if (msg.type === 'assistant' && Array.isArray(msg.message?.content)) {
     for (const c of msg.message.content) {
       if (c.type === 'text' && c.text?.trim()) {
         h.onText(c.text.trim());
-        h.onEvent({ kind: 'message', text: c.text.trim() });
+        events.push({ kind: 'message', text: c.text.trim() });
       }
-      if (c.type === 'tool_use') h.onEvent({ kind: 'tool', ...(typeof c.id === 'string' ? { callId: c.id } : {}), name: c.name, summary: summarizeTool(c.name, c.input ?? {}) });
+      if (c.type === 'tool_use') events.push({ kind: 'tool', ...(typeof c.id === 'string' ? { callId: c.id } : {}), name: c.name, summary: summarizeTool(c.name, c.input ?? {}) });
     }
-    return;
-  }
-  if (msg.type === 'user' && Array.isArray(msg.message?.content)) {
+  } else if (msg.type === 'user' && Array.isArray(msg.message?.content)) {
     for (const c of msg.message.content) {
       if (c.type === 'tool_result' && typeof c.tool_use_id === 'string') {
-        h.onEvent({ kind: 'tool_result', callId: c.tool_use_id, ok: !c.is_error, summary: toolResultText(c.content) });
+        events.push({ kind: 'tool_result', callId: c.tool_use_id, ok: !c.is_error, summary: toolResultText(c.content) });
       }
     }
+  }
+  if (msg.type === 'assistant' || msg.type === 'user') {
+    if (h.onLine && typeof msg.uuid === 'string') h.onLine(msg.uuid, events);
+    else events.forEach(h.onEvent);
     return;
   }
   if (msg.type === 'result') {
@@ -239,6 +263,8 @@ function claudeSession(opts: SessionOptions): LiveSession {
   createInterface({ input: child.stdout }).on('line', (line) =>
     readClaudeLine(line, {
       onEvent: opts.onEvent,
+      onLine: opts.onLog,
+      onDelta: opts.onDelta,
       onText: (t) => { lastText = t; },
       onResult: (r) => {
         const interrupted = interruptPending || r.subtype === 'error_during_execution';

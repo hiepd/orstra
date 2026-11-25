@@ -2419,3 +2419,6 @@ textarea.ox-wsin{min-height:56px}
 .ox-arlbb{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;overflow:auto;background:var(--hover);border-radius:8px;padding:10px}
 .ox-arlbi{max-width:100%;max-height:100%;border-radius:6px;background:#fff}
 .ox-arlbt{width:100%;max-height:100%;overflow:auto;background:var(--surface);border-color:var(--line-2)}
+/* The text an agent writes now: a soft caret at the end shows it is still coming. */
+.ox-draft > :last-child::after{content:'';display:inline-block;width:7px;height:1em;margin-left:2px;vertical-align:-2px;border-radius:2px;background:var(--accent-fg);opacity:.6;animation:ox-caret 1s steps(2) infinite}
+@keyframes ox-caret{50%{opacity:0}}

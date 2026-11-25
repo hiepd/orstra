@@ -77,6 +77,17 @@ describe('/api/events', () => {
     expect(block).not.toContain('event:');
   });
 
+  it('sends the text an agent writes as a named draft event, the newest one per run', async () => {
+    const got = read((t) => t.includes('Hello world'));
+    await new Promise((r) => setTimeout(r, 50));
+    for (const text of ['Hel', 'Hello', 'Hello wor', 'Hello world']) runner.emit('draft', { taskId, runId: 'r-1', text, after: 7 });
+    const text = await got;
+    const drafts = text.split('\n\n').filter((b) => b.includes('event: draft'));
+    // A burst sends the newest draft, not each chunk.
+    expect(drafts).toHaveLength(1);
+    expect(JSON.parse(drafts[0].split('data: ')[1])).toEqual({ taskId, runId: 'r-1', text: 'Hello world', after: 7 });
+  });
+
   it('keeps serving after a reader goes away', async () => {
     // A browser tab that closes mid-stream leaves a dead response behind. Writing to it must not
     // take the daemon down, or every other tab stops updating too.

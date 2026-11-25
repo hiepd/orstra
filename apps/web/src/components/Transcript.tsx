@@ -1,6 +1,6 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import type { RunView, TaskEvent } from '../api';
-import { useNow } from '../lib/live';
+import { draftIsNew, useDraft, useNow } from '../lib/live';
 import { duration } from '../lib/time';
 import { SentFiles } from './FileChips';
 import { ChevronRight } from './Icons';
@@ -127,6 +127,8 @@ export function Transcript({
   /** The task's worktree: an absolute path inside it gets a chip too. */
   worktree?: string | null;
 }) {
+  // The text the agent writes now, token by token. The stored message replaces it.
+  const draft = useDraft(run.id);
   const mine = events.filter((e) => e.runId === run.id && !(hideAsides && (e.kind === 'aside' || (e.kind === 'you' && e.mode === 'ask'))));
   // How each tool call ended. A call with no entry is still running.
   const results = useMemo(() => toolResults(mine), [mine]);
@@ -197,7 +199,18 @@ export function Transcript({
         });
     }
   }
-  flush(run.endedAt ?? Date.now(), working);
+  if (draftIsNew(draft, mine)) {
+    // The draft is the live part, so the tool calls before it fold as a finished stretch.
+    flush(Date.now(), false);
+    items.push({
+      key: 'draft',
+      node: (
+        <div className="ox-ai ox-draft" aria-live="polite">
+          <Markdown text={draft.text} />
+        </div>
+      ),
+    });
+  } else flush(run.endedAt ?? Date.now(), working);
 
   if (items.length === 0) return <div className="lx-hint" style={{ textAlign: 'center', padding: '24px 0' }}>{run.status === 'queued' ? 'This run hasn’t started yet.' : 'Nothing said yet.'}</div>;
   return (

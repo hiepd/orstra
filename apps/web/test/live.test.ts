@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { coalesce, liveStream, oneAtATime, type StreamLike } from '../src/lib/live';
+import { coalesce, draftIsNew, liveStream, oneAtATime, type StreamLike } from '../src/lib/live';
 
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
@@ -75,12 +75,15 @@ class FakeStream implements StreamLike {
   onopen: ((ev: unknown) => void) | null = null;
   onerror: ((ev: unknown) => void) | null = null;
   onmessage: ((ev: { data: string }) => void) | null = null;
-  private named = new Map<string, () => void>();
+  private named = new Map<string, (ev: { data: string }) => void>();
   constructor() {
     FakeStream.made.push(this);
   }
-  addEventListener(type: string, fn: () => void) {
+  addEventListener(type: string, fn: (ev: { data: string }) => void) {
     this.named.set(type, fn);
+  }
+  draft(d: unknown) {
+    this.named.get('draft')?.({ data: JSON.stringify(d) });
   }
   close() {
     this.closed = true;
@@ -89,7 +92,7 @@ class FakeStream implements StreamLike {
     this.onopen?.({});
   }
   beat() {
-    this.named.get('ping')?.();
+    this.named.get('ping')?.({ data: '{"ping":true}' });
   }
   change(taskId: string) {
     this.onmessage?.({ data: JSON.stringify({ taskId }) });
@@ -101,15 +104,31 @@ describe('liveStream', () => {
     FakeStream.made = [];
     const changes: (string | null)[] = [];
     const conn: boolean[] = [];
+    const drafts: unknown[] = [];
     const s = liveStream({
       create: () => new FakeStream(),
       onChange: (id) => changes.push(id),
       onConnected: (c) => conn.push(c),
+      onDraft: (d) => drafts.push(d),
       silenceMs: 45_000,
       checkMs: 5_000,
     });
-    return { s, changes, conn, made: () => FakeStream.made };
+    return { s, changes, conn, drafts, made: () => FakeStream.made };
   };
+
+  it('hands a draft to onDraft, never asks for a refetch for it, and counts it as a sign of life', () => {
+    const { s, changes, drafts, made } = setup();
+    made()[0].open();
+    changes.length = 0;
+    vi.advanceTimersByTime(40_000);
+    made()[0].draft({ taskId: 't1', runId: 'r1', text: 'Hel', after: 3 });
+    expect(drafts).toEqual([{ taskId: 't1', runId: 'r1', text: 'Hel', after: 3 }]);
+    expect(changes).toEqual([]);
+    // The draft was the last sign of life 10 s ago, so the stream is still alive.
+    vi.advanceTimersByTime(10_000);
+    expect(made()).toHaveLength(1);
+    s.stop();
+  });
 
   it('opens one stream and reports what it says', () => {
     const t = setup();
@@ -219,5 +238,29 @@ describe('oneAtATime', () => {
     await Promise.resolve();
     go();
     expect(n).toBe(2);
+  });
+});
+
+describe('draftIsNew', () => {
+  const d = { taskId: 't1', runId: 'r1', text: 'Hello', after: 10 };
+
+  it('shows a draft while the run has nothing newer', () => {
+    expect(draftIsNew(d, [{ id: 9, runId: 'r1' }, { id: 10, runId: 'r1' }, { id: 12, runId: 'r2' }])).toBe(true);
+  });
+
+  it('hides it once the run has a newer event: its message is in, even if the clear came late', () => {
+    expect(draftIsNew(d, [{ id: 11, runId: 'r1' }])).toBe(false);
+  });
+
+  it('keeps an ended draft until its message is in, but not forever', () => {
+    const ended = { ...d, endedAt: 1_000 };
+    expect(draftIsNew(ended, [], 1_200)).toBe(true);
+    expect(draftIsNew(ended, [{ id: 11, runId: 'r1' }], 1_200)).toBe(false);
+    expect(draftIsNew(ended, [], 7_000)).toBe(false);
+  });
+
+  it('hides an empty draft and no draft', () => {
+    expect(draftIsNew({ ...d, text: '' }, [])).toBe(false);
+    expect(draftIsNew(null, [])).toBe(false);
   });
 });

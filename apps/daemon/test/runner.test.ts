@@ -583,33 +583,35 @@ steps:
     ]);
   });
 
-  it('reads an agent run as paused after a restart, and frees its slot', async () => {
+  it('resumes an agent run after a restart, and its next turn routes as usual', async () => {
     const { store, runner, wfPath, fake, dir } = setup(LOOP, () => 'Need input\n\nOUTCOME: needs_you');
     const task = runner.startTask({ workflowPath: wfPath, title: 'restart' });
     await runner.idle();
     const impl = store.runsForTask(task.id)[0];
     store.updateRun(impl.id, { status: 'running', wait_reason: null }); // as a daemon that died mid-turn would leave it
 
-    const runner2 = new Runner(store, fake.exec, { slots: 2, createWorktree: () => dir, turnGraceMs: 0 });
-    runner2.recover();
-
-    expect(store.run(impl.id)).toMatchObject({ status: 'waiting', wait_reason: 'paused' });
-    expect(store.task(task.id)).toMatchObject({ status: 'needs_you', inbox_reason: 'paused', current_step: 'impl' });
-    expect(store.runsByStatus('running')).toHaveLength(0);
+    const runner2 = new Runner(store, fake.exec, { slots: 2, createWorktree: () => dir, turnGraceMs: 0, claudeConfigDir: dir });
+    await runner2.recover();
     await runner2.idle();
+
+    // The resumed session answered with a question, so the run waits on you for that reason.
+    expect(store.run(impl.id)).toMatchObject({ status: 'waiting', wait_reason: 'question' });
+    expect(store.task(task.id)).toMatchObject({ status: 'needs_you', current_step: 'impl' });
   });
 
-  it('still fails a gate run that died with the process', async () => {
+  it('runs a gate again from the start after a restart', async () => {
     const { store, runner, wfPath, fake, dir } = setup(LOOP, () => done('ok'));
     const task = runner.startTask({ workflowPath: wfPath, title: 'dead gate' });
     await runner.idle();
     const verify = store.runsForTask(task.id).find((r) => r.kind === 'gate')!;
     store.updateRun(verify.id, { status: 'running', outcome: null, ended_at: null, routed: null });
 
-    new Runner(store, fake.exec, { slots: 2, createWorktree: () => dir, turnGraceMs: 0 }).recover();
+    const runner2 = new Runner(store, fake.exec, { slots: 2, createWorktree: () => dir, turnGraceMs: 0, claudeConfigDir: dir });
+    await runner2.recover();
+    await runner2.idle();
 
-    expect(store.run(verify.id)).toMatchObject({ status: 'failed', outcome: 'interrupted', routed: 'block:interrupted' });
-    expect(store.task(task.id)).toMatchObject({ status: 'needs_you', inbox_reason: 'interrupted' });
+    expect(store.run(verify.id)).toMatchObject({ status: 'done' });
+    expect(store.run(verify.id)!.outcome).not.toBe('interrupted');
   });
 
   it('rebuilds the same state it had', async () => {
