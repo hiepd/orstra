@@ -118,7 +118,7 @@ triggers:
 
 A schedule has `cron` or `every`, not both. An interval counts from when Orstra first saw the trigger.
 
-The input of a scheduled task is its title and description. Steps read them as `{{ trigger.title }}` and `{{ trigger.description }}`, as for any task. In the title and the description of a schedule, these placeholders are filled when the task starts:
+A schedule fills the title and the description of each task it starts, as you do in the New task form. The workflow's prompts say how to work; the description says what this task is about. Every agent step reads it, and a prompt can also place it with `{{ trigger.description }}`. In the title and the description of a schedule, these placeholders are filled when the task starts:
 
 | Placeholder | Becomes |
 |---|---|

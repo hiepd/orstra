@@ -19,7 +19,7 @@ const scheduleFields: Record<string, Prop> = {
   cron: { type: 'string', description: 'A 5-field cron expression: minute hour day-of-month month day-of-week. "0 9 * * 1-5" = every weekday at 09:00.' },
   timezone: { type: 'string', description: 'An IANA timezone, such as Europe/London. Default: this machine’s timezone. "UTC" for UTC.' },
   title: { type: 'string', description: 'The title of each task it starts. {{ date }} and {{ time }} become when it is due (in its timezone), {{ last_run }} the date it last started a task or "never". E.g. "Dogfood {{ date }}".' },
-  description: { type: 'string', description: 'The input of each task: steps read it as {{ trigger.description }}. Put what the agent should do here. The same placeholders work (optional).' },
+  description: { type: 'string', description: 'The description of each task it starts, as in start_task: what should happen and how to know it is done. The workflow says how to work. The same placeholders work (optional).' },
   workspace: { type: 'string', description: 'The workspace its tasks work in, by name, from list_workspaces. Needed when there is more than 1.' },
 };
 

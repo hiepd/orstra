@@ -350,8 +350,14 @@ function ScheduleForm({ s, onClose, onSaved }: { s?: Schedule; onClose: () => vo
         <SettingsRow label="Task title" help="{{ date }} and {{ time }} become when it is due, {{ last_run }} the date it last ran.">
           <input className="lx-input ox-wsin" aria-label="Task title" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Triage {{ date }}" />
         </SettingsRow>
-        <SettingsRow label="Description" help="Steps read it as {{ trigger.description }}. The same placeholders work here. Optional.">
-          <textarea className="lx-field ox-wsin" aria-label="Description" value={description} onChange={(e) => setDescription(e.target.value)} />
+        <SettingsRow label="Description" help="Each task gets it, as when you start a task by hand. The workflow says how to work; this says what to do. Optional.">
+          <textarea
+            className="lx-field ox-wsin"
+            aria-label="Description"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="What should happen, and how you’ll know it’s done"
+          />
         </SettingsRow>
         <SettingsRow label="Workspace" help="Where each task works.">
           <select className="lx-select ox-wsin" aria-label="Workspace" value={workspace} onChange={(e) => setWorkspace(e.target.value)}>
