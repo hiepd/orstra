@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { parseWorkflow, type Progress, type Trigger } from '@orstra/core';
 import type { Store, TaskRow } from './db.ts';
 import type { Runner } from './runner.ts';
+import { Schedules } from './schedules.ts';
 import { listWorkflows } from './workflows.ts';
 
 /** One Linear issue, as the trigger reads it. */
@@ -66,17 +67,20 @@ export interface TriggerStatus {
 /**
  * Starts tasks from triggers, and sends progress back to Linear. It reads the workflow files on each
  * check, so a trigger you add or change works on the next check without a restart.
+ * Schedules, declarative and imperative, fire in the same check (see schedules.ts).
  */
 export class Triggers {
   private status = new Map<string, TriggerStatus>();
   private timer: NodeJS.Timeout | null = null;
   private running = false;
+  readonly schedules: Schedules;
 
   constructor(
     private store: Store,
     private runner: Runner,
-    private opts: { linear?: LinearClient | null; now?: () => number; workflows?: () => { path: string; file: string }[] } = {},
+    private opts: { linear?: LinearClient | null; now?: () => number; workflows?: () => { path: string; file: string }[]; schedules?: Schedules } = {},
   ) {
+    this.schedules = opts.schedules ?? new Schedules(store, runner, { now: opts.now, workflows: opts.workflows });
     runner.on('progress', (e: { taskId: string; runId: string; outcome?: string }) => void this.mirror(e.taskId, e.runId, e.outcome));
   }
 
@@ -94,6 +98,7 @@ export class Triggers {
     if (this.timer) clearInterval(this.timer);
   }
 
+  /** The Linear triggers and how their last check went. Schedules have their own view (schedules.list()). */
   view(): TriggerStatus[] {
     return [...this.status.values()];
   }
@@ -103,6 +108,13 @@ export class Triggers {
     if (this.running) return;
     this.running = true;
     try {
+      // 1 loop for every schedule: copy the declarative ones from the files, then fire what is due.
+      try {
+        this.schedules.sync();
+        this.schedules.fireDue();
+      } catch (err) {
+        console.error('Schedules:', err);
+      }
       for (const w of (this.opts.workflows ?? listWorkflows)()) {
         let triggers: Trigger[];
         try {
@@ -111,14 +123,15 @@ export class Triggers {
           continue; // The Workflows screen shows the parse error.
         }
         for (const [i, t] of triggers.entries()) {
+          if (t.kind !== 'linear') continue;
           const key = `${w.file}#${i}`;
           const st: TriggerStatus = this.status.get(key) ?? {
-            workflow: w.file, kind: t.kind, label: t.kind === 'linear' ? `Linear label "${t.label}"${t.team ? ` in ${t.team}` : ''}` : `Every ${t.everyMinutes} min: ${t.title}`,
+            workflow: w.file, kind: t.kind, label: `Linear label "${t.label}"${t.team ? ` in ${t.team}` : ''}`,
             lastCheck: null, lastError: null, started: 0,
           };
           this.status.set(key, st);
           try {
-            st.started += t.kind === 'linear' ? await this.checkLinear(w.path, t) : this.checkSchedule(w.path, key, t);
+            st.started += await this.checkLinear(w.path, t);
             st.lastError = null;
           } catch (err: any) {
             st.lastError = err?.message ?? String(err);
@@ -145,21 +158,6 @@ export class Triggers {
       n++;
     }
     return n;
-  }
-
-  private checkSchedule(workflowPath: string, key: string, t: Extract<Trigger, { kind: 'schedule' }>): number {
-    const kv = `schedule:${key}`;
-    const last = Number(this.store.get(kv) ?? 0);
-    const now = this.now();
-    if (!last) {
-      this.store.set(kv, String(now));
-      return 0;
-    }
-    if (now - last < t.everyMinutes * 60_000) return 0;
-    this.store.set(kv, String(now));
-    const day = new Date(now).toISOString().slice(0, 10);
-    this.runner.startTask({ workflowPath, title: t.title.replace(/\{\{\s*date\s*\}\}/g, day), description: t.description, repo: t.repo, source: `schedule:${key}` });
-    return 1;
   }
 
   /** Send a run's progress entry to the Linear issue the task came from, when its trigger says so. */

@@ -70,7 +70,11 @@ async function main() {
       const mcpConfig = join(COS_DIR, 'mcp.json');
       const mcpScript = fileURLToPath(new URL('./cos-mcp.ts', import.meta.url));
       writeFileSync(mcpConfig, JSON.stringify({ mcpServers: { orstra: { type: 'stdio', command: TSX, args: [mcpScript], env: { ORSTRA_PORT: String(PORT) } } } }, null, 2));
+      // Schedules, declarative (workflow files) and imperative (the app): Triggers fires them, the chief of staff makes them.
+      const { Schedules } = await import('./schedules.ts');
+      const schedules = new Schedules(store, runner);
       const cos = new ChiefOfStaff(store, runner, realExecutors, makeViews(store, runner), {
+        schedules,
         cwd: COS_DIR,
         model: process.env.ORSTRA_COS_MODEL,
         // Its workspace: ~/.orstra (the database, the workflow files, the task worktrees) and this checkout.
@@ -79,7 +83,7 @@ async function main() {
       });
       // Triggers: Linear issues with a label, and schedules. Checked every ORSTRA_TRIGGER_INTERVAL_S (60) seconds.
       const { Triggers, linearClient } = await import('./triggers.ts');
-      const triggers = new Triggers(store, runner, { linear: process.env.LINEAR_API_KEY ? linearClient(process.env.LINEAR_API_KEY) : null });
+      const triggers = new Triggers(store, runner, { schedules, linear: process.env.LINEAR_API_KEY ? linearClient(process.env.LINEAR_API_KEY) : null });
       // The side viewer's shells and dev servers. They end with the daemon: nothing outlives what started it.
       const { Terminals } = await import('./terminals.ts');
       const { DevServers } = await import('./devServers.ts');

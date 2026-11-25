@@ -173,6 +173,14 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE INDEX IF NOT EXISTS events_task ON events(task_id);
 CREATE INDEX IF NOT EXISTS events_run ON events(run_id);
 CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS schedules (
+  id TEXT PRIMARY KEY, kind TEXT NOT NULL, workflow TEXT NOT NULL, workflow_path TEXT,
+  cron TEXT, every_minutes INTEGER, timezone TEXT, title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
+  workspace_id TEXT, workspace_name TEXT, repo TEXT, active INTEGER NOT NULL DEFAULT 1, dedup_key TEXT,
+  spec TEXT NOT NULL DEFAULT '', last_run_at INTEGER, last_task_id TEXT, next_run_at INTEGER, last_error TEXT,
+  created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS schedules_dedup ON schedules(dedup_key) WHERE dedup_key IS NOT NULL;
 CREATE TABLE IF NOT EXISTS workspaces (
   id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, repo_path TEXT NOT NULL, base_branch TEXT NOT NULL,
   subdir TEXT NOT NULL DEFAULT '', default_workflow TEXT, setup TEXT NOT NULL DEFAULT '[]',
@@ -188,6 +196,44 @@ CREATE TABLE IF NOT EXISTS watches (
   created_at INTEGER NOT NULL, fired_at INTEGER, removed_at INTEGER
 );
 `;
+
+/**
+ * A schedule: it starts a task with a workflow each time its cron matches.
+ * - declarative: copied from a `schedule` trigger in a workflow file on each check. Id `yaml:<file>#<n>`.
+ *   Only an edit of the file changes it.
+ * - imperative: made in the app or by the chief of staff. The API changes it.
+ */
+export interface ScheduleRow {
+  id: string;
+  kind: 'declarative' | 'imperative';
+  /** The workflow file name, such as `orstra-dogfood.yaml`. */
+  workflow: string;
+  /** Where the workflow file is, for a declarative schedule. */
+  workflow_path: string | null;
+  cron: string | null;
+  /** Only a declarative schedule can have an interval instead of a cron (`every: 1d`). */
+  every_minutes: number | null;
+  /** IANA timezone. Null = UTC. */
+  timezone: string | null;
+  /** The title and description of the task it starts. `{{ date }}` becomes the due date. */
+  title: string;
+  description: string;
+  workspace_id: string | null;
+  /** A declarative schedule names its workspace; Orstra looks it up when it fires. */
+  workspace_name: string | null;
+  repo: string | null;
+  active: number;
+  /** An imperative schedule with the same key is the same schedule: creating it again changes it. */
+  dedup_key: string | null;
+  /** What the timing was when `next_run_at` was worked out. When it changes, the next run is worked out again. */
+  spec: string;
+  last_run_at: number | null;
+  last_task_id: string | null;
+  next_run_at: number | null;
+  last_error: string | null;
+  created_at: number;
+  updated_at: number;
+}
 
 /** A batch of actions the chief of staff wants to take that need your OK first. */
 export interface PlanRow {
@@ -436,6 +482,42 @@ export class Store {
       .prepare('INSERT INTO events (task_id, run_id, ts, kind, payload) VALUES (?, ?, ?, ?, ?)')
       .run(taskId, runId, ts, kind, JSON.stringify(payload));
     return { id: Number(res.lastInsertRowid), task_id: taskId, run_id: runId, ts, kind, payload: JSON.stringify(payload) };
+  }
+
+  schedules(): ScheduleRow[] {
+    return this.db.prepare("SELECT * FROM schedules ORDER BY workflow, kind, created_at").all() as unknown as ScheduleRow[];
+  }
+
+  schedule(id: string): ScheduleRow | undefined {
+    return this.db.prepare('SELECT * FROM schedules WHERE id = ?').get(id) as ScheduleRow | undefined;
+  }
+
+  scheduleByKey(dedupKey: string): ScheduleRow | undefined {
+    return this.db.prepare('SELECT * FROM schedules WHERE dedup_key = ?').get(dedupKey) as ScheduleRow | undefined;
+  }
+
+  insertSchedule(r: ScheduleRow) {
+    const keys = Object.keys(r) as (keyof ScheduleRow)[];
+    this.db
+      .prepare(`INSERT INTO schedules (${keys.join(', ')}) VALUES (${keys.map(() => '?').join(', ')})`)
+      .run(...keys.map((k) => r[k] as never));
+  }
+
+  updateSchedule(id: string, patch: Partial<ScheduleRow>) {
+    const fields = { ...patch, updated_at: Date.now() };
+    const keys = Object.keys(fields);
+    this.db
+      .prepare(`UPDATE schedules SET ${keys.map((k) => `${k} = ?`).join(', ')} WHERE id = ?`)
+      .run(...keys.map((k) => (fields as Record<string, unknown>)[k] as never), id);
+  }
+
+  deleteSchedule(id: string) {
+    this.db.prepare('DELETE FROM schedules WHERE id = ?').run(id);
+  }
+
+  /** The task with this source, whatever its workflow. A schedule uses it to start 1 task per due time. */
+  taskWithSource(source: string): TaskRow | undefined {
+    return this.db.prepare('SELECT * FROM tasks WHERE source = ? LIMIT 1').get(source) as TaskRow | undefined;
   }
 
   get(key: string): string | null {

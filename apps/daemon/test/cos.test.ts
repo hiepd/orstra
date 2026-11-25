@@ -9,6 +9,7 @@ import { Store } from '../src/db.ts';
 import type { Executors, LiveSession, SessionOptions } from '../src/executors.ts';
 import { Runner } from '../src/runner.ts';
 import { makeViews } from '../src/server.ts';
+import { Schedules } from '../src/schedules.ts';
 
 const WF = `
 name: Ship it
@@ -69,10 +70,14 @@ function setup() {
   // A task the assistant starts needs a workspace; with exactly 1, start_task may leave it out.
   store.insertWorkspace({ id: 'w-1', name: 'hub', repo_path: dir, base_branch: 'main', subdir: '', default_workflow: null, setup: '[]', copy_files: '[]', env: '{}', created_at: 0, updated_at: 0 });
   const runner = new Runner(store, exec, { slots: 2, createWorktree: () => dir, turnGraceMs: 0 });
-  const cos = new ChiefOfStaff(store, runner, exec, makeViews(store, runner), { cwd: cosDir, toolArgs: ['--tools', ''] });
+  // A workflow file with a declarative schedule, next to the one tasks use.
+  const declPath = join(dir, 'decl.yaml');
+  writeFileSync(declPath, WF.replace(/^name: .*$/m, 'name: Decl\ntriggers:\n  - schedule: { cron: "0 9 * * *", title: Daily }'));
+  const schedules = new Schedules(store, runner, { workflows: () => [{ path: wfPath, file: 'wf.yaml' }, { path: declPath, file: 'decl.yaml' }] });
+  const cos = new ChiefOfStaff(store, runner, exec, makeViews(store, runner), { cwd: cosDir, toolArgs: ['--tools', ''], schedules });
   runner.on('change', (e: { taskId: string }) => cos.onTaskChange(e.taskId));
   const kinds = () => store.events(COS_ID).map((e) => e.kind);
-  return { store, runner, cos, wfPath, toCos, toAgents, cosSessions, kinds };
+  return { store, runner, cos, wfPath, toCos, toAgents, cosSessions, kinds, schedules };
 }
 
 describe('ChiefOfStaff', () => {
@@ -227,5 +232,35 @@ describe('cos-mcp', () => {
     expect(out[2].error.code).toBe(-32601);
     expect(out[3].error.message).toBe('Unknown tool rm_rf');
     expect(out).toHaveLength(4);
+  });
+});
+
+describe('ChiefOfStaff and schedules', () => {
+  it('asks before it makes or deletes a schedule, and makes it when the user says yes', async () => {
+    const { cos, store, schedules } = setup();
+    const out = await cos.tool('create_schedule', { workflow: 'wf', cron: '0 9 * * 1-5', timezone: 'Europe/London', title: 'Dogfood {{ date }}' });
+    expect(out).toMatch(/Needs the user's OK/);
+    expect(out).toContain('Create a schedule: “Dogfood {{ date }}” · Ship it · At 09:00, Monday through Friday (Europe/London) · in hub');
+    expect(store.schedules().filter((s) => s.kind === 'imperative')).toHaveLength(0);
+    const plan = cos.view().plans.at(-1)!;
+    await cos.approve(plan.id);
+    const made = schedules.list().find((s) => s.kind === 'imperative')!;
+    expect(made).toMatchObject({ cron: '0 9 * * 1-5', timezone: 'Europe/London', workspace: { name: 'hub' }, active: true });
+
+    const del = await cos.tool('delete_schedule', { schedule: made.id });
+    expect(del).toMatch(/Needs the user's OK/);
+    expect(schedules.get(made.id)).toBeTruthy();
+  });
+
+  it('lists both kinds, and refuses to change a declarative one before any card', async () => {
+    const { cos, kinds } = setup();
+    const list = JSON.parse(await cos.tool('list_schedules'));
+    const decl = list.find((s: any) => s.kind === 'declarative');
+    expect(decl).toMatchObject({ workflow: 'Decl', when: 'At 09:00', timezone: 'UTC', active: true });
+    const before = kinds().filter((k) => k === 'plan').length;
+    await expect(cos.tool('update_schedule', { schedule: decl.id, active: 'off' })).rejects.toThrow(/Edit the workflow file/);
+    await expect(cos.tool('delete_schedule', { schedule: decl.id })).rejects.toThrow(/Edit the workflow file/);
+    await expect(cos.tool('create_schedule', { workflow: 'wf', cron: 'weekdays at 9', title: 'x' })).rejects.toThrow(/cron/);
+    expect(kinds().filter((k) => k === 'plan').length).toBe(before);
   });
 });

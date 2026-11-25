@@ -1,5 +1,6 @@
 import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
+import { checkCron, checkTimezone } from './cron.ts';
 
 export const STEP_KINDS = ['agent', 'gate', 'human', 'switch', 'action', 'workflow'] as const;
 export type StepKind = (typeof STEP_KINDS)[number];
@@ -71,12 +72,24 @@ export interface Step {
  * What starts tasks on its own.
  * - linear: one task per open Linear issue with the label (and team and state, when set). With
  *   `comment` (default true), each progress entry goes back to the issue as a comment.
- * - schedule: one task every `everyMinutes`, with this title. The first task starts one interval
- *   after Orstra first sees the trigger.
+ * - schedule: a declarative schedule. It starts one task each time `cron` matches in `timezone`
+ *   (UTC when unset), or every `everyMinutes`. An interval counts from when Orstra first saw the trigger.
+ *   It has exactly 1 of the 2. Only an edit of the workflow file changes it; the app makes imperative
+ *   schedules, which the daemon keeps in its database.
  */
 export type Trigger =
   | { kind: 'linear'; label: string; team?: string; state?: string; repo?: string; comment: boolean }
-  | { kind: 'schedule'; everyMinutes: number; title: string; description?: string; repo?: string };
+  | {
+      kind: 'schedule';
+      cron?: string;
+      timezone?: string;
+      everyMinutes?: number;
+      title: string;
+      description?: string;
+      repo?: string;
+      /** The workspace the task works in, by name. */
+      workspace?: string;
+    };
 
 /** "30m", "6h", "1d" or a number of minutes -> minutes. */
 export function parseEvery(v: string | number): number {
@@ -140,15 +153,28 @@ const triggerSchema = z.union([
     linear: z.object({ label: z.string(), team: z.string().optional(), state: z.string().optional(), repo: z.string().optional(), comment: z.boolean().default(true) }),
   }),
   z.object({
-    schedule: z.object({ every: z.union([z.string(), z.number().positive()]), title: z.string(), description: z.string().optional(), repo: z.string().optional() }),
+    schedule: z.object({
+      cron: z.string().optional(),
+      timezone: z.string().optional(),
+      every: z.union([z.string(), z.number().positive()]).optional(),
+      title: z.string(),
+      description: z.string().optional(),
+      repo: z.string().optional(),
+      workspace: z.string().optional(),
+    }),
   }),
 ]);
 
 function toTrigger(t: z.infer<typeof triggerSchema>): Trigger {
   if ('linear' in t) return { kind: 'linear', ...t.linear };
-  const everyMinutes = parseEvery(t.schedule.every);
+  const { every, cron, timezone, ...rest } = t.schedule;
+  if ((every === undefined) === (cron === undefined)) throw new Error('A schedule trigger needs either cron: (such as "0 9 * * 1-5") or every: (such as 1d), not both.');
+  if (cron !== undefined) {
+    return { kind: 'schedule', cron: checkCron(cron, timezone), ...(timezone ? { timezone: checkTimezone(timezone) } : {}), ...rest };
+  }
+  if (timezone) throw new Error('timezone: works only with cron:. An every: interval has no time of day.');
+  const everyMinutes = parseEvery(every!);
   if (!(everyMinutes >= 1)) throw new Error('A schedule trigger runs at most once a minute.');
-  const { every: _every, ...rest } = t.schedule;
   return { kind: 'schedule', everyMinutes, ...rest };
 }
 

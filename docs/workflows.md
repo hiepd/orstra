@@ -100,18 +100,27 @@ triggers:
       comment: true          # default true: each progress entry goes back as a comment on the issue
 ```
 
-**`schedule`** starts 1 task every interval.
+**`schedule`** starts 1 task each time a cron expression matches, or every interval. This is a declarative schedule: only an edit of the workflow file changes it.
 
 ```yaml
 triggers:
   - schedule:
-      every: 1d                    # "30m", "6h", "1d", or a number of minutes. 1 minute at least
-      title: "Triage {{ date }}"   # {{ date }} becomes 2026-11-25
+      cron: "0 9 * * 1-5"          # 5 fields: minute hour day-of-month month day-of-week
+      timezone: Europe/London      # optional IANA name; the default is UTC
+      title: "Triage {{ date }}"   # {{ date }} becomes the due date in the timezone, such as 2026-11-25
       description: Look at what came in.
+      workspace: app               # optional, the workspace by name
+  - schedule:
+      every: 1d                    # instead of cron: "30m", "6h", "1d", or a number of minutes
+      title: "Dogfood Orstra"
       repo: ~/workspace/app
 ```
 
-The first task starts 1 interval after Orstra first sees the trigger, not right away.
+A schedule has `cron` or `every`, not both. An interval counts from when Orstra first saw the trigger.
+
+You can also make imperative schedules on the Triggers page, or ask the chief of staff. Orstra keeps them in its database, and you can change, turn off, or delete them there. The Triggers page lists both kinds.
+
+A schedule starts at most 1 task per due time, also across a restart. If due times passed while Orstra was off, it starts 1 task when it is back, and then waits for the next due time.
 
 ## Actions
 

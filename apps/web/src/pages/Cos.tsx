@@ -204,6 +204,11 @@ function Did({ e }: { e: Extract<CosEvent, { kind: 'did' }> }) {
           {e.view === 'chat' ? 'Open chat' : 'Open task'}
         </a>
       )}
+      {!e.taskId && e.view === 'triggers' && (
+        <a className="ox-link" style={{ lineHeight: '22px' }} href={href.triggers}>
+          Open Triggers
+        </a>
+      )}
     </div>
   );
 }

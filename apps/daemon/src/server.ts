@@ -9,6 +9,7 @@ import type { ArtifactRow, EventRow, RunRow, Store, TaskRow } from './db.ts';
 import { kindOf } from './artifacts.ts';
 import type { Runner } from './runner.ts';
 import type { ChiefOfStaff } from './cos.ts';
+import { ScheduleError } from './schedules.ts';
 import type { Triggers } from './triggers.ts';
 import { gitDiff, gitInfo } from './git.ts';
 import { taskFacts } from './project.ts';
@@ -546,6 +547,33 @@ export function buildApi(store: Store, runner: Runner, cos?: ChiefOfStaff, trigg
           return send(res, 200, { ok: true }), true;
         }
         if ((mm = m(/^\/api\/cos\/watches\/([\w-]+)\/remove$/)) && req.method === 'POST') return cos.removeWatch(mm[1]), send(res, 200, { ok: true }), true;
+      }
+      // Schedules: declarative ones come from the workflow files and only an edit of the file changes
+      // them; imperative ones are made here. The same rule as trigger.dev's schedules API.
+      const schedules = triggers?.schedules;
+      if (schedules && p.startsWith('/api/schedules')) {
+        try {
+          if (req.method === 'GET' && p === '/api/schedules') return send(res, 200, schedules.list()), true;
+          if (req.method === 'POST' && p === '/api/schedules') {
+            const r = schedules.create(await readJson(req));
+            return send(res, r.created ? 201 : 200, r), true;
+          }
+          if (req.method === 'GET' && p === '/api/schedules/preview') {
+            return send(res, 200, schedules.preview(url.searchParams.get('cron') ?? '', url.searchParams.get('timezone'))), true;
+          }
+          if ((mm = m(/^\/api\/schedules\/([\w:#.%-]+)\/(activate|deactivate)$/)) && req.method === 'POST') {
+            return send(res, 200, schedules.setActive(decodeURIComponent(mm[1]), mm[2] === 'activate')), true;
+          }
+          if ((mm = m(/^\/api\/schedules\/([\w:#.%-]+)$/))) {
+            const sid = decodeURIComponent(mm[1]);
+            if (req.method === 'GET') return send(res, 200, schedules.get(sid)), true;
+            if (req.method === 'PATCH') return send(res, 200, schedules.update(sid, await readJson(req))), true;
+            if (req.method === 'DELETE') return schedules.remove(sid), send(res, 200, { ok: true }), true;
+          }
+        } catch (err) {
+          if (err instanceof ScheduleError) return send(res, err.status, { error: err.message }), true;
+          throw err;
+        }
       }
       if (req.method === 'GET' && p === '/api/settings') {
         return send(res, 200, { home: HOME, database: DB_PATH, worktrees: WORKTREES, workflowDirs: WORKFLOW_DIRS, port: PORT, slots: SLOTS, agents: agents(), agentConfig: loadAgentConfig(), efforts: EFFORTS,
