@@ -187,9 +187,9 @@ describe('a task in a workspace', () => {
     const t = runner.startTask({ workflowPath: workflowFile(AGENT_THEN_GATE), title: 'x', workspaceId: w.id });
     await waitFor(() => rec.gates.length > 0);
     expect(rec.sessions[0].cwd).toBe(join(t.worktree!, 'apps/web'));
-    expect(rec.sessions[0].env).toEqual({ PORT: '5317' });
+    expect(rec.sessions[0].env).toMatchObject({ PORT: '5317', ORSTRA_TASK_ID: expect.any(String) });
     expect(rec.gates[0].cwd).toBe(join(t.worktree!, 'apps/web'));
-    expect(rec.gates[0].env).toEqual({ PORT: '5317' });
+    expect(rec.gates[0].env).toMatchObject({ PORT: '5317', ORSTRA_TASK_ID: expect.any(String) });
     expect(taskCwd(store.task(t.id)!)).toBe(join(t.worktree!, 'apps/web'));
   });
 

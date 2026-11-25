@@ -187,3 +187,18 @@ describe('the repository the agent used last wins', () => {
     expect(await (await fetch(`${base}/api/tasks/${taskId}/file?path=same.md`)).text()).toBe('new\n');
   });
 });
+
+describe('task start with an idempotency key', () => {
+  it('starts the task once, and answers the second start with the same task', async () => {
+    const body = { workflow: join(dir, 'wf.yaml'), repo: dir, title: 'from a trigger', idempotencyKey: 'ci:build-41' };
+    const first = await post('/api/tasks', body);
+    expect(first.status).toBe(201);
+    const a = (await first.json()) as any;
+    expect(a.reused).toBe(false);
+    const second = await post('/api/tasks', { ...body, title: 'a second try' });
+    expect(second.status).toBe(200);
+    const b = (await second.json()) as any;
+    expect(b).toMatchObject({ id: a.id, reused: true, title: 'from a trigger' });
+    expect(store.tasks().filter((t) => t.idempotency_key === 'ci:build-41')).toHaveLength(1);
+  });
+});

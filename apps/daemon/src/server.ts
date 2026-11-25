@@ -291,8 +291,12 @@ export function buildApi(store: Store, runner: Runner, cos?: ChiefOfStaff, trigg
         const workflowPath = resolveWorkflow(workflow);
         const wfRepo = (() => { try { return parseWorkflow(readFileSync(locateWorkflow(workflowPath), 'utf8')).repo; } catch { return undefined; } })();
         const ws = named ?? pickWorkspace(store, { repo: b.repo || wfRepo });
-        const task = runner.startTask({ workflowPath, title: b.title, description: b.description, ref: b.ref, workspaceId: ws?.id, repo: ws ? undefined : b.repo, baseBranch: b.baseBranch });
-        return send(res, 201, taskSummary(task)), true;
+        const priority = b.priority === undefined || b.priority === null || b.priority === '' ? undefined : Number(b.priority);
+        if (priority !== undefined && !Number.isFinite(priority)) return send(res, 400, { error: 'priority is a number of seconds.' }), true;
+        const task = runner.startTask({ workflowPath, title: b.title, description: b.description, ref: b.ref, workspaceId: ws?.id, repo: ws ? undefined : b.repo, baseBranch: b.baseBranch,
+          idempotencyKey: typeof b.idempotencyKey === 'string' ? b.idempotencyKey : undefined, priority });
+        // 200 with reused: true when the key matched a task an earlier start made; nothing new started.
+        return send(res, task.reused ? 200 : 201, { ...taskSummary(task), reused: !!task.reused }), true;
       }
       if (req.method === 'GET' && p === '/api/workspaces') return send(res, 200, store.workspaces().map(workspaceView)), true;
       if (req.method === 'POST' && p === '/api/workspaces') {

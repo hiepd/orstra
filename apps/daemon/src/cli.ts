@@ -36,7 +36,7 @@ async function main() {
   const { values, positionals } = parseArgs({
     args: rest,
     allowPositionals: true,
-    options: { title: { type: 'string' }, description: { type: 'string' }, ref: { type: 'string' }, repo: { type: 'string' }, workspace: { type: 'string' }, base: { type: 'string' } },
+    options: { title: { type: 'string' }, description: { type: 'string' }, ref: { type: 'string' }, repo: { type: 'string' }, workspace: { type: 'string' }, base: { type: 'string' }, key: { type: 'string' }, priority: { type: 'string' } },
   });
 
   switch (cmd) {
@@ -113,9 +113,9 @@ async function main() {
     }
     case 'run': {
       if (!positionals[0] || !values.title) throw new Error('Usage: orstra run <workflow> --title "…"');
-      const { base: baseBranch, ...rest } = values;
-      const t = await api('/api/tasks', { method: 'POST', body: JSON.stringify({ workflow: positionals[0], ...rest, baseBranch }) });
-      console.log(`Started ${t.id}: ${t.title} (${t.workflow}) → http://localhost:${PORT}/#/tasks/${t.id}`);
+      const { base: baseBranch, key: idempotencyKey, ...rest } = values;
+      const t = await api('/api/tasks', { method: 'POST', body: JSON.stringify({ workflow: positionals[0], ...rest, baseBranch, idempotencyKey }) });
+      console.log(`${t.reused ? 'Already started' : 'Started'} ${t.id}: ${t.title} (${t.workflow}) → http://localhost:${PORT}/#/tasks/${t.id}`);
       return;
     }
     case 'tasks': {

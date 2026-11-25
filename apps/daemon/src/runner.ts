@@ -32,6 +32,17 @@ export interface StartTaskInput {
   source?: string;
   /** What the trigger tells every agent step, such as a schedule's prompt. */
   prompt?: string;
+  /**
+   * A second start with the same key and workflow returns the first task and starts nothing. The key
+   * stays after the task ends or goes to the archive. Triggers, child tasks and agents that start
+   * tasks pass one, so a retry or a restart never starts the same work twice.
+   */
+  idempotencyKey?: string;
+  /** Seconds: the queue treats this task's runs as if they were queued this much earlier. */
+  priority?: number;
+  /** Set when a `workflow` step starts this task as its child. */
+  parentTaskId?: string;
+  parentRunId?: string;
 }
 
 /** chat = talk to the agent's session; note = hand to a step's next run; ask = a forked copy answers. */
@@ -412,7 +423,12 @@ export class Runner extends EventEmitter {
     return changed;
   }
 
-  startTask(input: StartTaskInput): TaskRow {
+  startTask(input: StartTaskInput): TaskRow & { reused?: boolean } {
+    const key = input.idempotencyKey?.trim() || undefined;
+    if (key) {
+      const earlier = this.store.taskByKey(input.workflowPath, key);
+      if (earlier) return { ...earlier, reused: true };
+    }
     const yaml = readFileSync(locateWorkflow(input.workflowPath), 'utf8');
     const wf = parseWorkflow(yaml);
     const taskId = id('t');
@@ -429,6 +445,7 @@ export class Runner extends EventEmitter {
       workflow_yaml: yaml, pr_url: null, source: input.source ?? null, archived_at: null,
       workspace_id: ws?.id ?? null, base_branch: base ?? null, base_commit: repo ? gitHead(worktree) : null, subdir: ws?.subdir || null, setup_at: null,
       prompt: input.prompt?.trim() || null,
+      idempotency_key: key ?? null, priority: input.priority ?? null, parent_task_id: input.parentTaskId ?? null, parent_run_id: input.parentRunId ?? null,
     };
     this.store.insertTask(task);
     this.event(taskId, null, 'system', { text: `Started ${wf.name}${ws ? ` in ${ws.name}` : ''}${byCos(input.via)}` });
@@ -1107,11 +1124,19 @@ export class Runner extends EventEmitter {
     }
   }
 
-  /** The workspace's environment variables, for every agent and gate of the task. */
-  private envOf(task: TaskRow): Record<string, string> | undefined {
+  /**
+   * The environment of every agent and gate of the task: the workspace's variables, plus
+   * ORSTRA_TASK_ID (an agent that starts tasks builds its idempotency key from it) and ORSTRA_BASE
+   * (the commit the task started from, so a gate can diff against it).
+   */
+  private envOf(task: TaskRow): Record<string, string> {
     const ws = task.workspace_id ? this.store.workspace(task.workspace_id) : undefined;
-    const env = ws ? workspaceView(ws).env : {};
-    return Object.keys(env).length ? env : undefined;
+    const fresh = this.store.task(task.id) ?? task;
+    return {
+      ...(ws ? workspaceView(ws).env : {}),
+      ORSTRA_TASK_ID: task.id,
+      ...(fresh.base_commit ? { ORSTRA_BASE: fresh.base_commit } : {}),
+    };
   }
 
   /**

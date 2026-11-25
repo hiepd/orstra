@@ -146,6 +146,18 @@ A schedule starts at most 1 task per due time, also across a restart. If due tim
 
 **A `triggers:` list in a workflow file** is the old form. On its next check, Orstra moves each entry into its own trigger file, named `<workflow>-<kind>.yaml` (with `-1`, `-2` when there are more). It then removes the list from the workflow file and keeps a copy of the file as `<file>.bak-YYYYMMDD`. A schedule keeps its last run and its next run. A workflow file that does not parse is left alone.
 
+## Starting a task once
+
+A start can carry an idempotency key. A second start with the same key and the same workflow returns the first task and starts nothing, also after that task ended or went to the archive.
+
+```sh
+bin/orstra run orstra-build --title "Fix the Inbox count" --key "$ORSTRA_TASK_ID:2"
+```
+
+The API takes `idempotencyKey` in the body of `POST /api/tasks`, and answers `200` with `reused: true` when the key matched. A Linear trigger uses the key `linear:<issue id>`. A child task uses `<parent run id>:<index>`.
+
+Every agent and gate gets 2 variables for this: `ORSTRA_TASK_ID`, the id of its task, and `ORSTRA_BASE`, the commit the task started from. An agent that starts tasks builds its key from `ORSTRA_TASK_ID`, so a retry or a restart of its step does not start the same task twice.
+
 ## Actions
 
 | Action | What it does | Outcomes |
