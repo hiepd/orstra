@@ -61,7 +61,7 @@ async function main() {
       const moved = migrateWorkflowPaths(store);
       if (moved) console.log(`Re-pointed ${moved} task(s) at their workflow in the workflow folder.`);
       const runner = new Runner(store, realExecutors, { slots: SLOTS, createWorktree, defaultTimeoutMs: defaultTimeoutsFromEnv() });
-      runner.recover();
+      await runner.recover();
 
       // The chief of staff: Claude Code with Orstra's tools (served by cos-mcp.ts) and every tool of its own.
       const { ChiefOfStaff } = await import('./cos.ts');

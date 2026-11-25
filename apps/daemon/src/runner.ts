@@ -3,7 +3,8 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { FINISH_INSTRUCTIONS, parseAgentResult, parseWorkflow, renderTemplate, route, stripProgressBlock, switchCase, type Progress, type Step, type Workflow } from '@orstra/core';
 import { excludeFromGit, withFiles, type Attachment } from './attachments.ts';
-import { summarizeTool, type Executors, type LiveSession, type StreamEvent, type TurnEnd, type TurnUsage } from './executors.ts';
+import { readClaudeLine, summarizeTool, type Executors, type LiveSession, type StreamEvent, type TurnEnd, type TurnUsage } from './executors.ts';
+import { entriesAfter, findSessionLog, readSessionLog, whereStopped, type WhereStopped } from './sessionLog.ts';
 import type { ArtifactState, RunRow, Store, TaskRow } from './db.ts';
 import { ARTIFACT_DIR, DEFAULT_SPEC, collectArtifacts, inputPath, seenKey, stageInputs, type Input } from './artifacts.ts';
 import { locateWorkflow } from './workflows.ts';
@@ -53,6 +54,19 @@ export interface RunnerOptions {
   stopProcess?: (pid: number, opts?: { graceMs?: number }) => Promise<StopResult>;
   /** Where collected artifacts are kept. Defaults to `~/.orstra/artifacts`. */
   artifactsRoot?: string;
+  /** Where Claude Code keeps its session logs. Defaults to $CLAUDE_CONFIG_DIR, else ~/.claude. */
+  claudeConfigDir?: string;
+}
+
+/** A restart resumes a run on its own at most this many times in RESUME_WINDOW_MS; after that it pauses. */
+export const MAX_RESUMES = 3;
+export const RESUME_WINDOW_MS = 10 * 60_000;
+
+/** What a restart tells an agent that it resumes. */
+export function resumeNote(where: WhereStopped): string {
+  const rest = 'Continue the step from where you stopped. Do not repeat the work you finished.';
+  if (where.kind === 'cut') return `Orstra restarted while your tool call ran: ${where.tool} (${where.summary}). The call may not have finished, and its result is lost. Check what it did before you go on. ${rest}`;
+  return `Orstra restarted while you worked. Your session is intact. ${rest}`;
 }
 
 /** The limits when a step sets no `timeout:`: ORSTRA_AGENT_TIMEOUT_MIN (120) and ORSTRA_GATE_TIMEOUT_MIN (30). */
@@ -97,6 +111,16 @@ const id = (p: string) => `${p}-${Date.now().toString(36)}${Math.random().toStri
 const SLOT_KINDS = new Set(['agent', 'gate']);
 /** What to call a run's agent in a message to the human. */
 const agentName = (run: RunRow) => (run.agent === 'codex' ? 'Codex' : 'Claude Code');
+/** The event kinds an agent's stream writes. */
+const AGENT_KINDS = new Set(['message', 'tool', 'tool_result']);
+
+/** How an agent event is stored, or null when it stores nothing (a message that was only a progress block). */
+function storedEvent(e: StreamEvent): { kind: string; payload: unknown } | null {
+  if (e.kind !== 'message') return { kind: e.kind, payload: e };
+  const text = stripProgressBlock(e.text);
+  return text ? { kind: 'message', payload: { kind: 'message', text } } : null;
+}
+
 /** A run in one of these still holds its task. The database allows 1 per task. */
 const OPEN_STATUSES = new Set(['queued', 'running', 'waiting']);
 
@@ -127,6 +151,12 @@ export class Runner extends EventEmitter {
   private timedOut = new Set<string>();
   /** Permission questions by id, open or answered in the last minute. */
   private permissions = new Map<string, PendingPermission>();
+  /**
+   * Run id -> the text the agent is writing now, from the stream's chunks. Never stored: the full
+   * message replaces it. `after` is the task's newest event when the draft began, so the UI can tell
+   * when a stored event has made the draft old.
+   */
+  private drafts = new Map<string, { taskId: string; text: string; after: number; shown: string }>();
 
   /** How this machine identifies a process; see process.ts. */
   private get procEnv(): ProcessEnv {
@@ -211,37 +241,122 @@ export class Runner extends EventEmitter {
   }
 
   /**
-   * After a restart no session process survives. An agent run becomes "waiting": message it and the
-   * same session resumes. A gate or action run really did die with the process, so it fails.
+   * After a restart, continue the work the old daemon left, the way a database replays its WAL.
    *
-   * The task rows are not repaired here. They are a projection, so 1 rebuild tells every task the
-   * truth, and an agent run with no session reads as paused on its own.
+   * An agent run: stop the old process if it still runs, so its session log stops growing. Replay the
+   * log entries after the last one Orstra stored, so the chat shows what the agent did meanwhile.
+   * Then look at where it stopped: a turn that ended goes on as it would have; a turn cut in the
+   * middle resumes the same session, with a note that names the cut tool call.
+   *
+   * A gate runs again from the start: its output is its only state. An action stops and asks you,
+   * because it may not be safe to do twice.
    */
-  recover() {
+  async recover(): Promise<void> {
+    const work: Promise<void>[] = [];
     for (const r of this.store.runsByStatus('running')) {
-      if (r.kind === 'agent' && r.session_id) {
-        const stray = this.strayProcess(r);
-        if (stray) void this.sweep(r, stray);
-        const task = this.store.task(r.task_id);
-        const head = task?.worktree ? gitHead(task.worktree) : null;
-        this.store.updateRun(r.id, {
-          status: 'waiting', wait_reason: 'paused', agent_pid: null, agent_boot_id: null, agent_started_at: null,
-          head_after: head,
-        });
-        // What the lost turn had already committed. Without this the restart says nothing about it.
-        const gained = task?.worktree ? gitCommitsBetween(task.worktree, r.head_before, head) : null;
-        const left = gained ? ` It left ${gained} commit${gained === 1 ? '' : 's'} on the branch.` : '';
-        const text = stray
-          ? `Orstra restarted mid-run. ${agentName(r)} was still working, so Orstra stopped it (pid ${stray.pid}).${left} Message the session to pick it back up, or retry the step.`
-          : `Orstra restarted mid-run.${left} Message ${agentName(r)} to pick the session back up, or retry the step.`;
-        this.store.addEvent(r.task_id, r.id, 'system', { text });
+      if (r.kind === 'agent' && r.session_id) work.push(this.recoverAgent(r));
+      else if (r.kind === 'gate') {
+        this.store.updateRun(r.id, { status: 'queued', started_at: null });
+        this.store.addEvent(r.task_id, r.id, 'system', { text: 'Orstra restarted while this check ran. It runs again from the start.' });
       } else {
         this.store.updateRun(r.id, { status: 'failed', outcome: 'interrupted', ended_at: Date.now(), routed: 'block:interrupted' });
         this.store.addEvent(r.task_id, r.id, 'system', { text: 'Orstra restarted while this step was running. Retry it or stop the task.' });
       }
     }
+    // A run that waited on a permission question had its agent in the middle of a tool call too.
+    for (const r of this.store.runsByStatus('waiting')) {
+      if (r.kind === 'agent' && r.session_id && r.wait_reason === 'permission') work.push(this.recoverAgent(r));
+    }
+    this.rebuild();
+    await Promise.all(work);
     this.rebuild();
     this.pump();
+  }
+
+  /** 1 agent run that was working when the daemon went: replay its log, then continue it. */
+  private async recoverAgent(r: RunRow): Promise<void> {
+    const stray = this.strayProcess(r);
+    if (stray) await this.sweep(r, stray);
+    const task = this.store.task(r.task_id);
+    if (!task) return;
+    const head = task.worktree ? gitHead(task.worktree) : null;
+    this.store.updateRun(r.id, { agent_pid: null, agent_boot_id: null, agent_started_at: null, head_after: head });
+
+    // Redo: the entries after the last one Orstra stored. Codex keeps no log Orstra reads.
+    let where: WhereStopped = { kind: 'mid' };
+    let replayed = 0;
+    const file = r.agent === 'codex' ? null : findSessionLog(r.session_id!, this.opts.claudeConfigDir);
+    if (file) {
+      const entries = readSessionLog(file);
+      const from = r.log_uuid ?? this.store.sessionLogUuid(r.session_id!);
+      // No position, but events: an Orstra from before the checkpoint stored them. Orstra cannot tell
+      // which entries they came from, so it replays none rather than show them twice.
+      const legacy = from === null && this.store.events(r.task_id).some((e) => e.run_id === r.id && AGENT_KINDS.has(e.kind));
+      for (const e of legacy ? [] : entriesAfter(entries, from)) {
+        readClaudeLine(JSON.stringify(e), {
+          onEvent: () => {},
+          onText: () => {},
+          onResult: () => {},
+          onLine: (uuid, events) => {
+            if (events.length) replayed++;
+            this.logLine(r.task_id, r.id, uuid, events);
+          },
+        });
+      }
+      where = whereStopped(entries);
+    }
+
+    const name = agentName(r);
+    const gained = task.worktree ? gitCommitsBetween(task.worktree, r.head_before, head) : null;
+    const facts = [
+      stray ? `${name} was still working, so Orstra stopped it (pid ${stray.pid}).` : '',
+      replayed ? `Orstra read ${replayed} more step${replayed === 1 ? '' : 's'} from the session log.` : '',
+      gained ? `It left ${gained} commit${gained === 1 ? '' : 's'} on the branch.` : '',
+    ].filter(Boolean).join(' ');
+    /** 1 line in the chat: what happened, the facts, then what comes next. */
+    const said = (lead: string, next = '') => this.store.addEvent(r.task_id, r.id, 'system', { text: [lead, facts, next].filter(Boolean).join(' ') });
+
+    let recent: number[] = [];
+    try { recent = (JSON.parse(r.resumed_at ?? '[]') as number[]).filter((t) => Date.now() - t < RESUME_WINDOW_MS); } catch { recent = []; }
+    if (recent.length >= MAX_RESUMES) {
+      this.store.updateRun(r.id, { status: 'waiting', wait_reason: 'paused' });
+      said(`Orstra restarted mid-run ${recent.length + 1} times in ${RESUME_WINDOW_MS / 60_000} minutes, so it did not resume ${name} again.`, 'Message the session to pick it back up, or retry the step.');
+      return;
+    }
+    if (where.kind === 'ended') {
+      said(`Orstra restarted after ${name} ended its turn.`, 'Orstra read the result from the session log.');
+      return this.routeRecovered(task, r, where.text, recent);
+    }
+    if (where.kind === 'cut') said(`Orstra restarted while ${name} ran ${where.tool}: ${where.summary}.`, `${name} continues, and checks that call first.`);
+    else said('Orstra restarted mid-run.', `${name} continues where it stopped.`);
+    this.resumeAfterRestart(task, r, resumeNote(where), recent);
+  }
+
+  /** A turn that ended before the restart, read from the log: route it the way onTurn would have. */
+  private routeRecovered(task: TaskRow, run: RunRow, text: string, recent: number[]) {
+    const parsed = parseAgentResult(text);
+    const ends = parsed.hasOutcome && parsed.outcome !== 'needs_you';
+    if (!ends && this.overBudget(task.id)) return this.finish(task.id, run.id, 'over_budget');
+    if (!parsed.hasOutcome) {
+      this.store.addEvent(task.id, run.id, 'system', { text: `${agentName(run)} ended its turn with no OUTCOME line. Orstra asked it to finish the step.` });
+      return this.resumeAfterRestart(task, run, NUDGE, recent, { nudged: true });
+    }
+    if (parsed.outcome === 'needs_you') return this.markWaiting(task.id, run.id, 'question');
+    this.store.updateRun(run.id, { progress: JSON.stringify(parsed.progress) });
+    this.event(task.id, run.id, 'progress', parsed.progress);
+    this.emit('progress', { taskId: task.id, runId: run.id, outcome: parsed.outcome });
+    this.finish(task.id, run.id, parsed.outcome);
+  }
+
+  /** Open the run's session again and send the note. Unlike your message, it is the step's own work. */
+  private resumeAfterRestart(task: TaskRow, run: RunRow, note: string, recent: number[], opts: { nudged?: boolean } = {}) {
+    const step = this.workflowFor(task).steps[run.step_id];
+    this.store.updateRun(run.id, { status: 'running', wait_reason: null, resumed_at: JSON.stringify([...recent, Date.now()]) });
+    const live = this.openSession(task, run, { sessionId: run.session_id!, resume: true, routes: true, model: step?.model });
+    if (opts.nudged) live.nudged = true;
+    if (step) this.arm(task.id, run.id, step);
+    live.session.send(note);
+    this.project(task.id);
   }
 
   /**
@@ -308,7 +423,7 @@ export class Runner extends EventEmitter {
       id: id('r'), task_id: task.id, step_id: stepId, kind: step.use, attempt, status: 'queued', outcome: null,
       agent: step.use === 'agent' ? step.agent ?? 'claude-code' : null, session_id: null, progress: null, output: null,
       created_at: Date.now(), started_at: null, ended_at: null, last_turn_at: null, wait_reason: null, routed: null,
-      cost_usd: null, tokens_in: null, tokens_out: null, agent_pid: null, agent_boot_id: null, agent_started_at: null, head_before: null, head_after: null,
+      cost_usd: null, tokens_in: null, tokens_out: null, agent_pid: null, agent_boot_id: null, agent_started_at: null, head_before: null, head_after: null, log_uuid: null, resumed_at: null,
     };
     this.store.insertRun(run);
     this.project(task.id);
@@ -480,12 +595,8 @@ export class Runner extends EventEmitter {
 
   private openSession(task: TaskRow, run: RunRow, opts: { sessionId: string; resume: boolean; routes: boolean; model?: string }): Live {
     const onEvent = (e: StreamEvent) => {
-      if (e.kind === 'message') {
-        const text = stripProgressBlock(e.text);
-        if (text) this.event(task.id, run.id, 'message', { kind: 'message', text });
-        return;
-      }
-      this.event(task.id, run.id, e.kind, e);
+      const row = storedEvent(e);
+      if (row) this.event(task.id, run.id, row.kind, row.payload);
     };
     const live: Live = { session: null as unknown as LiveSession, routes: opts.routes, humanSpoke: false, sendSeq: 0, finished: false, nudged: false, baseCost: this.store.run(run.id)?.cost_usd ?? 0 };
     live.session = this.exec.session((run.agent as 'claude-code' | 'codex') ?? 'claude-code', {
@@ -493,13 +604,56 @@ export class Runner extends EventEmitter {
       onSessionId: (sid) => {
         if (this.store.run(run.id)?.session_id !== sid) this.store.updateRun(run.id, { session_id: sid });
       },
-      onEvent, onTurn: (t) => this.onTurn(task.id, run.id, t),
+      onEvent,
+      onLog: (uuid, events) => this.logLine(task.id, run.id, uuid, events),
+      onDelta: (text) => this.addDraft(task.id, run.id, text),
+      onTurn: (t) => this.onTurn(task.id, run.id, t),
     });
     this.live.set(run.id, live);
     this.stamp(run.id, live.session.pid);
     this.changed(task.id);
     void live.session.closed.then((res) => this.onClosed(task.id, run.id, live, res));
     return live;
+  }
+
+  /**
+   * 1 line of the agent's session log: its events and its position, in 1 transaction. A crash then
+   * leaves either both or neither, so the replay after it shows each event once.
+   */
+  private logLine(taskId: string, runId: string, uuid: string, events: StreamEvent[]) {
+    this.store.tx(() => {
+      for (const e of events) {
+        const row = storedEvent(e);
+        if (row) this.store.addEvent(taskId, runId, row.kind, row.payload);
+      }
+      this.store.updateRun(runId, { log_uuid: uuid });
+    });
+    if (!events.length) return;
+    this.endDraft(runId);
+    this.changed(taskId);
+  }
+
+  /** A chunk of the text the agent writes now. The UI gets the whole draft each time, never a part. */
+  private addDraft(taskId: string, runId: string, chunk: string) {
+    let d = this.drafts.get(runId);
+    if (!d) {
+      d = { taskId, text: '', after: this.store.lastEventId(taskId), shown: '' };
+      this.drafts.set(runId, d);
+    }
+    d.text += chunk;
+    // The progress block and the OUTCOME line never show, so a chunk inside them changes nothing.
+    const text = stripProgressBlock(d.text);
+    if (!text || text === d.shown) return;
+    d.shown = text;
+    this.emit('draft', { taskId, runId, text, after: d.after });
+  }
+
+  /** The draft is old: its message is stored, or the turn ended without it. */
+  private endDraft(runId: string) {
+    const d = this.drafts.get(runId);
+    if (!d) return;
+    this.drafts.delete(runId);
+    this.emit('draft', { taskId: d.taskId, runId, text: '', after: d.after });
   }
 
   /**
@@ -532,6 +686,7 @@ export class Runner extends EventEmitter {
 
   /** The agent finished a turn: decide whether the run is over, waiting for you, or still talking. */
   private onTurn(taskId: string, runId: string, t: TurnEnd) {
+    this.endDraft(runId);
     const live = this.live.get(runId);
     if (!live || live.finished) return;
     this.store.updateRun(runId, { last_turn_at: Date.now() });
@@ -718,6 +873,7 @@ export class Runner extends EventEmitter {
 
   private onClosed(taskId: string, runId: string, live: Live, res: { ok: boolean; error?: string }) {
     if (this.live.get(runId) === live) this.live.delete(runId);
+    this.endDraft(runId);
     // The process is gone, so the stamp would only mislead the next restart.
     this.stamp(runId, undefined);
     this.dropPermissions(runId);
@@ -1003,7 +1159,7 @@ export class Runner extends EventEmitter {
     const run: RunRow = {
       id: id('r'), task_id: task.id, step_id: target.step_id, kind: target.kind, attempt, status: 'running', outcome: null,
       agent: target.agent, session_id: target.session_id, progress: null, output: null, created_at: now, started_at: now, ended_at: null,
-      last_turn_at: null, wait_reason: null, routed: null, cost_usd: null, tokens_in: null, tokens_out: null, agent_pid: null, agent_boot_id: null, agent_started_at: null, head_before: null, head_after: null,
+      last_turn_at: null, wait_reason: null, routed: null, cost_usd: null, tokens_in: null, tokens_out: null, agent_pid: null, agent_boot_id: null, agent_started_at: null, head_before: null, head_after: null, log_uuid: null, resumed_at: null,
     };
     this.store.insertRun(run);
     return run;

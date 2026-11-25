@@ -26,6 +26,52 @@ const toolResult = (id: string, body: unknown, isError = false) => ({
   message: { content: [{ type: 'tool_result', tool_use_id: id, content: body, is_error: isError }] },
 });
 
+describe('readClaudeLine: the log position and the text chunks', () => {
+  /** Lines with the handlers for the log position and the chunks set. */
+  function readLog(lines: unknown[]) {
+    const lines_: { uuid: string; events: StreamEvent[] }[] = [];
+    const loose: StreamEvent[] = [];
+    const deltas: string[] = [];
+    for (const l of lines) {
+      readClaudeLine(JSON.stringify(l), {
+        onEvent: (e) => loose.push(e),
+        onText: () => {},
+        onResult: () => {},
+        onLine: (uuid, events) => lines_.push({ uuid, events }),
+        onDelta: (t) => deltas.push(t),
+      });
+    }
+    return { lines: lines_, loose, deltas };
+  }
+
+  it('hands over all events of 1 line together, with the line\u2019s uuid', () => {
+    const r = readLog([
+      { type: 'assistant', uuid: 'u1', message: { content: [{ type: 'text', text: 'Now I test.' }, { type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'npm test' } }] } },
+      { type: 'user', uuid: 'u2', message: { content: [{ type: 'tool_result', tool_use_id: 't1', content: 'ok' }] } },
+    ]);
+    expect(r.lines).toEqual([
+      { uuid: 'u1', events: [{ kind: 'message', text: 'Now I test.' }, { kind: 'tool', callId: 't1', name: 'Bash', summary: 'npm test' }] },
+      { uuid: 'u2', events: [{ kind: 'tool_result', callId: 't1', ok: true, summary: 'ok' }] },
+    ]);
+    expect(r.loose).toEqual([]);
+  });
+
+  it('moves the position for a line with no event too, such as thinking or your own prompt', () => {
+    const r = readLog([
+      { type: 'user', uuid: 'u0', message: { content: 'Do the task' } },
+      { type: 'assistant', uuid: 'u1', message: { content: [{ type: 'thinking', thinking: '' }] } },
+    ]);
+    expect(r.lines).toEqual([{ uuid: 'u0', events: [] }, { uuid: 'u1', events: [] }]);
+  });
+
+  it('reports each text chunk, and no thinking chunk', () => {
+    const chunk = (delta: unknown) => ({ type: 'stream_event', event: { type: 'content_block_delta', index: 0, delta } });
+    const r = readLog([chunk({ type: 'text_delta', text: 'Hel' }), chunk({ type: 'thinking_delta', thinking: 'hm' }), chunk({ type: 'text_delta', text: 'lo' })]);
+    expect(r.deltas).toEqual(['Hel', 'lo']);
+    expect(r.lines).toEqual([]);
+  });
+});
+
 describe('readClaudeLine', () => {
   it('reads the agent’s text', () => {
     const r = read([{ type: 'assistant', message: { content: [{ type: 'text', text: '  I read the file.  ' }] } }]);

@@ -21,13 +21,28 @@ export interface StreamLike {
   onopen: ((ev: unknown) => void) | null;
   onerror: ((ev: unknown) => void) | null;
   onmessage: ((ev: { data: string }) => void) | null;
-  addEventListener(type: string, fn: () => void): void;
+  addEventListener(type: string, fn: (ev: { data: string }) => void): void;
 }
+
+/** The text an agent writes now. `after` is the task's newest event when it began: a newer event of the run makes it old. */
+export interface Draft {
+  taskId: string;
+  runId: string;
+  text: string;
+  after: number;
+  /** When the daemon said the draft is done. It stays until its stored message is in, or 5 s pass. */
+  endedAt?: number;
+}
+
+/** How long an ended draft may stay when no newer event comes, as after an interrupt with no message. */
+export const DRAFT_LINGER_MS = 5_000;
 
 export interface LiveStreamOptions {
   create: () => StreamLike;
   onChange: (taskId: string | null) => void;
   onConnected: (c: boolean) => void;
+  /** The newest draft of a run, from the named `draft` event. */
+  onDraft?: (d: Draft) => void;
   /** Open the stream again once it has said nothing for this long. */
   silenceMs?: number;
   /** How often to look. */
@@ -81,6 +96,15 @@ export function liveStream(opts: LiveStreamOptions): { check(): void; stop(): vo
     };
     // The beat is a named event, so it never reaches onmessage and never asks for a refetch.
     s.addEventListener('ping', alive);
+    // So is a draft: it shows at once, and the stored message replaces it later.
+    s.addEventListener('draft', (msg) => {
+      alive();
+      try {
+        opts.onDraft?.(JSON.parse(msg.data) as Draft);
+      } catch {
+        /* ignore malformed */
+      }
+    });
   };
 
   const check = () => {
@@ -111,11 +135,47 @@ function ensureSource() {
     create: () => new EventSource('/api/events') as unknown as StreamLike,
     onChange: (taskId) => listeners.forEach((l) => l(taskId)),
     onConnected: setConnected,
+    onDraft: (d) => {
+      // An empty draft means "done". Keep the text until the stored message replaces it, or the page
+      // would blink between the 2: the message comes with the next refetch, up to 250 ms later.
+      const prev = drafts.get(d.runId);
+      if (d.text) drafts.set(d.runId, d);
+      else if (prev) drafts.set(d.runId, { ...prev, endedAt: Date.now() });
+      draftListeners.get(d.runId)?.forEach((l) => l(drafts.get(d.runId) ?? null));
+    },
   });
   // A tab that comes back from sleep: look now, instead of waiting for the next check.
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') source?.check();
   });
+}
+
+/** The newest draft of each run, and who shows it. */
+const drafts = new Map<string, Draft>();
+const draftListeners = new Map<string, Set<(d: Draft | null) => void>>();
+
+/** The text a run's agent is writing now, or null. It changes many times a second while the agent writes. */
+export function useDraft(runId: string): Draft | null {
+  const [d, setD] = useState<Draft | null>(drafts.get(runId) ?? null);
+  useEffect(() => {
+    ensureSource();
+    let set = draftListeners.get(runId);
+    if (!set) draftListeners.set(runId, (set = new Set()));
+    set.add(setD);
+    setD(drafts.get(runId) ?? null);
+    return () => {
+      set!.delete(setD);
+    };
+  }, [runId]);
+  return d;
+}
+
+/** Is the draft still news? Not once the run has an event newer than the one the draft began after. */
+export function draftIsNew(d: Draft | null, events: { id: number | string; runId: string | null }[], now = Date.now()): d is Draft {
+  if (!d || !d.text) return false;
+  if (d.endedAt !== undefined && now - d.endedAt > DRAFT_LINGER_MS) return false;
+  // Only stored events have number ids. The page makes up string ids for its own rows.
+  return !events.some((e) => e.runId === d.runId && typeof e.id === 'number' && e.id > d.after);
 }
 
 export function useLiveConnected(): boolean {

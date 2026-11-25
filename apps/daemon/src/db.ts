@@ -103,6 +103,13 @@ export interface RunRow {
    */
   head_before: string | null;
   head_after: string | null;
+  /**
+   * The uuid of the last session-log entry this run's events show. Orstra writes it with the events,
+   * in 1 transaction. After a restart, the replay starts after it. See sessionLog.ts.
+   */
+  log_uuid: string | null;
+  /** When restarts resumed this run on their own, as a JSON list of times. It stops a crash loop. */
+  resumed_at: string | null;
 }
 
 /** saved = the bytes are in the store. skipped = over a size cap; the row says why. */
@@ -227,7 +234,7 @@ export class Store {
         workspace_id: 'TEXT', base_branch: 'TEXT', base_commit: 'TEXT', subdir: 'TEXT', setup_at: 'INTEGER' },
       runs: { last_turn_at: 'INTEGER', wait_reason: 'TEXT', routed: 'TEXT', cost_usd: 'REAL', tokens_in: 'INTEGER', tokens_out: 'INTEGER',
         agent_pid: 'INTEGER', agent_boot_id: 'TEXT', agent_started_at: 'TEXT',
-        head_before: 'TEXT', head_after: 'TEXT' },
+        head_before: 'TEXT', head_after: 'TEXT', log_uuid: 'TEXT', resumed_at: 'TEXT' },
     };
     const added: string[] = [];
     for (const [table, columns] of Object.entries(want)) {
@@ -396,6 +403,31 @@ export class Store {
 
   artifactsForRun(runId: string): ArtifactRow[] {
     return this.db.prepare('SELECT * FROM artifacts WHERE run_id = ? ORDER BY created_at, rowid').all(runId) as unknown as ArtifactRow[];
+  }
+
+  /** Run `fn` as 1 transaction: all of its writes happen, or none. */
+  tx<T>(fn: () => T): T {
+    this.db.exec('BEGIN');
+    try {
+      const out = fn();
+      this.db.exec('COMMIT');
+      return out;
+    } catch (err) {
+      this.db.exec('ROLLBACK');
+      throw err;
+    }
+  }
+
+  /** The newest log position of the session's runs: where a run with no position of its own starts. */
+  sessionLogUuid(sessionId: string): string | null {
+    const row = this.db.prepare('SELECT log_uuid FROM runs WHERE session_id = ? AND log_uuid IS NOT NULL ORDER BY created_at DESC, rowid DESC LIMIT 1').get(sessionId) as { log_uuid: string } | undefined;
+    return row?.log_uuid ?? null;
+  }
+
+  /** The id of the task's newest event, or 0. */
+  lastEventId(taskId: string): number {
+    const row = this.db.prepare('SELECT MAX(id) AS id FROM events WHERE task_id = ?').get(taskId) as { id: number | null } | undefined;
+    return row?.id ?? 0;
   }
 
   addEvent(taskId: string, runId: string | null, kind: string, payload: unknown): EventRow {
