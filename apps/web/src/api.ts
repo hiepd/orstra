@@ -181,6 +181,8 @@ export interface Awaiting {
 
 export interface TaskDetail extends TaskSummary {
   description: string | null;
+  /** What the trigger that started the task tells its agents, such as a schedule's prompt. */
+  prompt: string | null;
   worktree: string | null;
   /** The branch the task started from and its commit then. Fixed at start. */
   baseBranch: string | null;
@@ -383,6 +385,8 @@ export interface Schedule {
   when: string;
   title: string;
   description: string;
+  /** What the agents of each task get, after each step's own prompt. */
+  prompt: string | null;
   workspace: { id: string; name: string } | null;
   active: boolean;
   dedupKey: string | null;
@@ -400,6 +404,7 @@ export interface ScheduleInput {
   timezone?: string | null;
   title?: string;
   description?: string;
+  prompt?: string | null;
   workspace?: string | null;
   active?: boolean;
 }

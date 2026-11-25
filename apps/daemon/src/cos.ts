@@ -336,7 +336,7 @@ export class ChiefOfStaff extends EventEmitter {
   /** The tool's arguments as a schedule input. A new schedule with no timezone gets this machine's. */
   private scheduleInput(a: Record<string, any>, creating: boolean): ScheduleInput {
     const str = (v: unknown) => (v === undefined || v === null ? undefined : String(v));
-    const input: ScheduleInput = { workflow: str(a.workflow), cron: str(a.cron), title: str(a.title), description: str(a.description), workspace: str(a.workspace) };
+    const input: ScheduleInput = { workflow: str(a.workflow), cron: str(a.cron), title: str(a.title), description: str(a.description), prompt: str(a.prompt), workspace: str(a.workspace) };
     if (a.timezone !== undefined) input.timezone = String(a.timezone).toUpperCase() === 'UTC' ? null : String(a.timezone);
     else if (creating) input.timezone = localTimezone();
     if (a.active !== undefined) input.active = a.active === 'on' || a.active === true;
@@ -348,7 +348,7 @@ export class ChiefOfStaff extends EventEmitter {
     const sid = a.schedule ? String(a.schedule) : undefined;
     if (tool === 'create_schedule') {
       const c = this.schedules.check(this.scheduleInput(a, true));
-      return `Create a schedule: “${c.title}” · ${c.workflowName} · ${c.when} (${c.timezone})${c.workspace ? ` · in ${c.workspace}` : ''}`;
+      return `Create a schedule: “${c.title}” · ${c.workflowName} · ${c.when} (${c.timezone})${c.workspace ? ` · in ${c.workspace}` : ''}${a.prompt ? ` · prompt “${clip(String(a.prompt), 300)}”` : ''}`;
     }
     if (!sid) throw new Error('Say which schedule: its id, from list_schedules.');
     const s = this.schedules.editable(sid); // "edit the workflow file" for a declarative one
@@ -356,7 +356,8 @@ export class ChiefOfStaff extends EventEmitter {
     const input = this.scheduleInput(a, false);
     const c = this.schedules.check(input, sid);
     const onOff = input.active === undefined ? '' : input.active ? ' · turn it on' : ' · turn it off';
-    return `Change the schedule “${s.title}” to: “${c.title}” · ${c.workflowName} · ${c.when} (${c.timezone})${c.workspace ? ` · in ${c.workspace}` : ''}${onOff}`;
+    const promptNote = input.prompt === undefined ? '' : input.prompt ? ` · prompt “${clip(input.prompt, 300)}”` : ' · no prompt';
+    return `Change the schedule “${s.title}” to: “${c.title}” · ${c.workflowName} · ${c.when} (${c.timezone})${c.workspace ? ` · in ${c.workspace}` : ''}${promptNote}${onOff}`;
   }
 
   /** The workspace a start_task names, or the only one. A workflow that names its own repo needs none. */

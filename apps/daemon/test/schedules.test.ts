@@ -100,24 +100,45 @@ describe('imperative schedules', () => {
 });
 
 describe('the inputs of a scheduled task', () => {
-  it('fills {{ last_run }} in the title, and gives step prompts trigger.schedule', async () => {
+  // The workflow's prompt does not name the schedule: the trigger and the workflow stay apart.
+  const AGENT = `name: Agent\nsteps:\n  work:\n    use: agent\n    prompt: Do the task.\n    on: { done: end }\n`;
+
+  it('gives every agent step the schedule prompt, with its placeholders filled, and the workflow names nothing', async () => {
     const clock = { now: t('2026-11-25T08:00:00Z') };
-    const { store, runner, schedules, triggers } = daemon(':memory:', { 'plain.yaml': PLAIN }, clock);
-    const { schedule } = schedules.create({ workflow: 'plain', cron: '30 9 * * *', timezone: 'Europe/Paris', title: 'Digest {{ date }} {{ time }} since {{ last_run }}' });
+    const { store, runner, schedules, triggers } = daemon(':memory:', { 'agent.yaml': AGENT }, clock);
+    schedules.create({
+      workflow: 'agent', cron: '30 9 * * *', timezone: 'Europe/Paris',
+      title: 'Digest {{ date }} {{ time }}', description: 'The daily digest.', prompt: 'Review what merged since {{ last_run }}.',
+    });
     clock.now = t('2026-11-25T08:31:00Z');
     await triggers.tick();
     clock.now = t('2026-11-26T08:31:00Z');
     await triggers.tick();
     const [second, first] = store.tasks();
-    expect(first.title).toBe('Digest 2026-11-25 09:30 since never');
-    expect(second.title).toBe('Digest 2026-11-26 09:30 since 2026-11-25');
+    expect(first).toMatchObject({ title: 'Digest 2026-11-25 09:30', description: 'The daily digest.', prompt: 'Review what merged since never.' });
+    expect(second).toMatchObject({ title: 'Digest 2026-11-26 09:30', prompt: 'Review what merged since 2026-11-25.' });
 
-    const ctx = (runner as any).context(second);
-    expect(ctx.trigger.schedule).toEqual({ id: schedule.id, due: '2026-11-26T08:30:00.000Z', date: '2026-11-26', time: '09:30', timezone: 'Europe/Paris', last_run: '2026-11-25' });
-    expect((runner as any).context(first).trigger.schedule.last_run).toBe('never');
-    // A task you started yourself has no schedule facts.
-    const own = runner.startTask({ workflowPath: (schedules as any).workflows()[0].path, title: 'mine' });
-    expect((runner as any).context(own).trigger.schedule).toBeUndefined();
+    const wf = runner.workflowFor(second);
+    const run = store.runsForTask(second.id)[0];
+    const text: string = (runner as any).buildPrompt(second, wf, wf.steps.work, run);
+    expect(text.startsWith('Do the task.')).toBe(true);
+    expect(text).toContain('Description:\nThe daily digest.');
+    expect(text).toContain('Prompt:\nReview what merged since 2026-11-25.');
+    expect((runner as any).context(second).trigger.prompt).toBe('Review what merged since 2026-11-25.');
+  });
+
+  it('has no prompt block for a task with no prompt', () => {
+    const { runner, list } = daemon(':memory:', { 'agent.yaml': AGENT }, { now: Date.now() });
+    const task = runner.startTask({ workflowPath: list[0].path, title: 'mine' });
+    const wf = runner.workflowFor(task);
+    const text: string = (runner as any).buildPrompt(task, wf, wf.steps.work, { attempt: 1 });
+    expect(text).not.toContain('Prompt:');
+  });
+
+  it('reads a prompt from a declarative schedule in YAML', () => {
+    const yaml = `name: D\ntriggers:\n  - schedule: { cron: "0 9 * * *", title: Daily, prompt: "Check the logs." }\n${HUMAN}`;
+    const { schedules } = daemon(':memory:', { 'd.yaml': yaml }, { now: Date.now() });
+    expect(schedules.list()[0].prompt).toBe('Check the logs.');
   });
 });
 

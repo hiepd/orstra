@@ -2,7 +2,6 @@ import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { FINISH_INSTRUCTIONS, parseAgentResult, parseWorkflow, renderTemplate, route, stripProgressBlock, switchCase, type Progress, type Step, type Workflow } from '@orstra/core';
-import { scheduleContext } from './schedules.ts';
 import { excludeFromGit, withFiles, type Attachment } from './attachments.ts';
 import { readClaudeLine, summarizeTool, type Executors, type LiveSession, type StreamEvent, type TurnEnd, type TurnUsage } from './executors.ts';
 import { entriesAfter, findSessionLog, readSessionLog, whereStopped, type WhereStopped } from './sessionLog.ts';
@@ -31,6 +30,8 @@ export interface StartTaskInput {
   via?: Via;
   /** Where it came from, e.g. `linear:<issue id>` for a task a trigger started. */
   source?: string;
+  /** What the trigger tells every agent step, such as a schedule's prompt. */
+  prompt?: string;
 }
 
 /** chat = talk to the agent's session; note = hand to a step's next run; ask = a forked copy answers. */
@@ -401,6 +402,7 @@ export class Runner extends EventEmitter {
       inbox_reason: null, edge_counts: '{}', worktree, created_at: now, updated_at: now, stopped_at: null,
       workflow_yaml: yaml, pr_url: null, source: input.source ?? null, archived_at: null,
       workspace_id: ws?.id ?? null, base_branch: base ?? null, base_commit: repo ? gitHead(worktree) : null, subdir: ws?.subdir || null, setup_at: null,
+      prompt: input.prompt?.trim() || null,
     };
     this.store.insertTask(task);
     this.event(taskId, null, 'system', { text: `Started ${wf.name}${ws ? ` in ${ws.name}` : ''}${byCos(input.via)}` });
@@ -503,9 +505,7 @@ export class Runner extends EventEmitter {
       const s = (steps[i.stepId] ??= {}) as { artifacts?: string[] };
       (s.artifacts ??= []).push(inputPath(i.stepId, i.name));
     }
-    // A task a schedule started also has {{ trigger.schedule.date }}, .time, .last_run and the rest.
-    const schedule = scheduleContext(this.store, task.source);
-    const trigger = { title: task.title, description: task.description, ref: task.ref, id: task.ref ?? task.id, ...(schedule ? { schedule } : {}) };
+    const trigger = { title: task.title, description: task.description, ref: task.ref, id: task.ref ?? task.id, prompt: task.prompt ?? '' };
     return { trigger, task: { id: task.id, ref: task.ref, title: task.title }, steps };
   }
 
@@ -584,6 +584,8 @@ export class Runner extends EventEmitter {
       '---',
       `Task: ${task.ref ? task.ref + ' ' : ''}${task.title}`,
       task.description && `Description:\n${task.description}`,
+      // The trigger's own instructions. The workflow does not name them: every agent step gets them here.
+      task.prompt && `Prompt:\n${task.prompt}`,
       this.artifactText(step),
       inputs,
       `Progress so far (each earlier step ran in its own session):\n${this.progressText(task, wf)}`,

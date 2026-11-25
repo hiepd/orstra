@@ -222,7 +222,7 @@ const path = taskPath(wf, runs.map((r) => r.stepId), t.current_step);
       (notes[e.step] ??= []).push({ text: e.text, ts: e.ts });
     }
     return {
-      ...taskSummary(t), description: t.description, worktree: t.worktree,
+      ...taskSummary(t), description: t.description, prompt: t.prompt ?? null, worktree: t.worktree,
       baseBranch: t.base_branch ?? null, baseCommit: t.base_commit ?? null, subdir: t.subdir ?? null, setupAt: t.setup_at ?? null, steps, track, notes, runs, human, awaiting, workingRunId: working?.id ?? null,
       worktreeGone: !!t.worktree && !existsSync(t.worktree),
       budgetUsd: (() => { try { return runner.workflowFor(t).budgetUsd ?? null; } catch { return null; } })(),

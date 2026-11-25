@@ -41,6 +41,11 @@ export interface TaskRow {
   subdir?: string | null;
   /** When the workspace's setup commands passed in this task's worktree. */
   setup_at?: number | null;
+  /**
+   * What the trigger that started the task tells its agents, such as a schedule's prompt. Every agent
+   * step gets it after its own prompt, so a workflow needs no placeholder for it. Null for most tasks.
+   */
+  prompt?: string | null;
 }
 
 /** Where a task's code is: 1 repo, the branch new tasks start from, and how to prepare a fresh worktree. */
@@ -176,7 +181,7 @@ CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS schedules (
   id TEXT PRIMARY KEY, kind TEXT NOT NULL, workflow TEXT NOT NULL, workflow_path TEXT,
   cron TEXT, every_minutes INTEGER, timezone TEXT, title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
-  workspace_id TEXT, workspace_name TEXT, repo TEXT, active INTEGER NOT NULL DEFAULT 1, dedup_key TEXT,
+  prompt TEXT, workspace_id TEXT, workspace_name TEXT, repo TEXT, active INTEGER NOT NULL DEFAULT 1, dedup_key TEXT,
   spec TEXT NOT NULL DEFAULT '', last_run_at INTEGER, last_task_id TEXT, next_run_at INTEGER, last_error TEXT,
   created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
 );
@@ -215,9 +220,11 @@ export interface ScheduleRow {
   every_minutes: number | null;
   /** IANA timezone. Null = UTC. */
   timezone: string | null;
-  /** The title and description of the task it starts. `{{ date }}` becomes the due date. */
+  /** The title, description and prompt of the task it starts. Placeholders are filled when it fires. */
   title: string;
   description: string;
+  /** What the agents of each task get: the schedule's own instructions. */
+  prompt: string | null;
   workspace_id: string | null;
   /** A declarative schedule names its workspace; Orstra looks it up when it fires. */
   workspace_name: string | null;
@@ -277,7 +284,8 @@ export class Store {
   private migrate(): string[] {
     const want: Record<string, Record<string, string>> = {
       tasks: { stopped_at: 'INTEGER', workflow_yaml: 'TEXT', pr_url: 'TEXT', source: 'TEXT', archived_at: 'INTEGER',
-        workspace_id: 'TEXT', base_branch: 'TEXT', base_commit: 'TEXT', subdir: 'TEXT', setup_at: 'INTEGER' },
+        workspace_id: 'TEXT', base_branch: 'TEXT', base_commit: 'TEXT', subdir: 'TEXT', setup_at: 'INTEGER', prompt: 'TEXT' },
+      schedules: { prompt: 'TEXT' },
       runs: { last_turn_at: 'INTEGER', wait_reason: 'TEXT', routed: 'TEXT', cost_usd: 'REAL', tokens_in: 'INTEGER', tokens_out: 'INTEGER',
         agent_pid: 'INTEGER', agent_boot_id: 'TEXT', agent_started_at: 'TEXT',
         head_before: 'TEXT', head_after: 'TEXT', log_uuid: 'TEXT', resumed_at: 'TEXT' },
@@ -320,12 +328,12 @@ export class Store {
   insertTask(t: TaskRow) {
     this.db
       .prepare(
-        `INSERT INTO tasks (id, ref, title, description, workflow_path, workflow_name, status, current_step, inbox_reason, edge_counts, worktree, created_at, updated_at, stopped_at, workflow_yaml, pr_url, source, archived_at, workspace_id, base_branch, base_commit, subdir, setup_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO tasks (id, ref, title, description, workflow_path, workflow_name, status, current_step, inbox_reason, edge_counts, worktree, created_at, updated_at, stopped_at, workflow_yaml, pr_url, source, archived_at, workspace_id, base_branch, base_commit, subdir, setup_at, prompt)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(t.id, t.ref, t.title, t.description, t.workflow_path, t.workflow_name, t.status, t.current_step, t.inbox_reason, t.edge_counts, t.worktree, t.created_at, t.updated_at,
         t.stopped_at ?? null, t.workflow_yaml ?? null, t.pr_url ?? null, t.source ?? null, t.archived_at ?? null,
-        t.workspace_id ?? null, t.base_branch ?? null, t.base_commit ?? null, t.subdir ?? null, t.setup_at ?? null);
+        t.workspace_id ?? null, t.base_branch ?? null, t.base_commit ?? null, t.subdir ?? null, t.setup_at ?? null, t.prompt ?? null);
   }
 
   updateTask(id: string, patch: Partial<TaskRow>) {
@@ -518,12 +526,6 @@ export class Store {
   /** The task with this source, whatever its workflow. A schedule uses it to start 1 task per due time. */
   taskWithSource(source: string): TaskRow | undefined {
     return this.db.prepare('SELECT * FROM tasks WHERE source = ? LIMIT 1').get(source) as TaskRow | undefined;
-  }
-
-  /** The sources of the tasks whose source starts with `prefix`. Compared as text, so `%` and `_` in it mean themselves. */
-  sourcesWithPrefix(prefix: string): string[] {
-    const rows = this.db.prepare('SELECT source FROM tasks WHERE substr(source, 1, ?) = ?').all(prefix.length, prefix) as { source: string }[];
-    return rows.map((r) => r.source);
   }
 
   get(key: string): string | null {

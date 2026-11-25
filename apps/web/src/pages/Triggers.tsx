@@ -212,6 +212,7 @@ function ScheduleForm({ s, onClose, onSaved }: { s?: Schedule; onClose: () => vo
   const [timezone, setTimezone] = useState(s ? s.timezone ?? 'UTC' : browserTimezone());
   const [title, setTitle] = useState(s?.title ?? '');
   const [description, setDescription] = useState(s?.description ?? '');
+  const [prompt, setPrompt] = useState(s?.prompt ?? '');
   const [workspace, setWorkspace] = useState(s?.workspace?.id ?? '');
   const [preview, setPreview] = useState<{ when: string; next: number[] } | { error: string } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -244,7 +245,7 @@ function ScheduleForm({ s, onClose, onSaved }: { s?: Schedule; onClose: () => vo
     try {
       const input: ScheduleInput = {
         workflow, cron: cron.trim(), timezone: timezone.trim() === 'UTC' ? null : timezone.trim() || null,
-        title: title.trim(), description: description.trim(), workspace: workspace || null,
+        title: title.trim(), description: description.trim(), prompt: prompt.trim() || null, workspace: workspace || null,
       };
       if (s) await api.updateSchedule(s.id, input);
       else {
@@ -350,14 +351,17 @@ function ScheduleForm({ s, onClose, onSaved }: { s?: Schedule; onClose: () => vo
         <SettingsRow label="Task title" help="{{ date }} and {{ time }} become when it is due, {{ last_run }} the date it last ran.">
           <input className="lx-input ox-wsin" aria-label="Task title" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Triage {{ date }}" />
         </SettingsRow>
-        <SettingsRow label="Description" help="Each task gets it, as when you start a task by hand. The workflow says how to work; this says what to do. Optional.">
+        <SettingsRow label="Prompt" help="What the agents of each task are told to do. Every agent step gets it, so the workflow needs no change. {{ last_run }} works here.">
           <textarea
             className="lx-field ox-wsin"
-            aria-label="Description"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            placeholder="What should happen, and how you’ll know it’s done"
+            aria-label="Prompt"
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            placeholder="Review what merged since {{ last_run }} and list what broke."
           />
+        </SettingsRow>
+        <SettingsRow label="Description" help="Shown on each task, as in the New task form. Optional.">
+          <textarea className="lx-field ox-wsin" aria-label="Description" value={description} onChange={(e) => setDescription(e.target.value)} />
         </SettingsRow>
         <SettingsRow label="Workspace" help="Where each task works.">
           <select className="lx-select ox-wsin" aria-label="Workspace" value={workspace} onChange={(e) => setWorkspace(e.target.value)}>

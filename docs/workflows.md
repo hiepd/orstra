@@ -77,6 +77,7 @@ The task goes to your Inbox when the outcome has no arrow, when a cap runs out, 
 | `{{ trigger.description }}` | Its description |
 | `{{ trigger.ref }}` | Its ticket, such as `HUB-416` |
 | `{{ trigger.id }}` | The ticket, or the task id when there is none |
+| `{{ trigger.prompt }}` | The prompt the trigger gave the task, or empty. You rarely need it: every agent step gets it anyway (see below) |
 | `{{ task.id }}` | The task id |
 | `{{ steps.impl.output }}` | What the `impl` step said it did |
 | `{{ steps.impl.outcome }}` | How `impl` ended |
@@ -107,8 +108,10 @@ triggers:
   - schedule:
       cron: "0 9 * * 1-5"          # 5 fields: minute hour day-of-month month day-of-week
       timezone: Europe/London      # optional IANA name; the default is UTC
-      title: "Triage {{ date }}"   # {{ date }} becomes the due date in the timezone, such as 2026-11-25
-      description: Look at what came in.
+      title: "Triage {{ date }}"   # the task title
+      prompt: |                    # what the agents of each task are told to do
+        Triage what came in since {{ last_run }}.
+      description: The morning triage.   # optional, shown on the task
       workspace: app               # optional, the workspace by name
   - schedule:
       every: 1d                    # instead of cron: "30m", "6h", "1d", or a number of minutes
@@ -118,21 +121,19 @@ triggers:
 
 A schedule has `cron` or `every`, not both. An interval counts from when Orstra first saw the trigger.
 
-A schedule fills the title and the description of each task it starts, as you do in the New task form. The workflow's prompts say how to work; the description says what this task is about. Every agent step reads it, and a prompt can also place it with `{{ trigger.description }}`. In the title and the description of a schedule, these placeholders are filled when the task starts:
+A trigger and a workflow stay apart. The trigger fills the task, and the workflow reads only the task:
+
+- `title`: the task's title.
+- `prompt`: what the agents of the task are told to do. Every agent step gets it after its own prompt, under "Prompt:". The workflow does not name it, so 1 workflow serves many schedules, and the same workflow works for tasks you start by hand.
+- `description`: what the task is about, shown on the task, as in the New task form. Agents see it as the task's description.
+
+In the title, the prompt and the description of a schedule, these placeholders are filled when the task starts:
 
 | Placeholder | Becomes |
 |---|---|
 | `{{ date }}` | The date it is due, such as 2026-11-25, in its timezone |
 | `{{ time }}` | The time it is due, such as 09:00, in its timezone |
 | `{{ last_run }}` | The date the schedule last started a task, or `never` |
-
-A step prompt in a task that a schedule started can also read `{{ trigger.schedule.date }}`, `.time`, `.timezone`, `.last_run`, `.due` (the due time in UTC, ISO 8601) and `.id`. In any other task they are empty.
-
-```yaml
-prompt: |
-  {{ trigger.description }}
-  Look only at what changed since {{ trigger.schedule.last_run }}.
-```
 
 You can also make imperative schedules on the Triggers page, or ask the chief of staff. Orstra keeps them in its database, and you can change, turn off, or delete them there. The Triggers page lists both kinds.
 

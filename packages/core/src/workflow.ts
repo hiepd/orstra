@@ -86,6 +86,8 @@ export type Trigger =
       everyMinutes?: number;
       title: string;
       description?: string;
+      /** What the agents of each task get, after each step's own prompt. */
+      prompt?: string;
       repo?: string;
       /** The workspace the task works in, by name. */
       workspace?: string;
@@ -159,6 +161,7 @@ const triggerSchema = z.union([
       every: z.union([z.string(), z.number().positive()]).optional(),
       title: z.string(),
       description: z.string().optional(),
+      prompt: z.string().optional(),
       repo: z.string().optional(),
       workspace: z.string().optional(),
     }),

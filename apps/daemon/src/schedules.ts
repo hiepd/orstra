@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
-import { checkCron, checkTimezone, dateIn, describeCron, fillSchedule, nextCron, timeIn, parseWorkflow, type Trigger, type Workflow } from '@orstra/core';
+import { checkCron, checkTimezone, describeCron, fillSchedule, nextCron, parseWorkflow, type Trigger, type Workflow } from '@orstra/core';
 import type { ScheduleRow, Store, TaskRow } from './db.ts';
 import type { Runner } from './runner.ts';
 import { listWorkflows } from './workflows.ts';
@@ -37,6 +37,8 @@ export interface ScheduleInput {
   timezone?: string | null;
   title?: string;
   description?: string;
+  /** What the agents of each task get, after each step's own prompt. Empty or null = none. */
+  prompt?: string | null;
   /** The workspace, by name or id. Needed when there is more than 1 and the workflow names no repo. */
   workspace?: string | null;
   active?: boolean;
@@ -57,6 +59,7 @@ export interface ScheduleView {
   when: string;
   title: string;
   description: string;
+  prompt: string | null;
   workspace: { id: string; name: string } | null;
   active: boolean;
   dedupKey: string | null;
@@ -153,7 +156,7 @@ export class Schedules {
   private syncOne(sid: string, w: WorkflowFile, t: ScheduleTrigger, now: number) {
     const fields = {
       workflow: w.file, workflow_path: w.path, cron: t.cron ?? null, every_minutes: t.everyMinutes ?? null, timezone: t.timezone ?? null,
-      title: t.title, description: t.description ?? '', workspace_name: t.workspace ?? null, repo: t.repo ?? null,
+      title: t.title, description: t.description ?? '', prompt: t.prompt?.trim() || null, workspace_name: t.workspace ?? null, repo: t.repo ?? null,
     };
     const spec = specOf(fields);
     const old = this.store.schedule(sid);
@@ -220,9 +223,11 @@ export class Schedules {
       throw new ScheduleError(err?.message ?? String(err));
     }
     const workspace_id = input.workspace !== undefined ? this.workspaceFor(input.workspace, w.wf) : base ? base.workspace_id : this.workspaceFor(undefined, w.wf);
+    const promptIn = input.prompt !== undefined ? input.prompt : base?.prompt;
     return {
       workflow: w.file, cron: cronOk, timezone, title, workspace_id,
       description: (input.description ?? base?.description ?? '').trim(),
+      prompt: promptIn?.trim() || null,
     };
   }
 
@@ -335,7 +340,7 @@ export class Schedules {
       id: r.id, kind: r.kind, workflow: r.workflow, workflowName: name ?? r.workflow, workflowPath: r.kind === 'declarative' ? r.workflow_path : null,
       cron: r.cron, everyMinutes: r.every_minutes, timezone: r.timezone,
       when: r.cron ? describeCron(r.cron) : r.every_minutes ? describeEvery(r.every_minutes) : '',
-      title: r.title, description: r.description,
+      title: r.title, description: r.description, prompt: r.prompt,
       workspace: ws ? { id: ws.id, name: ws.name } : r.workspace_name ? { id: '', name: r.workspace_name } : null,
       active: !!r.active, dedupKey: r.dedup_key, nextRunAt: r.next_run_at, lastRunAt: r.last_run_at,
       lastTask: t ? { id: t.id, ref: t.ref, title: t.title, status: t.status } : null,
@@ -412,44 +417,9 @@ export class Schedules {
     return this.runner.startTask({
       workflowPath, workspaceId, repo: r.repo ?? undefined, source,
       title: fillSchedule(r.title, at), description: fillSchedule(r.description, at) || undefined,
+      prompt: r.prompt ? fillSchedule(r.prompt, at) : undefined,
     });
   }
-}
-
-/** What a step prompt reads as `{{ trigger.schedule.* }}` for a task a schedule started. */
-export interface ScheduleContext {
-  id: string;
-  /** The due time, as an ISO string in UTC. */
-  due: string;
-  /** The due date (YYYY-MM-DD) and time (HH:mm), in the schedule's timezone. */
-  date: string;
-  time: string;
-  timezone: string;
-  /** The date of the task this schedule started before this one, or "never". */
-  last_run: string;
-}
-
-/**
- * The schedule facts of a task, from its source `schedule:<id>@<due ms>`. Null for any other task.
- * The last run is the latest earlier task of the same schedule, so it stays right after the schedule
- * fires again or is deleted. A deleted schedule's timezone is unknown, so it falls back to UTC.
- */
-export function scheduleContext(store: Store, source: string | null): ScheduleContext | null {
-  const m = source?.match(/^schedule:(.+)@(\d+)$/);
-  if (!m) return null;
-  const [, sid, dueText] = m;
-  const due = Number(dueText);
-  const tz = store.schedule(sid)?.timezone ?? null;
-  const prefix = `schedule:${sid}@`;
-  let last: number | null = null;
-  for (const s of store.sourcesWithPrefix(prefix)) {
-    const d = Number(s.slice(prefix.length));
-    if (Number.isFinite(d) && d < due && (last === null || d > last)) last = d;
-  }
-  return {
-    id: sid, due: new Date(due).toISOString(), date: dateIn(due, tz), time: timeIn(due, tz), timezone: tz ?? 'UTC',
-    last_run: last === null ? 'never' : dateIn(last, tz),
-  };
 }
 
 /** The trigger index from a declarative id `yaml:<file>#<n>`. */
