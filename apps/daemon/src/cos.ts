@@ -10,6 +10,7 @@ import { gitDiff } from './git.ts';
 import type { Runner } from './runner.ts';
 import type { Views } from './server.ts';
 import { listWorkflows, resolveWorkflow } from './workflows.ts';
+import { pickWorkspace, workspaceView } from './workspace.ts';
 
 /** The events of the chief of staff's conversation are stored like a task's, under this id. */
 export const COS_ID = 'cos';
@@ -293,7 +294,9 @@ export class ChiefOfStaff extends EventEmitter {
       } catch {
         /* shown as given */
       }
-      return `Start a task: “${a.title}” · ${wf}`;
+      // Refuses here, before a plan exists, when it cannot tell which workspace: the error names them.
+      const ws = this.startWorkspace(a);
+      return `Start a task: “${a.title}” · ${wf}${ws ? ` · in ${ws.name}` : ''}`;
     }
     const t = this.task(a.task);
     const stepTitle = (s: unknown) => this.runner.workflowFor(t).steps[this.stepId(t, s)]?.title ?? String(s);
@@ -313,11 +316,23 @@ export class ChiefOfStaff extends EventEmitter {
     }
   }
 
+  /** The workspace a start_task names, or the only one. A workflow that names its own repo needs none. */
+  private startWorkspace(a: Record<string, any>) {
+    let wfRepo: string | undefined;
+    try {
+      wfRepo = this.runner.workflow(resolveWorkflow(String(a.workflow))).repo;
+    } catch {
+      /* the start itself reports a bad workflow */
+    }
+    return pickWorkspace(this.store, { workspace: a.workspace ? String(a.workspace) : undefined, repo: wfRepo });
+  }
+
   /** Run an action for real (permission already granted). */
   private async execute(tool: string, a: Record<string, any>): Promise<{ text: string; detail?: string; taskId?: string; view?: string }> {
     if (tool === 'start_task') {
       const path = resolveWorkflow(String(a.workflow));
-      const t = this.runner.startTask({ workflowPath: path, title: String(a.title), description: a.description ? String(a.description) : undefined, ref: a.ref ? String(a.ref) : undefined, via: 'cos' });
+      const ws = this.startWorkspace(a);
+      const t = this.runner.startTask({ workflowPath: path, title: String(a.title), description: a.description ? String(a.description) : undefined, ref: a.ref ? String(a.ref) : undefined, workspaceId: ws?.id, via: 'cos' });
       return { text: `Started ${named(t)} · ${t.workflow_name}`, taskId: t.id };
     }
     const t = this.task(a.task);
@@ -442,6 +457,11 @@ export class ChiefOfStaff extends EventEmitter {
         );
       case 'list_watches':
         return json(this.view().watches);
+      case 'list_workspaces':
+        return json(this.store.workspaces().map((w) => {
+          const v = workspaceView(w);
+          return { name: v.name, repo: v.repoPath, baseBranch: v.baseBranch, subdir: v.subdir || null, defaultWorkflow: v.defaultWorkflow };
+        }));
       case 'show_tasks': {
         const ids = (Array.isArray(a.tasks) ? a.tasks : []).map((x: unknown) => this.task(x).id);
         if (!ids.length) throw new Error('Pass at least one task.');

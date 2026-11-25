@@ -8,8 +8,10 @@ const HELP = `orstra — a local software factory
 
   orstra serve                         start the daemon and UI (http://localhost:${PORT})
   orstra run <workflow> --title "…"    start a task (needs the daemon running)
-        [--description "…"] [--ref HUB-1] [--repo ~/path/to/repo]
+        [--workspace orstra] [--base main] [--description "…"] [--ref HUB-1]
+        [--repo ~/path/to/repo]        a repo path used once, for a task with no workspace
   orstra tasks                         list tasks
+  orstra workspaces                    list workspaces
   orstra sessions                      list agent sessions (running, queued, last 24h)
   orstra workflows                     list workflow files
   orstra rebuild [task-id]             work every task's state out from its runs again
@@ -34,7 +36,7 @@ async function main() {
   const { values, positionals } = parseArgs({
     args: rest,
     allowPositionals: true,
-    options: { title: { type: 'string' }, description: { type: 'string' }, ref: { type: 'string' }, repo: { type: 'string' } },
+    options: { title: { type: 'string' }, description: { type: 'string' }, ref: { type: 'string' }, repo: { type: 'string' }, workspace: { type: 'string' }, base: { type: 'string' } },
   });
 
   switch (cmd) {
@@ -107,7 +109,8 @@ async function main() {
     }
     case 'run': {
       if (!positionals[0] || !values.title) throw new Error('Usage: orstra run <workflow> --title "…"');
-      const t = await api('/api/tasks', { method: 'POST', body: JSON.stringify({ workflow: positionals[0], ...values }) });
+      const { base: baseBranch, ...rest } = values;
+      const t = await api('/api/tasks', { method: 'POST', body: JSON.stringify({ workflow: positionals[0], ...rest, baseBranch }) });
       console.log(`Started ${t.id}: ${t.title} (${t.workflow}) → http://localhost:${PORT}/#/tasks/${t.id}`);
       return;
     }
@@ -124,6 +127,10 @@ async function main() {
       for (const c of changed) console.log(`${c.taskId}  ${c.from} → ${c.to}`);
       console.log(changed.length ? `${changed.length} task${changed.length === 1 ? '' : 's'} changed` : 'Every task already said the right thing.');
       break;
+    }
+    case 'workspaces': {
+      for (const w of await api('/api/workspaces')) console.log(`${w.name.padEnd(20)} ${w.repoPath}  (${w.baseBranch}${w.subdir ? `, ${w.subdir}` : ''})`);
+      return;
     }
     case 'workflows': {
       const { listWorkflows } = await import('./server.ts');

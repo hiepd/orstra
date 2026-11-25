@@ -112,8 +112,19 @@ Shells and dev servers end when the daemon stops, and before a cleanup removes t
 ### Decision
 Your answer at a `human` step. You see what you're deciding (e.g. the spec, the agent's assumptions and open questions) and what each choice leads to. Each choice is an arrow.
 
+### Workspace
+**Where a task's code is.** 1 repo, the branch new tasks start from, and how to prepare a fresh worktree. Every task you start works in a workspace.
+
+- It holds: a name, the repo path, the **base branch** (read from `origin/HEAD` when you add it), an optional **sub-directory** where agents and checks start, a default workflow, **setup commands**, **files to copy** (gitignored files such as `.env.local`) and **environment variables**.
+- A task records its base branch and that branch's commit when it starts. The task's changes are compared with that commit, so switching branch in your checkout does not move them. The New task form can pick another base branch for 1 task.
+- Setup runs once per task, before its first agent or check. If it fails, the task goes to your Inbox and no agent starts.
+- A task needs a workspace. With exactly 1, it is used without asking. With none, or several and none named, the start is refused and says why. A repo path still works for 1 task, as a way out.
+- Removing a workspace leaves its tasks' worktrees and branches alone; they only lose the link.
+- Lives on the **Workspaces** screen. The Tasks screen can filter by workspace, but it never scopes the app: the Inbox, the counts and the assistant always see every workspace.
+- Not the same word as a `workspace-write` Codex sandbox or a workspace in the elezar platform app.
+
 ### Worktree
-The task's own working copy: `git worktree` on branch `orstra/<task>`. All of a task's runs work in it, one after another.
+The task's own working copy: `git worktree` on branch `orstra/<task>`, started from its workspace's base branch. All of a task's runs work in it, one after another.
 
 ### Merge
 The `git.merge` action. Put it in a workflow where the work should land: it merges the task's branch into the branch the repository has checked out. The Simple workflow merges nothing; its work stays on the task's branch.
@@ -159,11 +170,12 @@ How many runs can work at the same time on this machine (default 4). Agent and g
 | **Assistant** | The conversation, its plans waiting for your OK, what it is watching, what it may do without asking | Task rows open the task page |
 | **Tasks** | All tasks, in 3 views. **Inbox**: the tasks that need you (a decision, a question from an agent, a stuck task), across every workflow, with the selected task open beside the list. **Board**: one workflow's tasks by their current step (columns = workflow steps). **List**: all tasks by status | Inbox: opens the task in the pane. Board and List: open the task page |
 | **Task page** | One task: its steps (with notes), the decision if one is waiting, and the chat with its sessions and the viewer | A chip under an agent message opens it in the viewer |
+| **Workspaces** | Every workspace, and the open one's home: **Overview** (counts, active tasks, where tasks work) and **Settings** (repo, base branch, sub-directory, setup) | Task rows open the task page. "Open in Tasks" opens Tasks filtered to the workspace |
 | **Workflows** | The workflow editor (canvas or YAML) | Edits a workflow |
-| **Settings** | Agents, triggers, repositories, connections, notifications | — |
+| **Settings** | Agents, triggers, connections, notifications | — |
 
 **Rules for the UI:**
-- **One home per object.** Tasks live on the task page, workflows on Workflows, agents and triggers in Settings. Lists only navigate; they never offer a second place to act. Two exceptions: the Inbox view shows the task page itself in a pane beside the list, so acting there is acting on the task page; and the assistant, which you can ask to act, and which shows every action as a plan or a receipt that links to the task.
+- **One home per object.** Tasks live on the task page, workspaces on Workspaces, workflows on Workflows, agents and triggers in Settings. Lists only navigate; they never offer a second place to act. Two exceptions: the Inbox view shows the task page itself in a pane beside the list, so acting there is acting on the task page; and the assistant, which you can ask to act, and which shows every action as a plan or a receipt that links to the task.
 - **No list → list links.** From any list you go to the task page and back, never to another list.
 - **Talking and notes never mix.** Chat goes to a session; notes go on a step.
 

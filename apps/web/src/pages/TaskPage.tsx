@@ -267,6 +267,7 @@ function Overview({ task, git, onModal, embedded }: { task: TaskDetail; git: Res
             <h1 className="ox-h1">{task.title}</h1>
             <div className="ox-sub">
               {task.ref ? `${task.ref} · ` : ''}
+              {task.workspace ? `${task.workspace.name} · ` : ''}
               {task.workflow} · started {ago(task.createdAt)}
             </div>
           </div>
@@ -459,6 +460,18 @@ function Overview({ task, git, onModal, embedded }: { task: TaskDetail; git: Res
       {!embedded && (
       <aside className="ox-props" aria-label="Task details">
         <div className="ox-prop">
+          <span className="ox-pk">Workspace</span>
+          {task.workspace ? (
+            <a className="ox-pv" href={href.workspace(task.workspace.id)}>
+              {task.workspace.name}
+            </a>
+          ) : (
+            <span className="ox-pv" style={{ color: 'var(--faint)' }}>
+              None
+            </span>
+          )}
+        </div>
+        <div className="ox-prop">
           <span className="ox-pk">Workflow</span>
           <a className="ox-pv" href={href.workflow(task.workflowFile)}>
             {task.workflow}
@@ -467,7 +480,11 @@ function Overview({ task, git, onModal, embedded }: { task: TaskDetail; git: Res
         <Prop k="Agent" v={agentRun ? agentOf(agentRun).name : 'None yet'} />
         {task.ref && <Prop k="Ticket" v={task.ref} mono />}
         <Prop k="Branch" v={g?.branch ? g.branch + (g.base ? ` → ${g.base}` : '') : task.worktree ? '…' : 'None'} mono />
+        {task.baseCommit && (
+          <Prop k="Base" v={`${task.baseBranch ?? 'detached'} @ ${task.baseCommit.slice(0, 7)}`} mono title="Fixed when the task started. A branch switch in your checkout does not move it." />
+        )}
         <Prop k="Worktree" v={task.worktreeGone ? 'Removed' : task.worktree ? shortPath(task.worktree) : 'None'} mono={!task.worktreeGone} />
+        {task.subdir && <Prop k="Starts in" v={task.subdir} mono title="Agents and checks start in this folder of the worktree." />}
         <Prop k="Changes" v={g ? (g.files.length ? `${g.files.length} ${g.files.length === 1 ? 'file' : 'files'} · ${g.commits.length} ${g.commits.length === 1 ? 'commit' : 'commits'}` : 'None yet') : '…'} />
         {task.prUrl ? (
           <div className="ox-prop">

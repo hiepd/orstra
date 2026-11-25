@@ -10,6 +10,9 @@ import type { ChiefOfStaff } from './cos.ts';
 import type { Triggers } from './triggers.ts';
 import { gitDiff, gitInfo } from './git.ts';
 import { taskFacts } from './project.ts';
+import { createWorkspace, defaultBranch, deleteWorkspace, pickWorkspace, updateWorkspace, workspaceView } from './workspace.ts';
+import { locateWorkflow } from './workflows.ts';
+import { expandHome } from './paths.ts';
 import { agentRoots, listFiles, readTaskFile } from './files.ts';
 import { linkInfo } from './linkInfo.ts';
 import { Terminals } from './terminals.ts';
@@ -139,6 +142,7 @@ export function makeViews(store: Store, runner: Runner) {
       run: cur ? { status: cur.status, attempt: cur.attempt, kind: cur.kind } : null, agent: lastAgent?.agent ?? null,
       createdAt: t.created_at, updatedAt: t.updated_at,
       cost: store.taskCost(t.id), prUrl: t.pr_url, source: t.source, archivedAt: t.archived_at,
+      workspace: (() => { const w = t.workspace_id ? store.workspace(t.workspace_id) : undefined; return w ? { id: w.id, name: w.name } : null; })(),
     };
   };
 
@@ -197,7 +201,8 @@ const path = taskPath(wf, runs.map((r) => r.stepId), t.current_step);
       (notes[e.step] ??= []).push({ text: e.text, ts: e.ts });
     }
     return {
-      ...taskSummary(t), description: t.description, worktree: t.worktree, steps, track, notes, runs, human, awaiting, workingRunId: working?.id ?? null,
+      ...taskSummary(t), description: t.description, worktree: t.worktree,
+      baseBranch: t.base_branch ?? null, baseCommit: t.base_commit ?? null, subdir: t.subdir ?? null, setupAt: t.setup_at ?? null, steps, track, notes, runs, human, awaiting, workingRunId: working?.id ?? null,
       worktreeGone: !!t.worktree && !existsSync(t.worktree),
       budgetUsd: (() => { try { return runner.workflowFor(t).budgetUsd ?? null; } catch { return null; } })(),
       events, eventsAfter: opts.after ?? null, workflowChanged: runner.workflowChanged(t), permission: permissionView(t.id),
@@ -207,7 +212,7 @@ const path = taskPath(wf, runs.map((r) => r.stepId), t.current_step);
 
   /** The task's worktree as a coding tool would show it: branch, changes, commits, and the checks that ran. */
   const gitView = (t: TaskRow) => {
-    const info = t.worktree ? gitInfo(t.worktree) : null;
+    const info = t.worktree ? gitInfo(t.worktree, { branch: t.base_branch ?? null, commit: t.base_commit ?? null }) : null;
     const checks = store.runsForTask(t.id).filter((r) => r.kind === 'gate').reverse().map((r) => ({
       runId: r.id, name: stepTitle(t, r.step_id) + (r.attempt > 1 ? ` · attempt ${r.attempt}` : ''),
       state: r.status === 'running' || r.status === 'queued' ? 'running' : r.outcome === 'pass' ? 'pass' : r.status === 'stopped' ? 'stopped' : 'fail',
@@ -253,8 +258,37 @@ export function buildApi(store: Store, runner: Runner, cos?: ChiefOfStaff, trigg
       }
       if (req.method === 'POST' && p === '/api/tasks') {
         const b = await readJson(req);
-        const task = runner.startTask({ workflowPath: resolveWorkflow(b.workflow), title: b.title, description: b.description, ref: b.ref, repo: b.repo });
+        // A task needs a workspace, a repo path used once, or a workflow that names its own repo.
+        const named = b.workspace ? pickWorkspace(store, { workspace: b.workspace }) : null;
+        const workflow = b.workflow || named?.default_workflow;
+        if (!workflow) return send(res, 400, { error: 'Say which workflow the task follows.' }), true;
+        const workflowPath = resolveWorkflow(workflow);
+        const wfRepo = (() => { try { return parseWorkflow(readFileSync(locateWorkflow(workflowPath), 'utf8')).repo; } catch { return undefined; } })();
+        const ws = named ?? pickWorkspace(store, { repo: b.repo || wfRepo });
+        const task = runner.startTask({ workflowPath, title: b.title, description: b.description, ref: b.ref, workspaceId: ws?.id, repo: ws ? undefined : b.repo, baseBranch: b.baseBranch });
         return send(res, 201, taskSummary(task)), true;
+      }
+      if (req.method === 'GET' && p === '/api/workspaces') return send(res, 200, store.workspaces().map(workspaceView)), true;
+      if (req.method === 'POST' && p === '/api/workspaces') {
+        const b = await readJson(req);
+        return send(res, 201, workspaceView(createWorkspace(store, b))), true;
+      }
+      // The Add workspace form asks before you save: is this a git repo, and which branch is its default?
+      if (req.method === 'GET' && p === '/api/workspaces/check') {
+        const repo = (url.searchParams.get('repo') ?? '').trim();
+        const dir = expandHome(repo);
+        let ok = false;
+        try { ok = !!repo && existsSync(dir) && execFileSync('git', ['-C', dir, 'rev-parse', '--verify', '-q', 'HEAD'], { stdio: 'pipe' }).length > 0; } catch { ok = false; }
+        return send(res, 200, ok ? { ok, baseBranch: defaultBranch(dir) } : { ok, error: repo ? `${repo} is not a git repository with commits.` : 'Give a repo path.' }), true;
+      }
+      const wm = m(/^\/api\/workspaces\/([\w-]+)$/);
+      if (wm) {
+        if (req.method === 'GET') {
+          const w = store.workspace(wm[1]);
+          return send(res, w ? 200 : 404, w ? workspaceView(w) : { error: 'No such workspace' }), true;
+        }
+        if (req.method === 'PATCH') return send(res, 200, workspaceView(updateWorkspace(store, wm[1], await readJson(req)))), true;
+        if (req.method === 'DELETE') return send(res, 200, { ok: true, unlinked: deleteWorkspace(store, wm[1]) }), true;
       }
       let mm = m(/^\/api\/tasks\/([\w-]+)$/);
       if (req.method === 'GET' && mm) {
@@ -341,7 +375,7 @@ export function buildApi(store: Store, runner: Runner, cos?: ChiefOfStaff, trigg
       }
       if ((mm = m(/^\/api\/tasks\/([\w-]+)\/diff$/)) && req.method === 'GET') {
         const t = store.task(mm[1]);
-        const d = t?.worktree ? gitDiff(t.worktree, url.searchParams.get('path') ?? '') : null;
+        const d = t?.worktree ? gitDiff(t.worktree, url.searchParams.get('path') ?? '', { branch: t.base_branch ?? null, commit: t.base_commit ?? null }) : null;
         return send(res, d ? 200 : 404, d ?? { error: 'No diff for that file' }), true;
       }
       // The side viewer: the worktree's files, and one file's bytes.

@@ -2344,3 +2344,39 @@ a:hover {
 .vw-dragging{user-select:none}
 .vw-dragging iframe{pointer-events:none}
 .vw-dragging .vw-grip::after,.vw-dragging .vw-pgrip::after{background:var(--accent)}
+
+/* Workspaces: the list on the left, the open workspace's home on the right. */
+.ox-wssplit{flex:1;display:flex;min-height:0}
+.ox-wslist{flex:0 0 260px;border-right:1px solid var(--line);padding:10px 8px;display:flex;flex-direction:column;gap:2px;overflow-y:auto;background:var(--surface-2)}
+.ox-wsrow{display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:8px;row-gap:2px;align-items:center;padding:8px 10px;border-radius:6px;color:inherit;text-decoration:none}
+.ox-wsrow:hover{background:var(--line-3);text-decoration:none}
+.ox-wsrow[aria-current="true"]{background:var(--accent-line)}
+.ox-wsname{font-size:13px;font-weight:600}
+.ox-wscount{font-size:12px;white-space:nowrap}
+.ox-wsmeta{grid-column:1 / 3;font-family:var(--mono);font-size:11.5px;color:var(--muted)}
+.ox-wsdoc{display:flex;flex-direction:column;gap:18px}
+.ox-wshead{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:12px}
+.ox-wshead .ox-h1{font-size:22px}
+.ox-wsstats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.ox-wsstat{background:var(--surface);border-radius:12px;box-shadow:var(--shadow-card);padding:12px 14px;display:flex;flex-direction:column;gap:4px}
+.ox-wsstat span{font-size:12px;color:var(--muted)}
+.ox-wsstat b{font-size:20px;font-weight:600}
+.ox-wsin{width:280px;max-width:100%;flex:none}
+textarea.ox-wsin{min-height:56px}
+.ox-wsacts{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.ox-wsdanger{background:var(--red-soft);color:var(--red-fg)}
+.ox-wsdanger:hover{background:var(--red-line)}
+@media (max-width:760px){.ox-wssplit{flex-direction:column}.ox-wslist{flex:none;border-right:0;border-bottom:1px solid var(--line)}.ox-wsstats{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+/* A task's workspace, on its board card and its list row. */
+.ox-tch{display:flex;align-items:center;gap:6px;min-width:0}
+.ox-wstag{margin-left:auto;font-size:11px;font-weight:500;padding:1px 7px;border-radius:5px;background:var(--fill);color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:50%;flex:none}
+.ox-lrow .ox-wstag{margin-left:0}
+
+/* The New task form: why a workspace is needed, and where the task will work. */
+.ox-wsneed{display:flex;flex-direction:column;align-items:flex-start;gap:8px;padding:14px;border:1px dashed var(--border-stronger);border-radius:10px;background:var(--surface-2);line-height:1.5}
+.ox-wswhere{border:1px solid var(--line-3);border-radius:8px;background:var(--surface-2)}
+.ox-wswhere summary{padding:8px 12px;cursor:pointer;font-size:12px;font-weight:500;color:var(--ink-2)}
+.ox-wswhere dl{display:grid;grid-template-columns:110px minmax(0,1fr);gap:6px 10px;margin:0;padding:0 12px 12px;font-size:12px}
+.ox-wswhere dt{color:var(--muted)}
+.ox-wswhere dd{margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

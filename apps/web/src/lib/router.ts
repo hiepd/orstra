@@ -8,6 +8,8 @@ export type Route =
   | { name: 'tasks'; inbox?: boolean; sel?: string; selView?: TaskViewName }
   | { name: 'task'; id: string; view: TaskViewName; runId?: string }
   | { name: 'workflows'; file?: string }
+  /** Workspaces. `id`: the one open beside the list; `tab`: its Overview or Settings. */
+  | { name: 'workspaces'; id?: string; tab?: 'overview' | 'settings' }
   | { name: 'settings'; group?: string }
   | { name: 'notFound'; path: string };
 
@@ -27,6 +29,9 @@ export function parseHash(hash: string): Route {
     if (parts[2] === 'chat' && parts.length <= 4) return { name: 'task', id: parts[1], view: 'chat', runId: parts[3] };
   }
   if (parts[0] === 'workflows' && parts.length <= 2) return { name: 'workflows', file: parts[1] };
+  if (parts[0] === 'workspaces' && parts.length <= 3 && (parts.length < 3 || parts[2] === 'settings')) {
+    return { name: 'workspaces', id: parts[1], tab: parts[2] === 'settings' ? 'settings' : 'overview' };
+  }
   // "#/settings" is the whole page; "#/settings/<group>" deep-links one group.
   if (parts[0] === 'settings' && parts.length <= 2) return { name: 'settings', group: parts[1] };
   return { name: 'notFound', path };
@@ -40,6 +45,8 @@ export const href = {
   task: (id: string) => `#/tasks/${encodeURIComponent(id)}`,
   chat: (id: string, runId?: string) => `#/tasks/${encodeURIComponent(id)}/chat${runId ? `/${encodeURIComponent(runId)}` : ''}`,
   workflows: '#/workflows',
+  workspaces: '#/workspaces',
+  workspace: (id: string, tab?: 'overview' | 'settings') => `#/workspaces/${encodeURIComponent(id)}${tab === 'settings' ? '/settings' : ''}`,
   workflow: (file: string) => `#/workflows/${encodeURIComponent(file)}`,
   settings: '#/settings',
   settingsGroup: (id: string) => `#/settings/${encodeURIComponent(id)}`,

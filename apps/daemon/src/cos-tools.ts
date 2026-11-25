@@ -32,6 +32,7 @@ export const COS_TOOLS: CosTool[] = [
   { name: 'get_diff', description: 'The diff of one changed file in a task’s worktree.', properties: { task, path: { type: 'string', description: 'File path inside the worktree, as listed by get_task_changes.' } }, required: ['task', 'path'] },
   { name: 'read_task_file', description: 'Read a text file in a task’s worktree (for example a spec the agent wrote).', properties: { task, path: { type: 'string', description: 'Path relative to the worktree.' } }, required: ['task', 'path'] },
   { name: 'list_workflows', description: 'The workflows tasks can be started with, and their steps.', properties: {}, required: [] },
+  { name: 'list_workspaces', description: 'The workspaces a task can work in: each is 1 repo, the branch tasks start from, and its default workflow.', properties: {}, required: [] },
   { name: 'list_watches', description: 'The follow-ups you are currently watching for.', properties: {}, required: [] },
   {
     name: 'show_tasks',
@@ -57,6 +58,7 @@ export const COS_TOOLS: CosTool[] = [
     description: 'Start a new task with a workflow.',
     properties: {
       workflow: { type: 'string', description: 'Workflow file name or name, from list_workflows.' },
+      workspace: { type: 'string', description: 'The workspace to work in, by name, from list_workspaces. Needed when there is more than 1; if you cannot tell which one the user means, ask them.' },
       title: { type: 'string', description: 'What should be done, in a few words.' },
       description: { type: 'string', description: 'Details the first step’s agent reads. Mention why it was started.' },
       ref: { type: 'string', description: 'Optional ticket id.' },

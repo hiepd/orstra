@@ -83,6 +83,11 @@ export const WorkflowsIcon = () => (
     <path d="M10 6.5h4a3 3 0 0 1 3 3V14" />
   </Stroke>
 );
+export const WorkspacesIcon = () => (
+  <Stroke>
+    <path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z" />
+  </Stroke>
+);
 export const TriggersIcon = () => (
   <Stroke>
     <path d="M13 2 4 14h7l-1 8 9-12h-7l1-8z" />

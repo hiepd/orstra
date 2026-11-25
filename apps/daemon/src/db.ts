@@ -32,6 +32,35 @@ export interface TaskRow {
   source: string | null;
   /** Set when you archive the task; archived tasks leave the lists. */
   archived_at: number | null;
+  /** The workspace the task works in. Null for a task started with a bare repo path, or before workspaces existed. */
+  workspace_id?: string | null;
+  /** The branch the task's branch started from, and that branch's commit at that moment. Fixed at start. */
+  base_branch?: string | null;
+  base_commit?: string | null;
+  /** The folder inside the worktree where agents and gates start. Copied from the workspace at start. */
+  subdir?: string | null;
+  /** When the workspace's setup commands passed in this task's worktree. */
+  setup_at?: number | null;
+}
+
+/** Where a task's code is: 1 repo, the branch new tasks start from, and how to prepare a fresh worktree. */
+export interface WorkspaceRow {
+  id: string;
+  name: string;
+  repo_path: string;
+  base_branch: string;
+  /** A folder inside the repo where agents start, or '' for the repo root. */
+  subdir: string;
+  /** The workflow file the New task form picks first, or null. */
+  default_workflow: string | null;
+  /** JSON string[]: shell commands run in a new worktree before its first agent or gate step. */
+  setup: string;
+  /** JSON string[]: gitignored files copied from the repo into each new worktree, such as .env.local. */
+  copy_files: string;
+  /** JSON Record<string, string>: environment variables for every agent and gate in this workspace. */
+  env: string;
+  created_at: number;
+  updated_at: number;
 }
 
 export interface RunRow {
@@ -107,6 +136,12 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE INDEX IF NOT EXISTS events_task ON events(task_id);
 CREATE INDEX IF NOT EXISTS events_run ON events(run_id);
 CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS workspaces (
+  id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, repo_path TEXT NOT NULL, base_branch TEXT NOT NULL,
+  subdir TEXT NOT NULL DEFAULT '', default_workflow TEXT, setup TEXT NOT NULL DEFAULT '[]',
+  copy_files TEXT NOT NULL DEFAULT '[]', env TEXT NOT NULL DEFAULT '{}',
+  created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS plans (
   id TEXT PRIMARY KEY, status TEXT NOT NULL, actions TEXT NOT NULL, results TEXT,
   created_at INTEGER NOT NULL, decided_at INTEGER
@@ -158,7 +193,8 @@ export class Store {
   /** Add the columns that came after the first release. Each one is added once, when it is absent. Returns what it added. */
   private migrate(): string[] {
     const want: Record<string, Record<string, string>> = {
-      tasks: { stopped_at: 'INTEGER', workflow_yaml: 'TEXT', pr_url: 'TEXT', source: 'TEXT', archived_at: 'INTEGER' },
+      tasks: { stopped_at: 'INTEGER', workflow_yaml: 'TEXT', pr_url: 'TEXT', source: 'TEXT', archived_at: 'INTEGER',
+        workspace_id: 'TEXT', base_branch: 'TEXT', base_commit: 'TEXT', subdir: 'TEXT', setup_at: 'INTEGER' },
       runs: { last_turn_at: 'INTEGER', wait_reason: 'TEXT', routed: 'TEXT', cost_usd: 'REAL', tokens_in: 'INTEGER', tokens_out: 'INTEGER',
         agent_pid: 'INTEGER', agent_boot_id: 'TEXT', agent_started_at: 'TEXT',
         head_before: 'TEXT', head_after: 'TEXT' },
@@ -201,11 +237,12 @@ export class Store {
   insertTask(t: TaskRow) {
     this.db
       .prepare(
-        `INSERT INTO tasks (id, ref, title, description, workflow_path, workflow_name, status, current_step, inbox_reason, edge_counts, worktree, created_at, updated_at, stopped_at, workflow_yaml, pr_url, source, archived_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO tasks (id, ref, title, description, workflow_path, workflow_name, status, current_step, inbox_reason, edge_counts, worktree, created_at, updated_at, stopped_at, workflow_yaml, pr_url, source, archived_at, workspace_id, base_branch, base_commit, subdir, setup_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(t.id, t.ref, t.title, t.description, t.workflow_path, t.workflow_name, t.status, t.current_step, t.inbox_reason, t.edge_counts, t.worktree, t.created_at, t.updated_at,
-        t.stopped_at ?? null, t.workflow_yaml ?? null, t.pr_url ?? null, t.source ?? null, t.archived_at ?? null);
+        t.stopped_at ?? null, t.workflow_yaml ?? null, t.pr_url ?? null, t.source ?? null, t.archived_at ?? null,
+        t.workspace_id ?? null, t.base_branch ?? null, t.base_commit ?? null, t.subdir ?? null, t.setup_at ?? null);
   }
 
   updateTask(id: string, patch: Partial<TaskRow>) {
@@ -227,6 +264,32 @@ export class Store {
 
   tasks(): TaskRow[] {
     return this.db.prepare('SELECT * FROM tasks ORDER BY created_at DESC').all() as unknown as TaskRow[];
+  }
+
+  insertWorkspace(w: WorkspaceRow) {
+    this.db
+      .prepare('INSERT INTO workspaces (id, name, repo_path, base_branch, subdir, default_workflow, setup, copy_files, env, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(w.id, w.name, w.repo_path, w.base_branch, w.subdir, w.default_workflow, w.setup, w.copy_files, w.env, w.created_at, w.updated_at);
+  }
+
+  updateWorkspace(id: string, patch: Partial<WorkspaceRow>) {
+    const fields = { ...patch, updated_at: Date.now() };
+    const keys = Object.keys(fields);
+    this.db
+      .prepare(`UPDATE workspaces SET ${keys.map((k) => `${k} = ?`).join(', ')} WHERE id = ?`)
+      .run(...keys.map((k) => (fields as Record<string, unknown>)[k] as never), id);
+  }
+
+  deleteWorkspace(id: string) {
+    this.db.prepare('DELETE FROM workspaces WHERE id = ?').run(id);
+  }
+
+  workspace(id: string): WorkspaceRow | undefined {
+    return this.db.prepare('SELECT * FROM workspaces WHERE id = ?').get(id) as WorkspaceRow | undefined;
+  }
+
+  workspaces(): WorkspaceRow[] {
+    return this.db.prepare('SELECT * FROM workspaces ORDER BY name').all() as unknown as WorkspaceRow[];
   }
 
   insertRun(r: RunRow) {
