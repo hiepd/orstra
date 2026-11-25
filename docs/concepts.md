@@ -76,6 +76,29 @@ How a run ended (`done`, `pass`, `fail`, `approved`, `needs_you`, …). The outc
 ### Progress entry
 What a run did, written when it ends: **Did · Decided · Left · Avoid**. It is how work passes between fresh sessions, and it's mirrored to the ticket (e.g. as a Linear comment).
 
+### Artifact
+**A file a step produces, kept for the steps after it and for your review.** A plan, a report, test output, a log, a picture. Any agent or gate step makes one the same way: it writes the file under `.orstra/artifacts/` in the worktree. No workflow change is needed.
+
+1. **Keep.** When a run ends, Orstra copies every new file under `.orstra/artifacts/` to `~/.orstra/artifacts/<task>/<run>/`, outside the worktree, and records which run made it. A file left there unchanged is not kept twice.
+2. **Hand on.** Before each agent or gate run, Orstra puts the newest kept files of every earlier step at `.orstra/inputs/<step>/<file>`. The agent's prompt lists them, a gate command can read them, and a workflow prompt can name them with `{{ steps.<step>.artifacts }}`.
+3. **Review.** The decision card shows what the steps made since your last decision. Each run on the Overview shows its own, and the Changes panel has an Artifacts tab for the whole task.
+
+A step can also name files to keep from any other path:
+
+```yaml
+verify:
+  use: gate
+  run: [npx vitest run --coverage]
+  artifacts:
+    - name: coverage
+      path: coverage/index.html
+```
+
+- **Artifacts never block.** A step that keeps nothing moves on like any other; no rule asks for a file, and an artifact never changes an outcome or a route.
+- Images and text show inline; anything else is a download. 10 MB per file, 50 MB per run: a bigger file is noted as not kept, and the run goes on.
+- `.orstra/` stays out of git (`.git/info/exclude`), so artifacts never reach your branch or the PR.
+- **Orstra never makes an artifact.** The step does, with its own tools; Orstra keeps it, hands it on and shows it.
+
 ### Note
 Something you write **on a step that hasn't run yet**, for its next run to read ("also run the e2e suite"). A note is never sent to a running agent. To talk to a running agent, chat with its session.
 
@@ -89,7 +112,7 @@ A file **you** add to a chat message: a screenshot you paste, a log you drop, a 
 
 The caps are 10 MB per file and 25 MB per message; over them, Orstra tells you and attaches nothing.
 
-An attachment is a file **you** add. A file a **step** produces is an **artifact** (not built yet). One root, 2 folders: `.orstra/attachments/` and `.orstra/artifacts/`.
+An attachment is a file **you** add. A file a **step** produces is an **artifact**. One root, 3 folders: `.orstra/attachments/` (yours), `.orstra/artifacts/` (what a step keeps) and `.orstra/inputs/` (what the earlier steps kept, put there for the next run).
 
 ### Claude artifact
 A web page an agent publishes to your claude.ai account with Claude Code's `Artifact` tool. It is not Orstra's artifact above: it lives on claude.ai, not in the worktree. A step's agent writes an HTML file, publishes it, and prints the link in its message. Orstra stores nothing about it. Turn it off with `"artifact": false` in `~/.orstra/agents.json` (Settings → Agents), or `ORSTRA_CLAUDE_ARTIFACT=0`.
@@ -174,5 +197,6 @@ How many runs can work at the same time on this machine (default 4). Agent and g
 | "Session page" for a task | Task page | A task has many sessions |
 | "Steer" | Chat / message | It's just talking to the live session |
 | "Job", "pipeline", "execution" | Run / workflow | One word per concept |
+| "Evidence", "output file" | Artifact | One word for a file a step produced |
 | "Board" as a separate place | Tasks (board view) | It's a view of tasks, not its own thing |
 | "Attachment" for a file a step makes | Artifact | You add an attachment; a step produces an artifact |

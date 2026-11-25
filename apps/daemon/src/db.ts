@@ -76,6 +76,29 @@ export interface RunRow {
   head_after: string | null;
 }
 
+/** saved = the bytes are in the store. skipped = over a size cap; the row says why. */
+export type ArtifactState = 'saved' | 'skipped';
+
+/** One file a run produced, or the record of one it should have produced. */
+export interface ArtifactRow {
+  id: string;
+  task_id: string;
+  run_id: string;
+  step_id: string;
+  /** File name in the store folder. */
+  name: string;
+  /** The step's name for this group, or why the file is not here. */
+  label: string | null;
+  mime: string;
+  bytes: number;
+  state: ArtifactState;
+  /** Set only when the state is saved. */
+  sha256: string | null;
+  /** Absolute path in the store, set only when the state is saved. */
+  path: string | null;
+  created_at: number;
+}
+
 export interface EventRow {
   id: number;
   task_id: string;
@@ -100,6 +123,13 @@ CREATE TABLE IF NOT EXISTS runs (
 );
 CREATE INDEX IF NOT EXISTS runs_task ON runs(task_id);
 CREATE INDEX IF NOT EXISTS runs_status ON runs(status);
+CREATE TABLE IF NOT EXISTS artifacts (
+  id TEXT PRIMARY KEY, task_id TEXT NOT NULL, run_id TEXT NOT NULL, step_id TEXT NOT NULL,
+  name TEXT NOT NULL, label TEXT, mime TEXT NOT NULL, bytes INTEGER NOT NULL,
+  state TEXT NOT NULL DEFAULT 'saved', sha256 TEXT, path TEXT, created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS artifacts_task ON artifacts(task_id);
+CREATE INDEX IF NOT EXISTS artifacts_run ON artifacts(run_id);
 CREATE TABLE IF NOT EXISTS events (
   id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL, run_id TEXT,
   ts INTEGER NOT NULL, kind TEXT NOT NULL, payload TEXT NOT NULL
@@ -281,6 +311,28 @@ export class Store {
 
   runsSince(ts: number): RunRow[] {
     return this.db.prepare('SELECT * FROM runs WHERE created_at >= ? ORDER BY created_at DESC').all(ts) as unknown as RunRow[];
+  }
+
+  insertArtifact(a: ArtifactRow) {
+    this.db
+      .prepare(
+        `INSERT INTO artifacts (id, task_id, run_id, step_id, name, label, mime, bytes, state, sha256, path, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(a.id, a.task_id, a.run_id, a.step_id, a.name, a.label, a.mime, a.bytes, a.state, a.sha256, a.path, a.created_at);
+  }
+
+  artifact(id: string): ArtifactRow | undefined {
+    return this.db.prepare('SELECT * FROM artifacts WHERE id = ?').get(id) as ArtifactRow | undefined;
+  }
+
+  /** Every artifact of a task, oldest first. */
+  artifactsForTask(taskId: string): ArtifactRow[] {
+    return this.db.prepare('SELECT * FROM artifacts WHERE task_id = ? ORDER BY created_at, rowid').all(taskId) as unknown as ArtifactRow[];
+  }
+
+  artifactsForRun(runId: string): ArtifactRow[] {
+    return this.db.prepare('SELECT * FROM artifacts WHERE run_id = ? ORDER BY created_at, rowid').all(runId) as unknown as ArtifactRow[];
   }
 
   addEvent(taskId: string, runId: string | null, kind: string, payload: unknown): EventRow {

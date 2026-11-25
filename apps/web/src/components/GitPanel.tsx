@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react';
 import { api, type Check, type GitView, type TaskDetail } from '../api';
 import { useLiveResource, type Resource } from '../lib/live';
+import { ArtifactList } from './Artifacts';
 import { ago } from '../lib/time';
 import { useToast } from './Overlay';
 
@@ -11,7 +12,7 @@ export function useGit(taskId: string): Resource<GitView> {
   return useLiveResource(`git:${taskId}`, useCallback(() => api.git(taskId), [taskId]), (id) => id === taskId, 1500);
 }
 
-type Tab = 'changes' | 'checks' | 'commits';
+type Tab = 'changes' | 'checks' | 'artifacts' | 'commits';
 
 const CHECK: Record<Check['state'], { color: string; label: string; path: string }> = {
   pass: { color: 'var(--green-fg)', label: 'Passed', path: 'm4.2 7.2 1.9 1.9 3.8-4' },
@@ -87,9 +88,15 @@ export function GitBody({ task, git, openPath, onOpenPath }: { task: TaskDetail;
         </div>
       </div>
       <div className="ox-gtabs" role="group" aria-label="Worktree panel">
-        {(['changes', 'checks', 'commits'] as Tab[]).map((t) => (
+        {(['changes', 'checks', 'artifacts', 'commits'] as Tab[]).map((t) => (
           <button key={t} className="ox-tab" aria-pressed={tab === t} onClick={() => setTab(t)}>
-            {t === 'changes' ? `Changes ${g?.files.length ?? ''}` : t === 'checks' ? `Checks ${g?.checks.length ?? ''}` : `Commits ${g?.commits.length ?? ''}`}
+            {t === 'changes'
+              ? `Changes ${g?.files.length ?? ''}`
+              : t === 'checks'
+                ? `Checks ${g?.checks.length ?? ''}`
+                : t === 'artifacts'
+                  ? `Artifacts ${g?.artifacts.length ?? ''}`
+                  : `Commits ${g?.commits.length ?? ''}`}
           </button>
         ))}
       </div>
@@ -142,6 +149,7 @@ export function GitBody({ task, git, openPath, onOpenPath }: { task: TaskDetail;
             {g.checks.length === 0 && <div className="ox-gempty">No checks have run yet. Gate steps (tests, typecheck) show up here.</div>}
           </>
         )}
+        {g && tab === 'artifacts' && <ArtifactList artifacts={g.artifacts} />}
         {g && tab === 'commits' && (
           <>
             {g.commits.map((c) => (

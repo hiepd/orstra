@@ -2344,3 +2344,30 @@ a:hover {
 .vw-dragging{user-select:none}
 .vw-dragging iframe{pointer-events:none}
 .vw-dragging .vw-grip::after,.vw-dragging .vw-pgrip::after{background:var(--accent)}
+
+/* ---------- Artifacts: what a step produced ---------- */
+.ox-ar{display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:8px}
+.ox-art{border:1px solid var(--line-2);border-radius:8px;overflow:hidden;background:var(--surface);text-align:left;padding:0;cursor:pointer;display:flex;flex-direction:column}
+.ox-art:hover{border-color:var(--border-strong)}
+.ox-ari{aspect-ratio:16/10;background:var(--line-3);display:block;width:100%;object-fit:cover;object-position:top left;border-bottom:1px solid var(--line-2)}
+.ox-ari.ox-artext{display:flex;align-items:flex-start;padding:7px 8px;overflow:hidden;font-family:var(--mono);font-size:7.5px;line-height:1.5;color:var(--muted);white-space:pre}
+.ox-arm{padding:7px 9px 8px;display:flex;align-items:center;gap:6px;min-width:0}
+.ox-arn{font-size:12px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ox-ars{margin-left:auto;font-size:11px;color:var(--dim);font-family:var(--mono);flex:none}
+.ox-arb{font-size:9.5px;font-weight:700;letter-spacing:.03em;padding:1px 4px;border-radius:3px;background:var(--line-3);color:var(--grey-fg);flex:none}
+.ox-arb.ox-arb-img{background:var(--accent-soft);color:var(--accent-fg)}
+.ox-argap{display:flex;align-items:center;gap:7px;font-size:12.5px;padding:8px 10px;border:1px dashed var(--red-line);border-radius:8px;background:var(--red-soft);color:var(--red-fg)}
+.ox-argap.soft{border-color:var(--line-2);background:var(--hover);color:var(--muted)}
+.ox-argap code{font-size:11.5px}
+.ox-arhead{display:flex;align-items:center;gap:6px;padding:9px 14px 5px;font-size:11.5px;color:var(--muted)}
+.ox-arhead b{color:var(--ink);font-weight:500}
+.ox-arrow{display:flex;align-items:center;gap:9px;width:100%;padding:7px 14px;border:0;border-bottom:1px solid var(--line-3);background:transparent;text-align:left;cursor:pointer;font-size:12px}
+.ox-arrow:hover{background:var(--line-3)}
+.ox-arth{width:54px;height:34px;border-radius:4px;border:1px solid var(--line-2);object-fit:cover;object-position:50% 42%;flex:none;background:var(--surface)}
+.ox-arth.ox-arthf{display:flex;align-items:center;justify-content:center}
+.ox-arlb{position:fixed;inset:56px;z-index:60;display:flex;flex-direction:column;gap:12px;background:var(--surface);border:1px solid var(--frame-line);border-radius:12px;padding:14px 16px;box-shadow:0 20px 60px rgba(0,0,0,.28)}
+.ox-arlbh{display:flex;align-items:center;gap:10px;font-size:12.5px;flex:none;color:var(--ink)}
+.ox-arlbd{color:var(--muted)}
+.ox-arlbb{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;overflow:auto;background:var(--hover);border-radius:8px;padding:10px}
+.ox-arlbi{max-width:100%;max-height:100%;border-radius:6px;background:#fff}
+.ox-arlbt{width:100%;max-height:100%;overflow:auto;background:var(--surface);border-color:var(--line-2)}

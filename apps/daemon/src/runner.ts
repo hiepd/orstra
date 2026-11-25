@@ -2,9 +2,10 @@ import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { FINISH_INSTRUCTIONS, parseAgentResult, parseWorkflow, renderTemplate, route, stripProgressBlock, switchCase, type Progress, type Step, type Workflow } from '@orstra/core';
-import { withFiles, type Attachment } from './attachments.ts';
+import { excludeFromGit, withFiles, type Attachment } from './attachments.ts';
 import { summarizeTool, type Executors, type LiveSession, type StreamEvent, type TurnEnd, type TurnUsage } from './executors.ts';
-import type { RunRow, Store, TaskRow } from './db.ts';
+import type { ArtifactState, RunRow, Store, TaskRow } from './db.ts';
+import { ARTIFACT_DIR, DEFAULT_SPEC, collectArtifacts, inputPath, seenKey, stageInputs, type Input } from './artifacts.ts';
 import { locateWorkflow } from './workflows.ts';
 import { projectTask, rebuildAll } from './project.ts';
 import { runAction } from './actions.ts';
@@ -44,6 +45,8 @@ export interface RunnerOptions {
   processEnv?: ProcessEnv;
   /** How to end a stray process. A test hands in its own, so it signals nothing real. */
   stopProcess?: (pid: number, opts?: { graceMs?: number }) => Promise<StopResult>;
+  /** Where collected artifacts are kept. Defaults to `~/.orstra/artifacts`. */
+  artifactsRoot?: string;
 }
 
 /** The limits when a step sets no `timeout:`: ORSTRA_AGENT_TIMEOUT_MIN (120) and ORSTRA_GATE_TIMEOUT_MIN (30). */
@@ -357,6 +360,11 @@ export class Runner extends EventEmitter {
         steps[r.step_id] = { output: p.did, progress: p, outcome: r.outcome };
       }
     }
+    // {{ steps.<id>.artifacts }}: where that step's kept files are for the run that reads the template.
+    for (const i of this.inputs(task.id)) {
+      const s = (steps[i.stepId] ??= {}) as { artifacts?: string[] };
+      (s.artifacts ??= []).push(inputPath(i.stepId, i.name));
+    }
     const trigger = { title: task.title, description: task.description, ref: task.ref, id: task.ref ?? task.id };
     return { trigger, task: { id: task.id, ref: task.ref, title: task.title }, steps };
   }
@@ -390,13 +398,54 @@ export class Runner extends EventEmitter {
       .map((n) => n.text);
   }
 
-  private buildPrompt(task: TaskRow, wf: Workflow, step: Step, run: RunRow): string {
+  /**
+   * What the earlier steps kept, newest attempt of each step: the stored copies a run gets as inputs.
+   * The step that runs now sees its own earlier attempts too, so a retry can build on them.
+   */
+  private inputs(taskId: string, runId?: string): (Input & { stepTitle: string; attempt: number; bytes: number })[] {
+    const runs = new Map(this.store.runsForTask(taskId).map((r) => [r.id, r]));
+    const newest = new Map<string, string>(); // step -> run with the newest kept files
+    for (const a of this.store.artifactsForTask(taskId)) {
+      if (a.state !== 'saved' || !a.path || a.run_id === runId) continue;
+      newest.set(a.step_id, a.run_id);
+    }
+    const task = this.store.task(taskId);
+    const wf = task ? this.workflowFor(task) : undefined;
+    return this.store
+      .artifactsForTask(taskId)
+      .filter((a) => a.state === 'saved' && a.path && newest.get(a.step_id) === a.run_id)
+      .map((a) => ({ stepId: a.step_id, name: a.name, from: a.path!, bytes: a.bytes, attempt: runs.get(a.run_id)?.attempt ?? 1, stepTitle: wf?.steps[a.step_id]?.title ?? a.step_id }));
+  }
+
+  /** Before an agent or gate run: keep .orstra/ out of git and put the earlier steps' artifacts in place. */
+  private stage(task: TaskRow, run: RunRow): string {
+    if (!task.worktree) return '';
+    excludeFromGit(task.worktree);
+    const inputs = this.inputs(task.id, run.id);
+    const placed = new Set(stageInputs(task.worktree, inputs));
+    const lines = inputs
+      .filter((i) => placed.has(inputPath(i.stepId, i.name)))
+      .map((i) => `- ${inputPath(i.stepId, i.name)} (${i.stepTitle}${i.attempt > 1 ? `, attempt ${i.attempt}` : ''}, ${Math.max(1, Math.round(i.bytes / 1024))} KB)`);
+    return lines.length ? `Artifacts the earlier steps kept (read the ones you need):\n${lines.join('\n')}` : '';
+  }
+
+  /** Where to keep files, and what this step must leave, so a fresh session knows the paths. */
+  private artifactText(step: Step): string {
+    const keep = `To keep a file for the steps after you and for the human's review (a plan, a report, test output, a log), write it under ${ARTIFACT_DIR}/. Orstra copies everything new there when you finish.`;
+    if (!step.artifacts?.length) return keep;
+    const lines = step.artifacts.map((a) => `- ${a.path}`).join('\n');
+    return `${keep}\nOrstra also keeps these files when this step writes them:\n${lines}`;
+  }
+
+  private buildPrompt(task: TaskRow, wf: Workflow, step: Step, run: RunRow, inputs = ''): string {
     const notes = this.notesFor(task, step, run);
     return [
       renderTemplate(step.prompt ?? '', this.context(task)),
       '---',
       `Task: ${task.ref ? task.ref + ' ' : ''}${task.title}`,
       task.description && `Description:\n${task.description}`,
+      this.artifactText(step),
+      inputs,
       `Progress so far (each earlier step ran in its own session):\n${this.progressText(task, wf)}`,
       notes.length ? `Notes from the human for this step:\n${notes.map((n) => `- ${n}`).join('\n')}` : '',
       run.attempt > 1 ? `This is attempt ${run.attempt} of this step. Read the progress above and do not repeat what failed.` : '',
@@ -709,9 +758,10 @@ export class Runner extends EventEmitter {
       if (this.overBudget(task.id)) return this.finish(task.id, run.id, 'over_budget');
       const sessionId = randomUUID();
       this.store.updateRun(run.id, { session_id: sessionId, head_before: task.worktree ? gitHead(task.worktree) : null });
+      const inputs = this.stage(task, run);
       const live = this.openSession(task, { ...run, session_id: sessionId }, { sessionId, resume: false, routes: true, model: step.model });
       this.arm(task.id, run.id, step);
-      live.session.send(this.buildPrompt(task, wf, step, run));
+      live.session.send(this.buildPrompt(task, wf, step, run, inputs));
       return;
     }
 
@@ -720,6 +770,7 @@ export class Runner extends EventEmitter {
     const onEvent = (e: StreamEvent) => this.event(task.id, run.id, e.kind, e);
     try {
       if (step.use === 'gate') {
+        this.stage(task, run);
         this.arm(task.id, run.id, step);
         const res = await this.exec.gate({ commands: step.run ?? [], cwd, onEvent, signal: ctrl.signal });
         this.disarm(run.id);
@@ -766,6 +817,37 @@ export class Runner extends EventEmitter {
     }
   }
 
+  /**
+   * Copy what the run produced out of the worktree and record it. Artifacts never change how a run
+   * ends or where the task goes: a step that keeps nothing moves on like any other.
+   */
+  private collect(task: TaskRow, run: RunRow, step: Step | undefined) {
+    if (!step || !task.worktree) return;
+    // Declared specs first, so a file they match keeps their name. Then the folder every agent and gate
+    // step may write to without any workflow change.
+    const specs = [...(step.artifacts ?? []), ...(step.use === 'agent' || step.use === 'gate' ? [DEFAULT_SPEC] : [])];
+    if (!specs.length) return;
+    let res;
+    try {
+      res = collectArtifacts({ worktree: task.worktree, specs, taskId: task.id, runId: run.id, since: run.started_at ?? 0, root: this.opts.artifactsRoot,
+        seen: new Set(this.store.artifactsForTask(task.id).flatMap((a) => (a.sha256 ? [seenKey(a.name, a.sha256)] : []))) });
+    } catch (err: any) {
+      this.event(task.id, run.id, 'system', { text: `Could not collect this step’s artifacts: ${err?.message ?? err}` });
+      return;
+    }
+    const now = Date.now();
+    const row = (name: string, label: string, mime: string, bytes: number, state: ArtifactState, sha256: string | null, path: string | null) =>
+      this.store.insertArtifact({ id: id('a'), task_id: task.id, run_id: run.id, step_id: run.step_id, name, label, mime, bytes, state, sha256, path, created_at: now });
+
+    for (const s of res.saved) {
+      if (s.skipped) row(s.name, s.skipped, s.mime, s.bytes, 'skipped', null, null);
+      else row(s.name, s.label, s.mime, s.bytes, 'saved', s.sha256, s.path);
+    }
+    if (res.saved.length) {
+      this.event(task.id, run.id, 'artifact', { files: res.saved.map((s) => ({ name: s.name, bytes: s.bytes, skipped: s.skipped ?? null })) });
+    }
+  }
+
   /** Record a run's outcome and follow the matching arrow. */
   private finish(taskId: string, runId: string, outcome: string) {
     this.disarm(runId);
@@ -778,6 +860,7 @@ export class Runner extends EventEmitter {
     if (!OPEN_STATUSES.has(run.status)) return;
     const okOutcomes = new Set(['done', 'pass', 'ok', 'approved', 'started']);
     const wf = this.workflowFor(task);
+    this.collect(task, run, wf.steps[run.step_id]);
     const counts = JSON.parse(task.edge_counts) as Record<string, number>;
     const next = route(wf, run.step_id, outcome, counts);
     // What the router decided is stored on the run, so a later read never has to ask the workflow
