@@ -1,10 +1,10 @@
 # Durable workflows with a human in the loop
 
-Status: design note, for review. No product code changes with it.
+Status: built on this branch. Tasks 1 to 8 of section 11 are done, each in its own commit with tests. Section 11 says where the build differs from the plan. The reference for workflow authors is `docs/workflows.md`.
 
 Orstra already keeps the workflow state durable. Tasks, runs, outcomes, decisions and events are rows in SQLite, and a `human` step can wait for days at no cost.
 
-Since `a23bb70` ("Survive a restart by replaying the session log"), agent execution survives a restart too. `recover()` in `apps/daemon/src/runner.ts` stops the old agent process, replays the Claude Code session log after `runs.log_uuid`, and resumes the session with a note. It resumes a run at most 3 times in 10 minutes. A gate runs again from the start. An action still fails with `interrupted` and waits for you. The rest of durable execution is still missing: retries, waits, tokens, child runs and idempotency keys.
+Since `a23bb70` ("Survive a restart by replaying the session log"), agent execution survives a restart too. `recover()` in `apps/daemon/src/runner.ts` stops the old agent process, replays the Claude Code session log after `runs.log_uuid`, and resumes the session with a note. It resumes a run at most 3 times in 10 minutes. A gate runs again from the start. An action still fails with `interrupted` and waits for you. Before this branch, the rest of durable execution was missing: retries, waits, callbacks, child runs and idempotency keys.
 
 This note says how to close that gap. It compares each part with trigger.dev v4. I did not read the trigger.dev docs for this note (the fetch was stopped), so the trigger.dev facts below come from memory. The 2 that matter most are marked "(check)".
 
@@ -16,7 +16,7 @@ This note says how to close that gap. It compares each part with trigger.dev v4.
 | Retries with backoff (`maxAttempts`, `factor`, min and max delay) | None. A crash goes to the Inbox | A `retry:` policy per step, apart from the arrows (section 4) |
 | Queues with `concurrencyLimit` and priority | Machine slots, plus `concurrency:` per workflow | Add a limit per workspace, and priority (section 5) |
 | `wait.for`, `wait.until` | None | A `wait` step (section 6) |
-| `wait.forToken`, completed by a POST to `token.url` | `human` step, completed by the UI | Tokens. A human step is a token that the UI completes (section 6) |
+| `wait.forToken`, completed by a POST to `token.url` | `human` step, completed by the UI | A `wait` step with `callback:`. The run holds the secret, so no tokens table (section 6) |
 | `triggerAndWait`, `batchTriggerAndWait` | `workflow` step kind parses, but does not run | Child tasks, fan out, wait for all (section 7) |
 | Idempotency keys with a TTL | `source` plus `taskBySource()` for Linear only | `idempotency_key` on the task (section 8) |
 | A run is locked to its version | Done. `tasks.workflow_yaml` keeps the copy the task started with | Keep as it is |
@@ -114,7 +114,7 @@ Proposal:
 
 Named queues that many workflows share are not in this note. Section 12 asks if you want them.
 
-## 6. Waits and tokens
+## 6. Waits and callbacks
 
 **Timer wait.** A new step kind:
 
@@ -129,25 +129,29 @@ The run becomes `waiting` with `wait_reason: 'timer'` and a new column `wake_at`
 
 1 rule differs from schedules. t-mwvo9a skips a schedule time that passed while the daemon was off, as trigger.dev does. A wait that passed while the daemon was off fires at once on start. A wait is part of 1 run that somebody wants to continue. A missed schedule time is a run that never started.
 
-**Token wait.** The same step kind with a token:
+**Callback wait.** The same step kind with a callback. This is trigger.dev's `wait.forToken`, built smaller:
 
 ```yaml
 ci_green:
   use: wait
-  token: { timeout: 3d }
-  on: { completed: merge, timeout: work }
+  callback: { timeout: 3d }
+  on: { done: merge, timeout: work }
 ```
 
-Orstra makes a row in a new `tokens` table: an id that nobody can guess, the run, the status, `expires_at`, and the result. The step shows its URL:
+The run gets a random secret (`runs.callback_secret`) and a due time (`runs.wake_at`). The step shows its URL:
 
 ```
-POST http://127.0.0.1:4317/api/tokens/<token id>/complete
-{ "outcome": "completed", "data": { ... } }
+POST http://127.0.0.1:4317/api/callbacks/<secret>
+{ "outcome": "done", "data": { ... } }
 ```
 
-The POST finishes the run. The outcome in the body picks the arrow, and `data` becomes `{{ steps.ci_green.output }}`. When `expires_at` passes, the loop finishes the run with `timeout`. The token id is the secret. The daemon listens on localhost only, so a system outside this machine needs a tunnel (section 12).
+The POST finishes the run, 1 time. The outcome in the body picks the arrow, and later steps read `{{ steps.ci_green.data.<field> }}`. When `wake_at` passes, the due loop finishes the run with `timeout`. The secret is the only key. The daemon listens on 127.0.0.1, so a system outside this machine needs a tunnel (section 12).
 
-**A human step is a token that the UI completes.** In this proposal, each `human` step makes a token too. `decide()` becomes "complete this run's token with outcome = choice and data = comment". The human step adds only the parts for a person: the question, the list of choices, the Inbox entry, and the rule in `decide()` that refuses while an agent works. That rule applies to every token. Then you can answer a decision from the UI, from the chief of staff, from a Linear comment, or with `curl`, and all of them use 1 code path.
+The plan had a `tokens` table. The build has none. In Orstra 1 run has at most 1 wait, so the run row can hold the secret and the due time. A table would help only for a URL that exists before the wait starts, or for many waits in 1 run. Add it when 1 of those needs comes.
+
+**A human step and a callback.** Both are a run in `waiting` that something outside Orstra ends. Both refuse to end while an agent works on the task: `decide()` has that guard, and `completeCallback()` has the same one. The build keeps 2 entry points (`decide()` for the Decide button and the chief of staff, `completeCallback()` for the URL), and both end in `finish()`. A callback on a human step, so that a Linear comment or a script can decide, is a later step.
+
+A waiting `wait` or `workflow` run has the new task state `sleeping` ("Waiting" on the board). It takes no slot and stays out of the Inbox.
 
 ## 7. Child workflows
 
@@ -197,7 +201,7 @@ The unit of work is a CLI process with its session on disk, in a git worktree on
 
 What an engine would give is timers, retries, queues and signals. On 1 machine with 1 user and SQLite, each of those is a few columns and 1 loop. Orstra already has the hard part: a run state machine in SQLite, a projection that rebuilds after a restart, and a lock to 1 open run for each task. An engine adds a second source of truth that must agree with SQLite, and it makes Orstra hard to install.
 
-**Recommendation: build it into Orstra, on SQLite.** Use trigger.dev's names and semantics (retry fields, `wait.for` and `wait.until`, tokens with a URL, `triggerAndWait`, idempotency keys, priority in seconds), so the model is familiar. This is the DBOS idea: the database is the engine.
+**Recommendation: build it into Orstra, on SQLite.** Use trigger.dev's names and semantics (retry fields, `wait.for` and `wait.until`, callbacks with a URL, `triggerAndWait`, idempotency keys, priority in seconds), so the model is familiar. This is the DBOS idea: the database is the engine.
 
 ## 10. Config or code: can the YAML grow to our needs?
 
@@ -218,7 +222,7 @@ trigger.dev defines a workflow in TypeScript. LangGraph builds a graph in Python
 - An agent step may declare its own outcomes in `on:`. Orstra lists them on the OUTCOME line, and `parseAgentResult()` accepts them. Today it accepts only `done`, `needs_you` and `cant_do`.
 - A `when:` on a step skips it with the outcome `skipped`. It uses the matching that `switch` uses, so YAML gets no expression language.
 
-**Each need against config.** Branches, skips, loops with `max:`, retries, waits, tokens, queues, keys and fan out over a list all fit as values. 2 needs do not fit:
+**Each need against config.** Branches, skips, loops with `max:`, retries, waits, callbacks, queues, keys and fan out over a list all fit as values. 2 needs do not fit:
 
 1. Parallel branches in 1 task, with a join. YAML can describe them, but the engine allows 1 open run for each task (the unique index `runs_one_open`), and the board, the projection and `decide()` depend on it. Code would hit the same limit. Until a real need comes, run each branch as a child task and let the parent wait.
 2. A plan that the agent makes at run time, with mixed step kinds. Fan out covers a plan where each item fits 1 child workflow. A plan such as "agent, then gate, then a human" does not fit.
@@ -232,22 +236,22 @@ trigger.dev defines a workflow in TypeScript. LangGraph builds a graph in Python
 Each task ships on its own and helps on its own. The daily pain, restarts that kill runs, was fixed on main in `a23bb70`. Task 1 closes its small gaps.
 
 1. **Finish restart survival.** Done on this branch. The 3 actions rerun after a restart (`RERUN_SAFE` in `actions.ts`). A gate or an action with `rerun: false` asks you instead. Each gate runs in its own process group, and `shutdown()` stops the gates. `resumeNote()` names the commits the cut turn left. The grace time of `shutdown()` stays at 5 s: `tsx watch` kills the daemon with SIGKILL after 5 s, and that limit is fixed in tsx, so a longer grace time would not help.
-2. **Retries with backoff.** The `retry:` policy, `not_before`, and the wait for the reset time of a usage limit.
-3. **Idempotency keys.** The column, the API and CLI flag, `ORSTRA_TASK_ID`, Linear on the key, and the dogfood prompt. Merge with t-mwvo9a so schedules pass their key.
-4. **Queues.** Workspace `concurrency`, limits on held messages, task `priority`.
-5. **Timer waits.** The `wait` step with `for` and `until`, on the due loop from t-mwvo9a.
-6. **Tokens.** The `tokens` table, the complete URL, and the `human` step on tokens.
-7. **Gates that return JSON, agent outcomes in `on:`, and `when:`** (section 10). `for_each` needs the JSON result.
-8. **Child workflows.** `use: workflow` with `wait`, then `for_each`. Move the dogfood `file` step to it.
+2. **Retries with backoff.** Done. `retry: { max, delay, factor, maxDelay, onTimeout }` on agent and gate steps. A fault (a crash, an API error, a usage limit) becomes a new run with `not_before`. An agent retry resumes the same session. A usage limit with a reset time waits until that time. The arrows see `cant_do` or `timeout` only when the retries run out.
+3. **Idempotency keys.** Done. `tasks.idempotency_key`, unique per workflow. `POST /api/tasks` takes `idempotencyKey` and answers `reused: true`. `bin/orstra run --key`. The Linear trigger uses `linear:<issue id>`. Every agent and gate gets `ORSTRA_TASK_ID` and `ORSTRA_BASE`. Not done: the dogfood prompt lives in `~/.orstra/workflows`, outside the repo, so I did not change it. Schedules (t-mwvo9a) do not pass a key yet.
+4. **Queues.** Done. Workspace `concurrency` ("At the same time" on the Workspaces page). `Runner.capacity()` checks the 3 limits for queued runs and for held chat messages. Task `priority` in seconds.
+5. **Timer waits.** Done. `use: wait` with `for` or `until`, on 1 due loop in the runner (`tick()`). t-mwvo9a was not merged, so the loop is the runner's own. Schedules can use it when they land.
+6. **Callbacks.** Done, without a tokens table (section 6).
+7. **Gates that return JSON, agent outcomes in `on:`, and `when:`.** Done. A gate gets `ORSTRA_INPUT` and may write `{ outcome, data }` to `ORSTRA_OUTPUT`.
+8. **Child workflows.** Done. `use: workflow` with `for_each` and `wait`. A child starts from the workspace base branch. The dogfood workflow can now replace its `file` agent step with `split` (a gate that writes the picked findings as `data.items`) and a `workflow` step with `for_each`.
 9. **Later, if needed:** parallel runs in 1 task, detached processes (Option A), persistent permission questions, named shared queues, a TTL on keys.
 
 ## 12. Questions for you
 
 1. **Actions after a restart.** This branch reruns the 3 safe actions on their own after a restart. Do you want that, or should every action ask you?
-2. **Retry of an agent.** Should a retry resume the same session (cheap, keeps the context, can keep a bad state), or start a fresh one with the progress text? I propose: resume first, and fresh for the last try.
-3. **Retry on timeout.** Off by default, as I propose, or on?
-4. **Outside systems.** Should a system outside this machine (GitHub, CI) complete tokens? That needs a tunnel or a relay, and auth beyond the token id. Or is localhost enough for now?
+2. **Retry of an agent.** The build resumes the same session for every retry. Should the last try start a fresh session instead, in case the session itself is in a bad state?
+3. **Retry on timeout.** Off by default in the build (`onTimeout: true` turns it on). Is that right?
+4. **Outside systems.** Should a system outside this machine (GitHub, CI) complete callbacks? That needs a tunnel or a relay, and auth beyond the secret in the URL. Or is localhost enough for now?
 5. **Shared queues.** Do you need a limit that many workflows share, for example "1 agent on the orstra repo at a time", or is the workspace limit enough?
-6. **Children and branches.** Should a child task branch from the base branch of the workspace, or from the parent's branch, so it builds on the parent's work?
+6. **Children and branches.** A child starts from the workspace base branch in the build. Do you also want a choice to start from the parent's branch, so a child builds on the parent's work?
 7. **Schedules.** May I ask t-mwvo9a to pass `schedule:<id>:<due time>` as the task key, and to expose its due loop so waits can use it?
 8. **Parallel branches.** Do you need parallel branches in 1 task, or plans with mixed step kinds, in the next few months? Those 2 needs would change section 10.
