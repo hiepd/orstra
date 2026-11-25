@@ -92,3 +92,15 @@ describe('agent outcomes, when and skipped', () => {
     expect(route(w, 'a', 'skipped', {})).toMatchObject({ type: 'goto', step: 'b' });
   });
 });
+
+describe('a workflow step in a workflow', () => {
+  it('maps next to started, or to done when it waits, and reads for_each', () => {
+    const go = parseWorkflow('name: x\nsteps:\n  a:\n    use: workflow\n    workflow: build\n    next: end\n');
+    expect(go.steps.a.on).toEqual({ started: { goto: 'end' } });
+    const waits = parseWorkflow('name: x\nsteps:\n  a:\n    use: workflow\n    workflow: build\n    for_each: steps.s.data.items\n    wait: true\n    next: end\n');
+    expect(waits.steps.a).toMatchObject({ forEach: 'steps.s.data.items', waitChildren: true, on: { done: { goto: 'end' } } });
+  });
+  it('needs a workflow to start', () => {
+    expect(() => parseWorkflow('name: x\nsteps:\n  a:\n    use: workflow\n')).toThrow(/needs a workflow/);
+  });
+});

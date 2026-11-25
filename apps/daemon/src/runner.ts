@@ -1,15 +1,15 @@
 import { EventEmitter } from 'node:events';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { agentOutcomes, finishInstructions, formatDuration, parseAgentResult, parseWorkflow, renderTemplate, retryDelay, retryPolicy, route, stripProgressBlock, switchCase, usageReset, type Progress, type Step, type Workflow } from '@orstra/core';
+import { agentOutcomes, finishInstructions, formatDuration, lookupPath, parseAgentResult, parseWorkflow, renderTemplate, retryDelay, retryPolicy, route, stripProgressBlock, switchCase, usageReset, type Progress, type Step, type Workflow } from '@orstra/core';
 import { excludeFromGit, withFiles, type Attachment } from './attachments.ts';
 import { readClaudeLine, summarizeTool, type Executors, type LiveSession, type StreamEvent, type TurnEnd, type TurnUsage } from './executors.ts';
 import { entriesAfter, findSessionLog, readSessionLog, whereStopped, type WhereStopped } from './sessionLog.ts';
 import type { ArtifactState, RunRow, Store, TaskRow } from './db.ts';
 import { ARTIFACT_DIR, DEFAULT_SPEC, collectArtifacts, inputPath, seenKey, stageInputs, type Input } from './artifacts.ts';
-import { locateWorkflow } from './workflows.ts';
+import { locateWorkflow, resolveWorkflow } from './workflows.ts';
 import { projectTask, rebuildAll } from './project.ts';
 import { RERUN_SAFE, runAction } from './actions.ts';
 import { cleanupWorktree } from './cleanup.ts';
@@ -263,6 +263,9 @@ export class Runner extends EventEmitter {
   private project(taskId: string) {
     projectTask(this.store, (runId) => this.isLive(runId), taskId);
     this.changed(taskId);
+    // A child task that ended may be the last one its parent's workflow step waits for.
+    const t = this.store.task(taskId);
+    if (t?.parent_run_id && (t.status === 'done' || t.status === 'stopped')) this.checkChildren(t.parent_run_id);
   }
 
   private event(taskId: string, runId: string | null, kind: string, payload: unknown) {
@@ -295,6 +298,8 @@ export class Runner extends EventEmitter {
     this.rebuild();
     await Promise.all(work);
     this.rebuild();
+    // A child that ended just before the daemon went never told its parent.
+    for (const r of this.store.runsByStatus('waiting')) if (r.wait_reason === 'children') this.checkChildren(r.id);
     this.tick();
   }
 
@@ -316,6 +321,8 @@ export class Runner extends EventEmitter {
       return ask(`Orstra restarted while this step ran. The step says rerun: false, so it does not run again on its own. Check what it did, then ${stay.toLowerCase()}`);
     }
     if (r.kind === 'gate') return again('Orstra restarted while this check ran. It runs again from the start.');
+    // Its children carry the key <run id>:<index>, so a second run finds the ones it started.
+    if (r.kind === 'workflow') return again('Orstra restarted while this step started its tasks. It runs again, and starts none of them twice.');
     if (r.kind === 'action' && step?.action && (RERUN_SAFE as Record<string, boolean>)[step.action]) {
       return again('Orstra restarted while this action ran. It is safe to run twice, so it runs again.');
     }
@@ -612,6 +619,75 @@ export class Runner extends EventEmitter {
     }
     this.pump();
     this.wakeFor(next);
+  }
+
+  /**
+   * A workflow step: start 1 child task, or 1 for each item of `for_each`, each with its own worktree
+   * and the parent's workspace. The key `<run id>:<index>` makes a second start of the same run (a
+   * restart, a crash) find the children it started, and start none twice. With `wait`, the run
+   * waits, without a slot, until every child ends: done, partial (some done) or failed (none done).
+   */
+  private startChildren(task: TaskRow, run: RunRow, step: Step) {
+    const ctx = this.context(task);
+    let workflowPath: string;
+    try {
+      const name = step.workflow!.trim();
+      const beside = !isAbsolute(name) ? join(dirname(locateWorkflow(task.workflow_path)), name) : name;
+      workflowPath = existsSync(beside) ? beside : resolveWorkflow(name);
+    } catch (err: any) {
+      this.event(task.id, run.id, 'system', { text: err?.message ?? String(err) });
+      return this.finish(task.id, run.id, 'cant_do');
+    }
+    let items: unknown[] = [null];
+    if (step.forEach) {
+      const list = lookupPath(ctx, step.forEach);
+      if (!Array.isArray(list)) {
+        this.event(task.id, run.id, 'system', { text: `for_each: ${step.forEach} is not a list, so no task started. A gate can make one: write {"data": {"items": [...]}} to $ORSTRA_OUTPUT.` });
+        return this.finish(task.id, run.id, 'cant_do');
+      }
+      items = list;
+    }
+    const input = (step.with ?? {}) as { title?: unknown; description?: unknown; priority?: unknown };
+    const label = (item: unknown) => (item === null ? '' : typeof item === 'object' ? JSON.stringify(item) : String(item));
+    const started: TaskRow[] = [];
+    try {
+      items.forEach((item, i) => {
+        const c = { ...ctx, item };
+        const title = typeof input.title === 'string' ? renderTemplate(input.title, c) : items.length > 1 || item !== null ? `${task.title}: ${label(item)}` : task.title;
+        const description = typeof input.description === 'string' ? renderTemplate(input.description, c) : label(item);
+        started.push(this.startTask({
+          workflowPath, title: title.trim() || task.title, description, workspaceId: task.workspace_id ?? undefined,
+          idempotencyKey: `${run.id}:${i}`, parentTaskId: task.id, parentRunId: run.id,
+          priority: typeof input.priority === 'number' ? input.priority : task.priority ?? undefined,
+        }));
+      });
+    } catch (err: any) {
+      this.event(task.id, run.id, 'system', { text: `Could not start the tasks: ${err?.message ?? err}` });
+      if (!started.length) return this.finish(task.id, run.id, 'cant_do');
+    }
+    const n = started.length;
+    this.event(task.id, run.id, 'system', { text: n ? `Started ${n} task${n === 1 ? '' : 's'}: ${started.map((t) => t.title).join(', ')}.` : 'The list was empty, so no task started.' });
+    if (!step.waitChildren) {
+      this.store.updateRun(run.id, { data: JSON.stringify({ children: started.map((t) => ({ id: t.id, title: t.title })) }) });
+      return this.finish(task.id, run.id, 'started');
+    }
+    this.store.updateRun(run.id, { status: 'waiting', wait_reason: 'children' });
+    this.project(task.id);
+    this.checkChildren(run.id);
+  }
+
+  /** End a waiting workflow step once all its children ended. */
+  private checkChildren(parentRunId: string) {
+    const run = this.store.run(parentRunId);
+    if (!run || run.status !== 'waiting' || run.wait_reason !== 'children') return;
+    const kids = this.store.childTasks(parentRunId);
+    if (kids.some((k) => k.status !== 'done' && k.status !== 'stopped')) return;
+    const done = kids.filter((k) => k.status === 'done').length;
+    const outcome = done === kids.length ? 'done' : done > 0 ? 'partial' : 'failed';
+    const children = kids.map((k) => ({ id: k.id, title: k.title, status: k.status, pr_url: k.pr_url }));
+    this.store.updateRun(parentRunId, { data: JSON.stringify({ children }), progress: JSON.stringify({ did: `${done} of ${kids.length} tasks finished.` }) });
+    this.event(run.task_id, parentRunId, 'system', { text: `${done} of ${kids.length} tasks finished.` });
+    this.finish(run.task_id, parentRunId, outcome);
   }
 
   /** Start a wait step: a timer, or a callback URL that an outside system completes. */
@@ -1256,6 +1332,7 @@ export class Runner extends EventEmitter {
       }
 
       if (step.use === 'wait') return this.startWait(task, run, step);
+      if (step.use === 'workflow') return this.startChildren(task, run, step);
 
       this.event(task.id, run.id, 'system', { text: `Step type "${step.use}" isn't built yet.` });
       return this.finish(task.id, run.id, 'cant_do');

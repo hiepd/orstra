@@ -61,8 +61,12 @@ export interface Step {
   /** action */
   action?: string;
   with?: Record<string, unknown>;
-  /** workflow */
+  /** workflow: the workflow each child task follows, by name or path. */
   workflow?: string;
+  /** workflow: start 1 child for each item of this list, such as `steps.split.data.items`. */
+  forEach?: string;
+  /** workflow: wait until every child task ends (outcome done, partial or failed). Else go on at once (started). */
+  waitChildren?: boolean;
   /** wait: a timer of this many ms, a time to wait until (ISO, templating works), or a callback URL. */
   waitMs?: number;
   until?: string;
@@ -163,6 +167,8 @@ const stepSchema = z
     action: z.string().optional(),
     with: z.record(z.unknown()).optional(),
     workflow: z.string().optional(),
+    for_each: z.string().optional(),
+    wait: z.boolean().optional(),
     for: z.union([z.string(), z.number()]).optional(),
     until: z.string().optional(),
     callback: z.union([z.literal(true), z.object({ timeout: z.union([z.string(), z.number()]).optional() })]).optional(),
@@ -298,7 +304,9 @@ export function parseWorkflow(source: string): Workflow {
     if (s.use === 'switch') {
       for (const [k, v] of Object.entries(s.cases ?? {})) on[k] = toTarget(v);
     }
-    if (s.next !== undefined) on[SUCCESS_OUTCOME[s.use]] = toTarget(s.next);
+    // A workflow step that waits ends with done, so its `next:` stands for done, not started.
+    const success = s.use === 'workflow' && s.wait ? 'done' : SUCCESS_OUTCOME[s.use];
+    if (s.next !== undefined) on[success] = toTarget(s.next);
     for (const [k, v] of Object.entries(s.on ?? {})) on[k] = toTarget(v);
 
     steps[id] = {
@@ -315,6 +323,7 @@ export function parseWorkflow(source: string): Workflow {
       action: s.action,
       with: s.with,
       workflow: s.workflow,
+      ...(s.use === 'workflow' ? { ...(s.for_each ? { forEach: s.for_each } : {}), waitChildren: !!s.wait } : {}),
       ...(s.use === 'wait' ? toWait(id, s) : {}),
       timeoutMinutes: s.timeout,
       ...(s.rerun !== undefined ? { rerun: s.rerun } : {}),
@@ -335,6 +344,7 @@ export function parseWorkflow(source: string): Workflow {
     }
     if (step.use === 'agent' && !step.prompt) throw new Error(`Agent step "${step.id}" needs a prompt.`);
     if (step.use === 'gate' && !step.run?.length) throw new Error(`Gate step "${step.id}" needs run commands.`);
+    if (step.use === 'workflow' && !step.workflow?.trim()) throw new Error(`Workflow step "${step.id}" needs a workflow: the name or path of the workflow its tasks follow.`);
     if (step.use === 'action') {
       if (!step.action) throw new Error(`Action step "${step.id}" needs an action: ${ACTION_NAMES.join(', ')}.`);
       if (!(ACTION_NAMES as readonly string[]).includes(step.action)) {

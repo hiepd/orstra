@@ -22,7 +22,7 @@ export function route(wf: Workflow, stepId: string, outcome: string, edgeCounts:
   }
   // A step that `when:` skipped follows its `skipped` arrow, else the arrow `next:` stands for.
   if (!target && outcome === 'skipped') {
-    key = SUCCESS_OUTCOME[step.use];
+    key = step.on[SUCCESS_OUTCOME[step.use]] ? SUCCESS_OUTCOME[step.use] : 'done';
     target = step.on[key];
   }
   if (!target) return { type: 'inbox', reason: outcome };

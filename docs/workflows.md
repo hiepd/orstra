@@ -35,6 +35,7 @@ A task keeps a copy of the workflow it started with. An edit to the file changes
 | `human` | Waits for your decision | 1 per choice (`approved`, `changes_requested`, `rejected`, …) |
 | `switch` | Picks a branch from the task's data | the matching case, else `default` |
 | `action` | Runs 1 named action | `ok`, `error`, `conflict`, `nothing`, `refused` |
+| `workflow` | Starts child tasks: 1, or 1 for each item of a list | `started`, or with `wait: true`: `done`, `partial`, `failed` |
 | `wait` | Waits for a time, or for an outside system to call back | `done`, `timeout`, or the outcome the call back names |
 
 An agent or a gate step can also end with `timeout`. An agent step can also end with `over_budget`.
@@ -58,6 +59,10 @@ Fields by kind:
 | `cases` | switch | Outcome to step, like `on:`. |
 | `action` | action | `git.merge`, `github.pr` or `git.cleanup`. Another name is a parse error. |
 | `with` | action | Input for the action. |
+| `workflow` | workflow | Required. The workflow each child follows: a file beside this one, or a name. |
+| `for_each` | workflow | A list in the task's data, such as `steps.split.data.items`. 1 child starts for each item. |
+| `with` | workflow | `title` and `description` of each child. Templating works, and `{{ item }}` is the item. Default title: the parent's title and the item. |
+| `wait` | workflow | `true` = wait until every child ends: `done` (all done), `partial` (some), `failed` (none). The children are in `{{ steps.<id>.data.children }}`. Default: go on at once with `started`. |
 | `for` | wait | A duration: `30s`, `5m`, `2h`, `1d`. |
 | `until` | wait | A time, such as `2026-12-01T09:00:00+01:00`. Templating works here. |
 | `callback` | wait | `true`, or `{ timeout: 3d }`. Orstra shows a URL. A `POST` to it with `{"outcome": "done", "data": {...}}` ends the step, and the outcome picks the arrow. Later steps read the data as `{{ steps.<id>.data.<field> }}`. Without a call back before the timeout, the step ends with `timeout`. |
@@ -67,6 +72,8 @@ A `wait` step takes no slot and does not go to your Inbox. The board shows it as
 An agent step can pick a branch itself. Give it arrows of its own, such as `on: { small: ship, large: plan }`. Orstra adds them to the OUTCOME line of the prompt, and the outcome the agent writes picks the arrow.
 
 Keep logic out of the YAML. A keyword may choose a value, wait, or repeat a step. Logic with numbers, "and" or "or", or parsing goes into a gate that returns JSON.
+
+A child task gets its own worktree and the parent's workspace, and it goes through the same queue and limits as any task. A parent that waits takes no slot, so it never blocks its own children. Each child carries the key `<parent run id>:<index>`, so a restart that runs the step again starts no child twice. A child that waits for you keeps its parent waiting too.
 
 ## Arrows and outcomes
 
