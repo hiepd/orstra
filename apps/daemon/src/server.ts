@@ -137,6 +137,13 @@ export function makeViews(store: Store, runner: Runner) {
     openCommand: r.session_id && task.worktree ? (r.agent === 'codex' ? `cd ${task.worktree} && codex resume ${r.session_id}` : `cd ${task.worktree} && claude --resume ${r.session_id}`) : null,
     forkCommand: r.session_id && task.worktree ? (r.agent === 'codex' ? `cd ${task.worktree} && codex fork ${r.session_id}` : `cd ${task.worktree} && claude --resume ${r.session_id} --fork-session`) : null,
     live: runner.isLive(r.id),
+    /** A retry waits until this time before it starts. */
+    notBefore: r.not_before ?? null,
+    retries: r.retries ?? null,
+    /** A wait (or a callback's timeout) ends at this time. */
+    wakeAt: r.wake_at ?? null,
+    /** Where an outside system completes this run. Only while it waits: the secret is useless after. */
+    callbackUrl: r.status === 'waiting' && r.callback_secret ? `http://127.0.0.1:${PORT}/api/callbacks/${r.callback_secret}` : null,
   });
 
   const taskSummary = (t: TaskRow) => {

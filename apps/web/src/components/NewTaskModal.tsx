@@ -25,6 +25,7 @@ export function NewTaskModal({ onClose, workspace: preset }: { onClose: () => vo
   const [description, setDescription] = useState('');
   const [ref, setRef] = useState('');
   const [baseBranch, setBaseBranch] = useState('');
+  const [priority, setPriority] = useState('0');
   const [repo, setRepo] = useState('');
   const [repoOnce, setRepoOnce] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -70,6 +71,7 @@ export function NewTaskModal({ onClose, workspace: preset }: { onClose: () => vo
         workspace: ws ? ws.id : undefined,
         repo: !ws && repoOnce ? repo.trim() : undefined,
         baseBranch: baseBranch.trim() || undefined,
+        priority: Number(priority) || undefined,
       });
       if (ws) store(LAST, ws.id);
       toast('Task started');
@@ -192,6 +194,16 @@ export function NewTaskModal({ onClose, workspace: preset }: { onClose: () => vo
               Linear ref <small>optional</small>
             </span>
             <input className="lx-input" value={ref} onChange={(e) => setRef(e.target.value)} placeholder="HUB-416" />
+          </label>
+          <label className="lx-label">
+            <span>
+              Priority <small>when slots are full</small>
+            </span>
+            <select className="lx-select" value={priority} onChange={(e) => setPriority(e.target.value)}>
+              <option value="0">Normal</option>
+              <option value="600">High: as if queued 10 min earlier</option>
+              <option value="3600">Urgent: as if queued 1 h earlier</option>
+            </select>
           </label>
           {where && (
             <label className="lx-label">

@@ -9,7 +9,7 @@ export type RunStatus = 'queued' | 'running' | 'waiting' | 'done' | 'failed' | '
  * the web app does not depend on @orstra/core; `taskState` falls back when the 2 lists drift.
  */
 export type TaskState = 'queued' | 'working' | 'checks' | 'sleeping' | 'waiting_you' | 'paused' | 'decision' | 'blocked' | 'done' | 'stopped';
-export type StepKind = 'agent' | 'gate' | 'human' | 'switch' | 'action' | 'workflow';
+export type StepKind = 'agent' | 'gate' | 'human' | 'switch' | 'action' | 'workflow' | 'wait';
 export type AgentName = 'claude-code' | 'codex';
 export type MessageMode = 'chat' | 'note' | 'ask';
 
@@ -119,6 +119,14 @@ export interface RunView {
   forkCommand: string | null;
   /** The session process is running right now. */
   live?: boolean;
+  /** A retry after a fault waits until this time before it starts. */
+  notBefore?: number | null;
+  /** How many retries came before this run, in a row. */
+  retries?: number | null;
+  /** A wait, or a callback's timeout, ends at this time. */
+  wakeAt?: number | null;
+  /** Where an outside system completes this run, while it waits. */
+  callbackUrl?: string | null;
 }
 
 export interface StepView {
@@ -482,6 +490,8 @@ export interface NewTaskInput {
   repo?: string;
   /** The branch to start from. Default: the workspace's. */
   baseBranch?: string;
+  /** Seconds: the queue treats the task as if it was queued this much earlier. */
+  priority?: number;
 }
 
 export class ApiError extends Error {

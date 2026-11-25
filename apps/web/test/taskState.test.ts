@@ -3,7 +3,7 @@ import type { TaskDetail, TaskSummary } from '../src/api';
 import { awaitingTitle, describeTask } from '../src/lib/describe';
 import { STATE, stepLabel, taskState, type TaskState } from '../src/lib/taskState';
 
-const ALL: TaskState[] = ['queued', 'working', 'checks', 'waiting_you', 'paused', 'decision', 'blocked', 'done', 'stopped'];
+const ALL: TaskState[] = ['queued', 'working', 'checks', 'sleeping', 'waiting_you', 'paused', 'decision', 'blocked', 'done', 'stopped'];
 const row = (state: string, p: Partial<TaskSummary> = {}) => ({ state, stateReason: null, ...p }) as TaskSummary;
 
 describe('taskState on the board', () => {
@@ -63,5 +63,26 @@ describe('describeTask after a chat sent the task back', () => {
   it('says the session is closed when the run is paused', () => {
     const paused = { ...task, state: 'paused', lastTurnAt: Date.now() - 1000 } as unknown as TaskDetail;
     expect(describeTask(paused).now).toContain('session');
+  });
+});
+
+describe('describeTask for the new waits', () => {
+  const base = (state: string, run: Record<string, unknown>) =>
+    ({
+      state, stateReason: null, status: 'running', inboxReason: null, currentStep: 's', currentStepTitle: 'Build', agent: 'claude-code',
+      run: { status: run.status, attempt: 2, kind: run.kind }, runs: [{ id: 'r', stepId: 's', stepTitle: 'Build', attempt: 2, ...run }],
+      workingRunId: null, awaiting: null, human: null, track: [{ id: 's', title: 'Build', kind: run.kind, state: 'current' }],
+    }) as unknown as TaskDetail;
+
+  it('says when a retry after a fault starts', () => {
+    const now = describeTask(base('queued', { kind: 'agent', status: 'queued', notBefore: Date.now() + 60_000, retries: 1 })).now;
+    expect(now).toContain('Orstra retries it at');
+    expect(now).toContain('(retry 1)');
+  });
+
+  it('says a callback wait waits for an outside system, and a timer until when', () => {
+    expect(describeTask(base('sleeping', { kind: 'wait', status: 'waiting', callbackUrl: 'http://127.0.0.1:4317/api/callbacks/x' })).now).toBe('Build waits for an outside system to call back.');
+    expect(describeTask(base('sleeping', { kind: 'wait', status: 'waiting', wakeAt: Date.now() + 3_600_000 })).now).toMatch(/^Build waits until /);
+    expect(describeTask(base('sleeping', { kind: 'workflow', status: 'waiting' })).now).toBe('Build waits for the tasks it started.');
   });
 });

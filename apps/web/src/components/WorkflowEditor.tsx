@@ -48,7 +48,8 @@ const OUTCOMES: Record<StepKind, string[]> = {
   human: ['approved', 'changes_requested', 'rejected'],
   switch: ['default'],
   action: ['ok', 'error', 'conflict'],
-  workflow: ['started'],
+  workflow: ['started', 'done', 'partial', 'failed'],
+  wait: ['done', 'timeout'],
 };
 const ADDABLE: StepKind[] = ['agent', 'gate', 'human', 'switch', 'action'];
 const DEFAULT_CAP = 3;

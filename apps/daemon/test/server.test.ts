@@ -210,10 +210,13 @@ describe('the callback URL of a wait step', () => {
     const task = runner.startTask({ workflowPath: wf, title: 'waits for CI' });
     await new Promise((r) => setTimeout(r, 20));
     const secret = store.runsForTask(task.id)[0].callback_secret!;
+    const view = await get(`/api/tasks/${task.id}`);
+    expect(view.runs[0].callbackUrl).toMatch(new RegExp(`/api/callbacks/${secret}$`));
     const ok = await post(`/api/callbacks/${secret}`, { outcome: 'done', data: { build: 41 } });
     expect(ok.status).toBe(200);
     expect(store.task(task.id)!.status).toBe('done');
     expect(JSON.parse(store.runsForTask(task.id)[0].data!)).toEqual({ build: 41 });
+    expect((await get(`/api/tasks/${task.id}`)).runs[0].callbackUrl).toBeNull();
     expect((await post(`/api/callbacks/${secret}`)).status).toBe(409);
     expect((await post(`/api/callbacks/${'a'.repeat(48)}`)).status).toBe(404);
   });
