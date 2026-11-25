@@ -162,6 +162,19 @@ describe('1 task per due time, across a restart', () => {
     expect(second.schedules.get(schedule.id).nextRunAt).toBe(t('2026-11-26T09:00:00Z'));
   });
 
+  it('gives the task its source as the idempotency key, so the database refuses a second one too', async () => {
+    const db = tmpDb();
+    const clock = { now: t('2026-11-25T08:59:00Z') };
+    const d = daemon(db, { 'plain.yaml': PLAIN }, clock);
+    const { schedule } = d.schedules.create({ workflow: 'plain', cron: '0 9 * * *', title: 'Daily' });
+    clock.now = t('2026-11-25T09:00:20Z');
+    await d.triggers.tick();
+    const [task] = d.store.tasks();
+    const key = `schedule:${schedule.id}@${t('2026-11-25T09:00:00Z')}`;
+    expect(task.idempotency_key).toBe(key);
+    expect(d.runner.startTask({ workflowPath: task.workflow_path, title: 'again', idempotencyKey: key })).toMatchObject({ id: task.id, reused: true });
+  });
+
   it('a crash after the task started and before the next run moved on starts no second task', async () => {
     const db = tmpDb();
     const clock = { now: t('2026-11-25T09:00:20Z') };
