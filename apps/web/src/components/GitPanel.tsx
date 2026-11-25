@@ -5,7 +5,8 @@ import { ArtifactList } from './Artifacts';
 import { ago } from '../lib/time';
 import { useToast } from './Overlay';
 
-export const shortPath = (p: string) => p.replace(/^\/Users\/[^/]+/, '~').replace(/^\/home\/[^/]+/, '~');
+import { shortPath } from '../lib/shortPath';
+export { shortPath };
 
 /** The task's worktree, refetched (at most every 1.5s) while the task changes. */
 export function useGit(taskId: string): Resource<GitView> {

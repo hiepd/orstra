@@ -142,6 +142,7 @@ Your answer at a `human` step. You see what you're deciding (e.g. the spec, the 
 - A task records its base branch and that branch's commit when it starts. The task's changes are compared with that commit, so switching branch in your checkout does not move them. The New task form can pick another base branch for 1 task.
 - Setup runs once per task, before its first agent or check. If it fails, the task goes to your Inbox and no agent starts.
 - A task needs a workspace. With exactly 1, it is used without asking. With none, or several and none named, the start is refused and says why. A repo path still works for 1 task, as a way out.
+- To add one, type the repo path, pick a repo the daemon found in your code folders (`~/workspace`, `~/code`, `~/src` and others, 2 levels deep, worktrees left out), or click **Browse…**. Browse opens the system's folder dialog on the daemon's machine (osascript on macOS, zenity on Linux). Where there is none, or with `ORSTRA_FOLDER_DIALOG=off`, it opens a folder list in the page.
 - Removing a workspace leaves its tasks' worktrees and branches alone; they only lose the link.
 - Lives on the **Workspaces** screen. The Tasks screen can filter by workspace, but it never scopes the app: the Inbox, the counts and the assistant always see every workspace.
 - Not the same word as a `workspace-write` Codex sandbox or a workspace in the elezar platform app.

@@ -3,6 +3,7 @@ import { api, errorMessage, type TaskSummary, type WorkflowInfo, type Workspace,
 import { shortPath } from '../components/GitPanel';
 import { PlusIcon, WorkspacesIcon } from '../components/Icons';
 import { Modal, useToast } from '../components/Overlay';
+import { RepoField } from '../components/RepoField';
 import { SettingsCard, SettingsRow } from '../components/SettingsRow';
 import { useLiveResource } from '../lib/live';
 import { store } from '../lib/remember';
@@ -252,12 +253,13 @@ function WorkspaceForm({ ws, taskCount = 0, onSaved, onRemoved }: { ws?: Workspa
     api.workflows().then(setWorkflows).catch(() => setWorkflows([]));
   }, []);
 
-  const check = async () => {
-    if (!repoPath.trim()) return setRepoCheck(null);
+  const check = async (value: string) => {
+    const repo = value.trim();
+    if (!repo) return setRepoCheck(null);
     try {
-      const r = await api.checkRepo(repoPath.trim());
+      const r = await api.checkRepo(repo);
       setRepoCheck(r);
-      if (r.ok && !name.trim()) setName(repoPath.trim().replace(/\/+$/, '').split('/').pop() ?? '');
+      if (r.ok && !name.trim()) setName(repo.replace(/\/+$/, '').split('/').pop() ?? '');
     } catch (err) {
       setRepoCheck({ ok: false, error: errorMessage(err) });
     }
@@ -303,7 +305,7 @@ function WorkspaceForm({ ws, taskCount = 0, onSaved, onRemoved }: { ws?: Workspa
       )}
       <SettingsCard title="Where the code is">
         <SettingsRow label="Repo" help={repoCheck ? (repoCheck.ok ? <span style={{ color: 'var(--green-fg)' }}>Git repo found</span> : <span style={{ color: 'var(--red-fg)' }}>{repoCheck.error}</span>) : 'A local git repository with at least 1 commit.'}>
-          <input className="lx-input lx-mono ox-wsin" aria-label="Repo" value={repoPath} onChange={(e) => setRepoPath(e.target.value)} onBlur={() => void check()} placeholder="~/workspace/hub" autoFocus={!ws} />
+          <RepoField value={repoPath} onChange={setRepoPath} onDone={(v) => void check(v)} autoFocus={!ws} />
         </SettingsRow>
         <SettingsRow label="Name" help="Shown on task cards and in the New task form.">
           <input className="lx-input ox-wsin" aria-label="Name" value={name} onChange={(e) => setName(e.target.value)} placeholder="hub" />

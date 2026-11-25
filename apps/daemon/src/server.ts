@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { existsSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
+import { homedir } from 'node:os';
 import { basename, extname, join, resolve, sep } from 'node:path';
 import { applyEdits, deriveState, parseWorkflow, taskPath, type EditGraph, type Progress, type Workflow } from '@orstra/core';
 import { MAX_FILE_BYTES, checkAttachments, cosFiles, mb, readAttachment, saveAttachment, taskFiles, type AttachStore } from './attachments.ts';
@@ -16,6 +17,7 @@ import { locateWorkflow } from './workflows.ts';
 import { expandHome } from './paths.ts';
 import { agentRoots, listFiles, readTaskFile } from './files.ts';
 import { linkInfo } from './linkInfo.ts';
+import { findRepos, listFolders, pickFolder } from './folders.ts';
 import { Terminals } from './terminals.ts';
 import { DevServers } from './devServers.ts';
 
@@ -303,6 +305,19 @@ export function buildApi(store: Store, runner: Runner, cos?: ChiefOfStaff, trigg
         let ok = false;
         try { ok = !!repo && existsSync(dir) && execFileSync('git', ['-C', dir, 'rev-parse', '--verify', '-q', 'HEAD'], { stdio: 'pipe' }).length > 0; } catch { ok = false; }
         return send(res, 200, ok ? { ok, baseBranch: defaultBranch(dir) } : { ok, error: repo ? `${repo} is not a git repository with commits.` : 'Give a repo path.' }), true;
+      }
+      // The Repo field: repos to suggest (minus the ones a workspace has), the system's folder dialog, and a folder list.
+      if (req.method === 'GET' && p === '/api/folders/repos') {
+        const taken = new Set(store.workspaces().map((w) => resolve(expandHome(w.repo_path))));
+        return send(res, 200, { repos: findRepos(homedir()).filter((r) => !taken.has(r)) }), true;
+      }
+      if (req.method === 'POST' && p === '/api/folders/pick') return send(res, 200, await pickFolder()), true;
+      if (req.method === 'GET' && p === '/api/folders') {
+        try {
+          return send(res, 200, listFolders(expandHome(url.searchParams.get('path') || '~/'))), true;
+        } catch (err) {
+          return send(res, 404, { error: (err as Error).message }), true;
+        }
       }
       const wm = m(/^\/api\/workspaces\/([\w-]+)$/);
       if (wm) {
