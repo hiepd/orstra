@@ -75,3 +75,20 @@ describe('a wait step in a workflow', () => {
     expect(() => wf('    for: 1h\n    callback: true\n')).toThrow(/exactly 1/);
   });
 });
+
+describe('agent outcomes, when and skipped', () => {
+  it('parses an outcome the step declares, and no other', async () => {
+    const { parseAgentResult, finishInstructions, agentOutcomes } = await import('../src/index.ts');
+    expect(agentOutcomes({ small: 1, large: 1, done: 1, timeout: 1 })).toEqual(['small', 'large']);
+    expect(parseAgentResult('x\nOUTCOME: large', ['small', 'large']).outcome).toBe('large');
+    expect(parseAgentResult('x\nOUTCOME: large').hasOutcome).toBe(false);
+    expect(finishInstructions(['small'])).toContain('OUTCOME: done | small | needs_you | cant_do');
+  });
+
+  it('routes skipped to the arrow next stands for', async () => {
+    const { route } = await import('../src/index.ts');
+    const w = parseWorkflow('name: x\nsteps:\n  a:\n    use: gate\n    run: x\n    when: { value: v, is: y }\n    next: b\n  b:\n    use: gate\n    run: x\n');
+    expect(w.steps.a.when).toEqual({ value: 'v', is: ['y'] });
+    expect(route(w, 'a', 'skipped', {})).toMatchObject({ type: 'goto', step: 'b' });
+  });
+});

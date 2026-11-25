@@ -1,7 +1,9 @@
 import { EventEmitter } from 'node:events';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
-import { FINISH_INSTRUCTIONS, formatDuration, parseAgentResult, parseWorkflow, renderTemplate, retryDelay, retryPolicy, route, stripProgressBlock, switchCase, usageReset, type Progress, type Step, type Workflow } from '@orstra/core';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { agentOutcomes, finishInstructions, formatDuration, parseAgentResult, parseWorkflow, renderTemplate, retryDelay, retryPolicy, route, stripProgressBlock, switchCase, usageReset, type Progress, type Step, type Workflow } from '@orstra/core';
 import { excludeFromGit, withFiles, type Attachment } from './attachments.ts';
 import { readClaudeLine, summarizeTool, type Executors, type LiveSession, type StreamEvent, type TurnEnd, type TurnUsage } from './executors.ts';
 import { entriesAfter, findSessionLog, readSessionLog, whereStopped, type WhereStopped } from './sessionLog.ts';
@@ -381,7 +383,7 @@ export class Runner extends EventEmitter {
 
   /** A turn that ended before the restart, read from the log: route it the way onTurn would have. */
   private routeRecovered(task: TaskRow, run: RunRow, text: string, recent: number[]) {
-    const parsed = parseAgentResult(text);
+    const parsed = parseAgentResult(text, this.extraOutcomes(task.id, run.step_id));
     const ends = parsed.hasOutcome && parsed.outcome !== 'needs_you';
     if (!ends && this.overBudget(task.id)) return this.finish(task.id, run.id, 'over_budget');
     if (!parsed.hasOutcome) {
@@ -694,6 +696,22 @@ export class Runner extends EventEmitter {
     this.pump();
   }
 
+  /** The outcomes a run's agent may end with, beyond done, needs_you and cant_do: its step's own arrows. */
+  private extraOutcomes(taskId: string, stepId: string): string[] {
+    const task = this.store.task(taskId);
+    try {
+      const step = task && this.workflowFor(task).steps[stepId];
+      return step && step.use === 'agent' ? agentOutcomes(step.on) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  /** The finish text for a run's step, with the step's own outcomes on the OUTCOME line. */
+  private finishFor(task: TaskRow, stepId: string): string {
+    return finishInstructions(this.extraOutcomes(task.id, stepId));
+  }
+
   /** What a resumed session is told when its run is a retry after a fault. */
   private retryNote(task: TaskRow, run: RunRow): string {
     const before = this.store.runsForTask(task.id).filter((r) => r.step_id === run.step_id && r.routed === 'retry' && r.id !== run.id).pop();
@@ -702,7 +720,7 @@ export class Runner extends EventEmitter {
     return [
       '--- Orstra ---',
       `Your last try of this step ended with a fault, not with an outcome: ${before?.output ?? 'the process stopped'}. This is retry ${run.retries} of ${max}. Check what the last try left (git status, the files you changed), then continue the step from where it stopped. Do not repeat the work you finished.`,
-      FINISH_INSTRUCTIONS.trim(),
+      this.finishFor(task, run.step_id).trim(),
     ].join('\n\n');
   }
 
@@ -818,7 +836,7 @@ export class Runner extends EventEmitter {
       notes.length ? `Notes from the human for this step:\n${notes.map((n) => `- ${n}`).join('\n')}` : '',
       run.attempt > 1 ? `This is attempt ${run.attempt} of this step. Read the progress above and do not repeat what failed.` : '',
       'The human may message you while you work. Read their messages and follow them.',
-      FINISH_INSTRUCTIONS,
+      finishInstructions(step.use === 'agent' ? agentOutcomes(step.on) : []),
     ]
       .filter(Boolean)
       .join('\n\n');
@@ -939,7 +957,7 @@ export class Runner extends EventEmitter {
       return this.fault(taskId, runId, 'error', t.text || 'Claude Code hit an error.', usageReset(t.text ?? ''));
     }
 
-    const parsed = parseAgentResult(t.text);
+    const parsed = parseAgentResult(t.text, this.extraOutcomes(taskId, this.store.run(runId)?.step_id ?? ''));
     const ends = parsed.hasOutcome && parsed.outcome !== 'needs_you';
     if (!ends && this.overBudget(taskId)) {
       live.finished = true;
@@ -1154,6 +1172,13 @@ export class Runner extends EventEmitter {
   private async execute(task: TaskRow, run: RunRow) {
     const wf = this.workflowFor(task);
     const step = wf.steps[run.step_id];
+    if (step.when) {
+      const value = renderTemplate(step.when.value, this.context(task));
+      if (switchCase(step.when.is, value) === 'default') {
+        this.event(task.id, run.id, 'system', { text: `Skipped: "${value}" is not ${step.when.is.join(' or ')}.` });
+        return this.finish(task.id, run.id, 'skipped');
+      }
+    }
     const cwd = task.worktree ?? process.cwd();
     if ((step.use === 'agent' || step.use === 'gate') && task.worktree && !existsSync(task.worktree)) {
       // A git.cleanup step or a cleanup removed it. Never run an agent in some other folder.
@@ -1189,15 +1214,18 @@ export class Runner extends EventEmitter {
       if (step.use === 'gate') {
         this.stage(task, run);
         this.arm(task.id, run.id, step);
-        const res = await this.exec.gate({ commands: step.run ?? [], cwd: taskCwd(task), env: this.envOf(task), onEvent, signal: ctrl.signal });
+        const io = this.gateFiles(task, run);
+        const res = await this.exec.gate({ commands: step.run ?? [], cwd: taskCwd(task), env: { ...this.envOf(task), ...io.env }, onEvent, signal: ctrl.signal });
         this.disarm(run.id);
+        const said = io.read();
         if (this.timedOut.delete(run.id)) {
           this.store.updateRun(run.id, { output: res.output });
           return this.fault(task.id, run.id, 'timeout', 'The check timed out.');
         }
         if (ctrl.signal.aborted) return;
-        this.store.updateRun(run.id, { output: res.output });
-        return this.finish(task.id, run.id, res.pass ? 'pass' : 'fail');
+        this.store.updateRun(run.id, { output: res.output, ...(said?.data !== undefined ? { data: JSON.stringify(said.data) } : {}) });
+        // The script names its own outcome in ORSTRA_OUTPUT; without one, the exit code decides.
+        return this.finish(task.id, run.id, said?.outcome ?? (res.pass ? 'pass' : 'fail'));
       }
 
       if (step.use === 'human') {
@@ -1234,6 +1262,39 @@ export class Runner extends EventEmitter {
     } finally {
       this.controllers.delete(run.id);
     }
+  }
+
+  /**
+   * The 2 files of a gate's JSON contract. ORSTRA_INPUT holds the task, the earlier steps' outputs and
+   * data, and the step's `with:`. The commands may write `{ "outcome": "...", "data": {...} }` to
+   * ORSTRA_OUTPUT: the outcome picks the arrow, and later steps read the data as
+   * {{ steps.<id>.data.<field> }}. Any language works; the files are the whole interface.
+   */
+  private gateFiles(task: TaskRow, run: RunRow) {
+    const dir = join(task.worktree && existsSync(task.worktree) ? task.worktree : join(tmpdir(), `orstra-${run.id}`), '.orstra', 'io');
+    mkdirSync(dir, { recursive: true });
+    const input = join(dir, `${run.id}.in.json`);
+    const output = join(dir, `${run.id}.out.json`);
+    rmSync(output, { force: true });
+    const step = this.workflowFor(task).steps[run.step_id];
+    writeFileSync(input, JSON.stringify({ ...this.context(task), with: step?.with ?? {} }, null, 2));
+    return {
+      env: { ORSTRA_INPUT: input, ORSTRA_OUTPUT: output },
+      read: (): { outcome?: string; data?: unknown } | null => {
+        try {
+          if (!existsSync(output)) return null;
+          const raw = JSON.parse(readFileSync(output, 'utf8')) as { outcome?: unknown; data?: unknown };
+          const outcome = typeof raw.outcome === 'string' && /^[\w-]{1,64}$/.test(raw.outcome) ? raw.outcome : undefined;
+          return { outcome, data: raw.data };
+        } catch (err: any) {
+          this.event(task.id, run.id, 'system', { text: `ORSTRA_OUTPUT is not JSON Orstra can read, so the exit code decides: ${err?.message ?? err}` });
+          return null;
+        } finally {
+          rmSync(input, { force: true });
+          rmSync(output, { force: true });
+        }
+      },
+    };
   }
 
   /**
@@ -1333,7 +1394,9 @@ export class Runner extends EventEmitter {
     // A retry or a stop may have closed this run while its outcome was on the way. Routing it now
     // would open a second run beside the one that replaced it, which the database refuses.
     if (!OPEN_STATUSES.has(run.status)) return;
-    const okOutcomes = new Set(['done', 'pass', 'ok', 'approved', 'started']);
+    const okOutcomes = new Set(['done', 'pass', 'ok', 'approved', 'started', 'skipped']);
+    // An outcome an agent step declares as its own (`on: { small: … }`) is a way to finish, not a failure.
+    if (run.kind === 'agent' && this.extraOutcomes(taskId, run.step_id).includes(outcome)) okOutcomes.add(outcome);
     const wf = this.workflowFor(task);
     this.collect(task, run, wf.steps[run.step_id]);
     const counts = JSON.parse(task.edge_counts) as Record<string, number>;
@@ -1437,7 +1500,7 @@ export class Runner extends EventEmitter {
     return [
       '--- Orstra ---',
       `Your message put ${this.stepTitle(task, run.step_id)} back on you. This is attempt ${run.attempt} of that step, and it is a run of its own: how it ends moves the workflow.`,
-      FINISH_INSTRUCTIONS.trim(),
+      this.finishFor(task, run.step_id).trim(),
     ].join('\n\n');
   }
 

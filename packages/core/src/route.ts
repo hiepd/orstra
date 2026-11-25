@@ -1,4 +1,4 @@
-import { END, type Workflow } from './workflow.ts';
+import { END, SUCCESS_OUTCOME, type Workflow } from './workflow.ts';
 
 export type Route =
   | { type: 'goto'; step: string; edge: string }
@@ -19,6 +19,11 @@ export function route(wf: Workflow, stepId: string, outcome: string, edgeCounts:
   if (!target && step.use === 'switch' && step.on.default) {
     key = 'default';
     target = step.on.default;
+  }
+  // A step that `when:` skipped follows its `skipped` arrow, else the arrow `next:` stands for.
+  if (!target && outcome === 'skipped') {
+    key = SUCCESS_OUTCOME[step.use];
+    target = step.on[key];
   }
   if (!target) return { type: 'inbox', reason: outcome };
   if (target.goto === END) return { type: 'end' };

@@ -77,6 +77,8 @@ export interface Step {
   rerun?: boolean;
   /** agent, gate: what to do after a fault. Unset = AGENT_RETRY for an agent, no retry for a gate. */
   retry?: RetryPolicy;
+  /** Run the step only when the value matches 1 of `is` (as a switch matches). Else it ends with `skipped`. */
+  when?: { value: string; is: string[] };
   /** Files this step produces, collected when the run ends. */
   artifacts?: ArtifactSpec[];
   /** outcome -> where to go */
@@ -166,6 +168,7 @@ const stepSchema = z
     callback: z.union([z.literal(true), z.object({ timeout: z.union([z.string(), z.number()]).optional() })]).optional(),
     timeout: z.number().positive().optional(),
     rerun: z.boolean().optional(),
+    when: z.object({ value: z.string(), is: z.union([z.string(), z.array(z.string()).min(1)]) }).optional(),
     retry: z.union([
       z.literal(false),
       z.object({
@@ -315,6 +318,7 @@ export function parseWorkflow(source: string): Workflow {
       ...(s.use === 'wait' ? toWait(id, s) : {}),
       timeoutMinutes: s.timeout,
       ...(s.rerun !== undefined ? { rerun: s.rerun } : {}),
+      ...(s.when ? { when: { value: s.when.value, is: typeof s.when.is === 'string' ? [s.when.is] : s.when.is } } : {}),
       ...(s.retry !== undefined ? { retry: toRetry(id, s.use, s.retry) } : {}),
       artifacts: s.artifacts?.map(toArtifact),
       on,
