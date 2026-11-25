@@ -11,6 +11,7 @@ import { CosPage } from './pages/Cos';
 import { SettingsPage } from './pages/Settings';
 import { TaskPage } from './pages/TaskPage';
 import { TasksPage } from './pages/Tasks';
+import { TriggersPage } from './pages/Triggers';
 import { WorkflowsPage } from './pages/Workflows';
 import { WorkspacesPage } from './pages/Workspaces';
 
@@ -59,7 +60,8 @@ function Shell() {
         {route.name === 'task' && <TaskPage key={route.id} id={route.id} view={route.view} runId={route.runId} />}
         {route.name === 'workspaces' && <WorkspacesPage id={route.id} tab={route.tab ?? 'overview'} onNewTask={openNew} />}
         {route.name === 'workflows' && <WorkflowsPage file={route.file} />}
-        {route.name === 'settings' && <SettingsPage group={route.group} />}
+        {route.name === 'triggers' && <TriggersPage />}
+        {route.name === 'settings' &&<SettingsPage group={route.group} />}
         {route.name === 'notFound' && (
           <div className="lx-empty">
             <b>Nothing here</b>

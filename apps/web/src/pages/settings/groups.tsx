@@ -5,7 +5,7 @@ import { AgentGroup } from './Agent';
 import { AppearanceGroup } from './Appearance';
 import { FilesGroup } from './Files';
 import { RunnerGroup } from './Runner';
-import { TriggersGroup, UsageGroup } from './Triggers';
+import { UsageGroup } from './Usage';
 
 /**
  * The registry: every group Settings can show. This is the only file that changes when a
@@ -38,14 +38,6 @@ const STATIC_GROUPS: SettingsGroup[] = [
     blurb: 'How Orstra looks in this browser.',
     keywords: ['theme', 'dark', 'light', 'system', 'colour', 'color'],
     render: () => <AppearanceGroup />,
-  },
-  {
-    id: 'triggers',
-    label: 'Triggers',
-    category: 'general',
-    blurb: 'What starts tasks on its own: Linear issues and schedules.',
-    keywords: ['linear', 'schedule', 'cron', 'ticket', 'label', 'LINEAR_API_KEY', 'automatic'],
-    render: ({ settings }) => <TriggersGroup s={settings} />,
   },
   {
     id: 'usage',
