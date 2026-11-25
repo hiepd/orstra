@@ -212,6 +212,9 @@ function Overview({ ws, tasks }: { ws: Workspace; tasks: TaskSummary[] }) {
         <SettingsRow label="Agents start in" help="The folder agents and checks start in.">
           <span className="ox-val lx-mono">{ws.subdir || 'the repo root'}</span>
         </SettingsRow>
+        <SettingsRow label="At the same time" help="How many agents and checks of this workspace may work at once.">
+          <span className="ox-val">{ws.concurrency ?? 'no limit'}</span>
+        </SettingsRow>
         <SettingsRow label="Setup" help="Runs once in a new worktree, before the first agent or check.">
           <span className="ox-val lx-mono">{[...ws.setup, ...ws.copyFiles.map((f) => `copy ${f}`)].join(' · ') || 'none'}</span>
         </SettingsRow>
@@ -243,6 +246,7 @@ function WorkspaceForm({ ws, taskCount = 0, onSaved, onRemoved }: { ws?: Workspa
   const [setup, setSetup] = useState((ws?.setup ?? []).join('\n'));
   const [copyFiles, setCopyFiles] = useState((ws?.copyFiles ?? []).join('\n'));
   const [env, setEnv] = useState(envText(ws?.env ?? {}));
+  const [limit, setLimit] = useState(ws?.concurrency ? String(ws.concurrency) : '');
   const [repoCheck, setRepoCheck] = useState<{ ok: boolean; baseBranch?: string; error?: string } | null>(null);
   const [workflows, setWorkflows] = useState<WorkflowInfo[]>([]);
   const [busy, setBusy] = useState(false);
@@ -272,6 +276,7 @@ function WorkspaceForm({ ws, taskCount = 0, onSaved, onRemoved }: { ws?: Workspa
       const input: WorkspaceInput = {
         name: name.trim(), repoPath: repoPath.trim(), baseBranch: baseBranch.trim() || undefined, subdir: subdir.trim(),
         defaultWorkflow: defaultWorkflow || null, setup: lines(setup), copyFiles: lines(copyFiles), env: parseEnv(env),
+        concurrency: limit.trim() ? Number(limit) : null,
       };
       const saved = ws ? await api.updateWorkspace(ws.id, input) : await api.createWorkspace(input);
       toast(ws ? 'Workspace saved' : 'Workspace added');
@@ -315,6 +320,9 @@ function WorkspaceForm({ ws, taskCount = 0, onSaved, onRemoved }: { ws?: Workspa
         </SettingsRow>
         <SettingsRow label="Sub-directory" help="Agents and checks start here. Git stays repo-wide. Empty: the repo root.">
           <input className="lx-input lx-mono ox-wsin" aria-label="Sub-directory" value={subdir} onChange={(e) => setSubdir(e.target.value)} placeholder="apps/web" />
+        </SettingsRow>
+        <SettingsRow label="At the same time" help="How many agents and checks of this workspace may work at once. Empty: no limit beyond the machine's slots.">
+          <input className="lx-input ox-wsin" aria-label="At the same time" inputMode="numeric" value={limit} onChange={(e) => setLimit(e.target.value.replace(/[^0-9]/g, ''))} placeholder="no limit" />
         </SettingsRow>
         <SettingsRow label="Default workflow" help="Picked first in the New task form.">
           <select className="lx-select ox-wsin" aria-label="Default workflow" value={defaultWorkflow} onChange={(e) => setDefaultWorkflow(e.target.value)}>

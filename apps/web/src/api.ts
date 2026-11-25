@@ -57,11 +57,13 @@ export interface Workspace {
   setup: string[];
   copyFiles: string[];
   env: Record<string, string>;
+  /** How many agents and checks of this workspace may work at the same time. Null = no limit. */
+  concurrency: number | null;
   createdAt: number;
   updatedAt: number;
 }
 
-export type WorkspaceInput = Partial<Pick<Workspace, 'name' | 'repoPath' | 'baseBranch' | 'subdir' | 'defaultWorkflow' | 'setup' | 'copyFiles' | 'env'>>;
+export type WorkspaceInput = Partial<Pick<Workspace, 'name' | 'repoPath' | 'baseBranch' | 'subdir' | 'defaultWorkflow' | 'setup' | 'copyFiles' | 'env' | 'concurrency'>>;
 
 /** A tool call that waits for your OK. */
 export interface PermissionView {

@@ -402,8 +402,8 @@ export class Store {
 
   insertWorkspace(w: WorkspaceRow) {
     this.db
-      .prepare('INSERT INTO workspaces (id, name, repo_path, base_branch, subdir, default_workflow, setup, copy_files, env, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(w.id, w.name, w.repo_path, w.base_branch, w.subdir, w.default_workflow, w.setup, w.copy_files, w.env, w.created_at, w.updated_at);
+      .prepare('INSERT INTO workspaces (id, name, repo_path, base_branch, subdir, default_workflow, setup, copy_files, env, concurrency, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(w.id, w.name, w.repo_path, w.base_branch, w.subdir, w.default_workflow, w.setup, w.copy_files, w.env, w.concurrency ?? null, w.created_at, w.updated_at);
   }
 
   updateWorkspace(id: string, patch: Partial<WorkspaceRow>) {

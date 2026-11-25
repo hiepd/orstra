@@ -21,6 +21,8 @@ export interface WorkspaceView {
   setup: string[];
   copyFiles: string[];
   env: Record<string, string>;
+  /** How many agents and checks of this workspace may work at the same time. Null = no limit. */
+  concurrency: number | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -35,6 +37,7 @@ export interface WorkspaceInput {
   setup?: string[];
   copyFiles?: string[];
   env?: Record<string, string>;
+  concurrency?: number | null;
 }
 
 export class WorkspaceError extends Error {}
@@ -59,6 +62,7 @@ export function workspaceView(w: WorkspaceRow): WorkspaceView {
   return {
     id: w.id, name: w.name, repoPath: w.repo_path, baseBranch: w.base_branch, subdir: w.subdir, defaultWorkflow: w.default_workflow,
     setup: parse<string[]>(w.setup, []), copyFiles: parse<string[]>(w.copy_files, []), env: parse<Record<string, string>>(w.env, {}),
+    concurrency: w.concurrency ?? null,
     createdAt: w.created_at, updatedAt: w.updated_at,
   };
 }
@@ -99,9 +103,11 @@ function checked(input: Required<Pick<WorkspaceInput, 'name' | 'repoPath'>> & Wo
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(k)) throw new WorkspaceError(`"${k}" is not a valid environment variable name.`);
     env[k] = String(v);
   }
+  const c = input.concurrency;
+  if (c !== undefined && c !== null && !(Number.isInteger(c) && c >= 1)) throw new WorkspaceError('The limit is a whole number of 1 or more, or empty for no limit.');
   return {
     name, repo_path: repoPath, base_branch: baseBranch, subdir, default_workflow: input.defaultWorkflow?.trim() || null,
-    setup: JSON.stringify(setup), copy_files: JSON.stringify(copyFiles), env: JSON.stringify(env),
+    setup: JSON.stringify(setup), copy_files: JSON.stringify(copyFiles), env: JSON.stringify(env), concurrency: c ?? null,
   };
 }
 
@@ -127,6 +133,7 @@ export function updateWorkspace(store: Store, id: string, input: WorkspaceInput)
     name: input.name ?? now.name, repoPath: input.repoPath ?? now.repoPath, baseBranch: input.baseBranch ?? now.baseBranch,
     subdir: input.subdir ?? now.subdir, defaultWorkflow: input.defaultWorkflow === undefined ? now.defaultWorkflow : input.defaultWorkflow,
     setup: input.setup ?? now.setup, copyFiles: input.copyFiles ?? now.copyFiles, env: input.env ?? now.env,
+    concurrency: input.concurrency === undefined ? now.concurrency : input.concurrency,
   });
   sameName(store, values.name, id);
   store.updateWorkspace(id, values);

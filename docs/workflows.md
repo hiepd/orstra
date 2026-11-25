@@ -19,7 +19,7 @@ A task keeps a copy of the workflow it started with. An edit to the file changes
 | `name` | Required. The name you see in the UI. |
 | `description` | 1 or 2 sentences, shown on the Workflows screen. |
 | `repo` | The repository each task works in. Each task gets a git worktree on branch `orstra/<task>`. Without a repo, a task gets its own empty git repository to work in. |
-| `concurrency` | How many of this workflow's tasks may work at the same time. Default 3. Only agent and gate steps count. |
+| `concurrency` | How many of this workflow's tasks may work at the same time. Default 3. Only agent and gate steps count. A run starts only when 3 limits allow it: the machine's slots, this one, and the workspace's limit ("At the same time" on the Workspaces page). A chat message to a paused agent waits for the same 3. |
 | `budget_usd` | Stop agent work on a task once its runs cost this much. |
 | `start` | The first step. Default: the first step in the file. |
 | `triggers` | The old form. Orstra moves it into trigger files: see [Triggers](#triggers). |
@@ -153,6 +153,8 @@ A start can carry an idempotency key. A second start with the same key and the s
 ```sh
 bin/orstra run orstra-build --title "Fix the Inbox count" --key "$ORSTRA_TASK_ID:2"
 ```
+
+A start can also carry a priority in seconds (`--priority 600`, or `priority` in the API body). The queue treats the task's runs as if they were queued that much earlier, so urgent work goes first and old work still moves.
 
 The API takes `idempotencyKey` in the body of `POST /api/tasks`, and answers `200` with `reused: true` when the key matched. A Linear trigger uses the key `linear:<issue id>`. A child task uses `<parent run id>:<index>`.
 

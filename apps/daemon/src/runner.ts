@@ -485,27 +485,58 @@ export class Runner extends EventEmitter {
    * Chat messages that wait for a slot go first: you sent them before the queued runs could start.
    * A workflow's `concurrency` caps how many of its tasks work at the same time.
    */
+  /**
+   * The room to start work, from what works now. Every run that takes a slot counts against 3
+   * limits: the machine's slots, the workflow's `concurrency`, and the workspace's `concurrency`.
+   * `take` books a slot for a run that starts.
+   */
+  private capacity() {
+    let busy = 0;
+    const perWorkflow = new Map<string, number>();
+    const perWorkspace = new Map<string, number>();
+    const take = (t: TaskRow) => {
+      busy++;
+      perWorkflow.set(t.workflow_path, (perWorkflow.get(t.workflow_path) ?? 0) + 1);
+      if (t.workspace_id) perWorkspace.set(t.workspace_id, (perWorkspace.get(t.workspace_id) ?? 0) + 1);
+    };
+    for (const r of this.busySlots()) {
+      const t = this.store.task(r.task_id);
+      if (t) take(t);
+      else busy++;
+    }
+    const fits = (t: TaskRow) => {
+      if (busy >= this.opts.slots) return false;
+      let cap = Infinity;
+      try { cap = this.workflowFor(t).concurrency; } catch { /* a broken workflow fails in execute() */ }
+      if ((perWorkflow.get(t.workflow_path) ?? 0) >= cap) return false;
+      const wsCap = t.workspace_id ? this.store.workspace(t.workspace_id)?.concurrency ?? null : null;
+      return !(wsCap !== null && t.workspace_id && (perWorkspace.get(t.workspace_id) ?? 0) >= wsCap);
+    };
+    return { fits, take };
+  }
+
   pump() {
-    const running = this.busySlots();
-    let busy = running.length;
+    const room = this.capacity();
+    // Chat messages that wait for a slot go first: you sent them before the queued runs could start.
     for (const [runId, msgs] of [...this.held]) {
-      if (busy >= this.opts.slots) break;
       const run = this.store.run(runId);
       const task = run && this.store.task(run.task_id);
+      if (!run || !task || task.status === 'stopped' || run.status !== 'waiting') {
+        this.held.delete(runId);
+        continue;
+      }
+      if (!room.fits(task)) continue;
       this.held.delete(runId);
-      if (!run || !task || task.status === 'stopped' || run.status !== 'waiting') continue;
-      busy++;
+      room.take(task);
       for (const m of msgs) this.deliver(task, run, m.body);
-    }
-    const perWorkflow = new Map<string, number>();
-    for (const r of running) {
-      const t = this.store.task(r.task_id);
-      if (t) perWorkflow.set(t.workflow_path, (perWorkflow.get(t.workflow_path) ?? 0) + 1);
     }
     const now = Date.now();
     let nextDue = Infinity;
-    for (const run of this.store.runsByStatus('queued')) {
-      const task = this.store.task(run.task_id);
+    // Priority is in seconds: a run goes as if it was queued that much earlier, so old work still moves.
+    const queued = this.store.runsByStatus('queued').map((run) => ({ run, task: this.store.task(run.task_id) }));
+    const order = (x: { run: RunRow; task?: TaskRow }) => x.run.created_at - (x.task?.priority ?? 0) * 1000;
+    queued.sort((a, b) => order(a) - order(b));
+    for (const { run, task } of queued) {
       if (!task || task.stopped_at) continue;
       // A retry waits out its delay. The timer below calls pump() again when the first one is due.
       if (run.not_before && run.not_before > now) {
@@ -513,13 +544,8 @@ export class Runner extends EventEmitter {
         continue;
       }
       if (SLOT_KINDS.has(run.kind)) {
-        if (busy >= this.opts.slots) continue;
-        let cap = Infinity;
-        try { cap = this.workflowFor(task).concurrency; } catch { /* a broken workflow fails in execute() */ }
-        const n = perWorkflow.get(task.workflow_path) ?? 0;
-        if (n >= cap) continue;
-        perWorkflow.set(task.workflow_path, n + 1);
-        busy++;
+        if (!room.fits(task)) continue;
+        room.take(task);
       }
       this.store.updateRun(run.id, { status: 'running', started_at: Date.now() });
       this.execute(task, { ...run, status: 'running' }).catch((err) => {
@@ -1375,12 +1401,13 @@ export class Runner extends EventEmitter {
     const routes = open && (owns || !elsewhere);
 
     // A run that waits on you takes a slot again when it works. With no free slot, the message waits.
-    if (target.status === 'waiting' && open && this.busySlots().length >= this.opts.slots) {
+    if (target.status === 'waiting' && open && !this.capacity().fits(task)) {
       this.event(taskId, target.id, 'you', { mode: 'chat', ...said, via: opts.via });
       const list = this.held.get(target.id) ?? [];
       list.push({ taskId, body });
       this.held.set(target.id, list);
-      return this.event(taskId, target.id, 'system', { text: `All ${this.opts.slots} slots are busy. Your message goes in when one is free.` });
+      const full = this.busySlots().length >= this.opts.slots;
+      return this.event(taskId, target.id, 'system', { text: full ? `All ${this.opts.slots} slots are busy. Your message goes in when one is free.` : 'The limit of this workflow or workspace is reached. Your message goes in when one of its runs ends.' });
     }
 
     // Your message hangs on the run that answers it, so 1 transcript holds the round.
