@@ -2,10 +2,10 @@ import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { FINISH_INSTRUCTIONS, parseAgentResult, parseWorkflow, renderTemplate, route, stripProgressBlock, switchCase, type Progress, type Step, type Workflow } from '@orstra/core';
-import { withFiles, type Attachment } from './attachments.ts';
+import { excludeFromGit, withFiles, type Attachment } from './attachments.ts';
 import { summarizeTool, type Executors, type LiveSession, type StreamEvent, type TurnEnd, type TurnUsage } from './executors.ts';
 import type { ArtifactState, RunRow, Store, TaskRow } from './db.ts';
-import { collectArtifacts } from './artifacts.ts';
+import { ARTIFACT_DIR, DEFAULT_SPEC, collectArtifacts, inputPath, seenKey, stageInputs, type Input } from './artifacts.ts';
 import { locateWorkflow } from './workflows.ts';
 import { projectTask, rebuildAll } from './project.ts';
 import { runAction } from './actions.ts';
@@ -360,6 +360,11 @@ export class Runner extends EventEmitter {
         steps[r.step_id] = { output: p.did, progress: p, outcome: r.outcome };
       }
     }
+    // {{ steps.<id>.artifacts }}: where that step's kept files are for the run that reads the template.
+    for (const i of this.inputs(task.id)) {
+      const s = (steps[i.stepId] ??= {}) as { artifacts?: string[] };
+      (s.artifacts ??= []).push(inputPath(i.stepId, i.name));
+    }
     const trigger = { title: task.title, description: task.description, ref: task.ref, id: task.ref ?? task.id };
     return { trigger, task: { id: task.id, ref: task.ref, title: task.title }, steps };
   }
@@ -393,14 +398,46 @@ export class Runner extends EventEmitter {
       .map((n) => n.text);
   }
 
-  /** What the step must leave behind, written into the prompt so a fresh session knows the paths. */
-  private artifactText(step: Step): string {
-    if (!step.artifacts?.length) return '';
-    const lines = step.artifacts.map((a) => `- ${a.path}${a.required ? ' (required)' : ''}`).join('\n');
-    return `Leave these files in the worktree before you finish:\n${lines}\nOrstra copies them out when the step ends and shows them at the review.`;
+  /**
+   * What the earlier steps kept, newest attempt of each step: the stored copies a run gets as inputs.
+   * The step that runs now sees its own earlier attempts too, so a retry can build on them.
+   */
+  private inputs(taskId: string, runId?: string): (Input & { stepTitle: string; attempt: number; bytes: number })[] {
+    const runs = new Map(this.store.runsForTask(taskId).map((r) => [r.id, r]));
+    const newest = new Map<string, string>(); // step -> run with the newest kept files
+    for (const a of this.store.artifactsForTask(taskId)) {
+      if (a.state !== 'saved' || !a.path || a.run_id === runId) continue;
+      newest.set(a.step_id, a.run_id);
+    }
+    const task = this.store.task(taskId);
+    const wf = task ? this.workflowFor(task) : undefined;
+    return this.store
+      .artifactsForTask(taskId)
+      .filter((a) => a.state === 'saved' && a.path && newest.get(a.step_id) === a.run_id)
+      .map((a) => ({ stepId: a.step_id, name: a.name, from: a.path!, bytes: a.bytes, attempt: runs.get(a.run_id)?.attempt ?? 1, stepTitle: wf?.steps[a.step_id]?.title ?? a.step_id }));
   }
 
-  private buildPrompt(task: TaskRow, wf: Workflow, step: Step, run: RunRow): string {
+  /** Before an agent or gate run: keep .orstra/ out of git and put the earlier steps' artifacts in place. */
+  private stage(task: TaskRow, run: RunRow): string {
+    if (!task.worktree) return '';
+    excludeFromGit(task.worktree);
+    const inputs = this.inputs(task.id, run.id);
+    const placed = new Set(stageInputs(task.worktree, inputs));
+    const lines = inputs
+      .filter((i) => placed.has(inputPath(i.stepId, i.name)))
+      .map((i) => `- ${inputPath(i.stepId, i.name)} (${i.stepTitle}${i.attempt > 1 ? `, attempt ${i.attempt}` : ''}, ${Math.max(1, Math.round(i.bytes / 1024))} KB)`);
+    return lines.length ? `Artifacts the earlier steps kept (read the ones you need):\n${lines.join('\n')}` : '';
+  }
+
+  /** Where to keep files, and what this step must leave, so a fresh session knows the paths. */
+  private artifactText(step: Step): string {
+    const keep = `To keep a file for the steps after you and for the human's review (a plan, a report, test output, a log), write it under ${ARTIFACT_DIR}/. Orstra copies everything new there when you finish.`;
+    if (!step.artifacts?.length) return keep;
+    const lines = step.artifacts.map((a) => `- ${a.path}${a.required ? ' (required)' : ''}`).join('\n');
+    return `${keep}\nThis step must also leave:\n${lines}`;
+  }
+
+  private buildPrompt(task: TaskRow, wf: Workflow, step: Step, run: RunRow, inputs = ''): string {
     const notes = this.notesFor(task, step, run);
     return [
       renderTemplate(step.prompt ?? '', this.context(task)),
@@ -408,6 +445,7 @@ export class Runner extends EventEmitter {
       `Task: ${task.ref ? task.ref + ' ' : ''}${task.title}`,
       task.description && `Description:\n${task.description}`,
       this.artifactText(step),
+      inputs,
       `Progress so far (each earlier step ran in its own session):\n${this.progressText(task, wf)}`,
       notes.length ? `Notes from the human for this step:\n${notes.map((n) => `- ${n}`).join('\n')}` : '',
       run.attempt > 1 ? `This is attempt ${run.attempt} of this step. Read the progress above and do not repeat what failed.` : '',
@@ -720,9 +758,10 @@ export class Runner extends EventEmitter {
       if (this.overBudget(task.id)) return this.finish(task.id, run.id, 'over_budget');
       const sessionId = randomUUID();
       this.store.updateRun(run.id, { session_id: sessionId, head_before: task.worktree ? gitHead(task.worktree) : null });
+      const inputs = this.stage(task, run);
       const live = this.openSession(task, { ...run, session_id: sessionId }, { sessionId, resume: false, routes: true, model: step.model });
       this.arm(task.id, run.id, step);
-      live.session.send(this.buildPrompt(task, wf, step, run));
+      live.session.send(this.buildPrompt(task, wf, step, run, inputs));
       return;
     }
 
@@ -731,6 +770,7 @@ export class Runner extends EventEmitter {
     const onEvent = (e: StreamEvent) => this.event(task.id, run.id, e.kind, e);
     try {
       if (step.use === 'gate') {
+        this.stage(task, run);
         this.arm(task.id, run.id, step);
         const res = await this.exec.gate({ commands: step.run ?? [], cwd, onEvent, signal: ctrl.signal });
         this.disarm(run.id);
@@ -782,10 +822,15 @@ export class Runner extends EventEmitter {
    * required file is absent, null when the task may move on.
    */
   private collect(task: TaskRow, run: RunRow, step: Step | undefined, success: boolean): 'retry' | 'block' | null {
-    if (!step?.artifacts?.length || !task.worktree) return null;
+    if (!step || !task.worktree) return null;
+    // Declared specs first, so a file they match keeps their name. Then the folder every agent and gate
+    // step may write to without any workflow change.
+    const specs = [...(step.artifacts ?? []), ...(step.use === 'agent' || step.use === 'gate' ? [DEFAULT_SPEC] : [])];
+    if (!specs.length) return null;
     let res;
     try {
-      res = collectArtifacts({ worktree: task.worktree, specs: step.artifacts, taskId: task.id, runId: run.id, since: run.started_at ?? 0, root: this.opts.artifactsRoot });
+      res = collectArtifacts({ worktree: task.worktree, specs, taskId: task.id, runId: run.id, since: run.started_at ?? 0, root: this.opts.artifactsRoot,
+        seen: new Set(this.store.artifactsForTask(task.id).flatMap((a) => (a.sha256 ? [seenKey(a.name, a.sha256)] : []))) });
     } catch (err: any) {
       this.event(task.id, run.id, 'system', { text: `Could not collect this step’s artifacts: ${err?.message ?? err}` });
       return null;
@@ -799,6 +844,8 @@ export class Runner extends EventEmitter {
       else row(s.name, s.label, s.mime, s.bytes, 'saved', s.sha256, s.path);
     }
     // A declared file that never arrived is a row too, so the review states the gap instead of staying silent.
+    // An empty default folder is normal; only a declared file that never arrived is a gap.
+    res.missing = res.missing.filter((m) => m !== DEFAULT_SPEC);
     if (success) for (const m of res.missing) row(m.path, m.required ? 'Required, and the step wrote none' : 'The step declared it and wrote none', 'application/octet-stream', 0, 'missing', null, null);
     if (res.saved.length || (success && res.missing.length)) {
       this.event(task.id, run.id, 'artifact', { files: res.saved.map((s) => ({ name: s.name, bytes: s.bytes, skipped: s.skipped ?? null })), missing: success ? res.missing.map((m) => m.path) : [] });

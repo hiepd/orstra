@@ -2,9 +2,11 @@
 
 A design note: one word, 3 options, 1 recommendation.
 
-**Status: Option B is built.** See `docs/concepts.md` for what shipped. 4 points below are still
-open: the artifact as an input to a later step (question 6), a person who adds one at a review
-(question 7), a blocked Approve button (question 8), and the prune rule from section 5.
+**Status: built, as a general system.** Any agent or gate step keeps a file by writing it under
+`.orstra/artifacts/`; Orstra stores it per run, hands it to the next run at `.orstra/inputs/<step>/`,
+and shows it at the review. `artifacts:` in the workflow adds names and `required`. See
+`docs/concepts.md`. Still open: a person who adds one at a review (question 7), a blocked Approve
+button (question 8), and the prune rule from section 5. Sections 2 to 4 below are the original design.
 
 Mock: `docs/mock/artifacts-review.html`. Open it in a browser. It uses the real app stylesheet, so
 only the new parts look new.

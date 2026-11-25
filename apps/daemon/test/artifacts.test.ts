@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ArtifactSpec } from '@orstra/core';
-import { collectArtifacts, globToRegExp, kindOf, matchArtifacts, mimeOf, MAX_FILE_BYTES } from '../src/artifacts.ts';
+import { collectArtifacts, globToRegExp, kindOf, matchArtifacts, mimeOf, MAX_FILE_BYTES, seenKey } from '../src/artifacts.ts';
 
 const spec = (path: string, required = false): ArtifactSpec => ({ name: path, path, required });
 
@@ -97,5 +97,40 @@ describe('mimeOf and kindOf', () => {
     expect(kindOf(mimeOf('a.json'))).toBe('text');
     expect(kindOf(mimeOf('a.zip'))).toBe('file');
     expect(mimeOf('a.unknown')).toBe('application/octet-stream');
+  });
+});
+
+describe('stageInputs', () => {
+  it('puts each stored copy under .orstra/inputs/<step>/ and rebuilds the folder every time', async () => {
+    const { stageInputs } = await import('../src/artifacts.ts');
+    const { existsSync, readFileSync } = await import('node:fs');
+    const store = worktree({ 'r1/plan.md': 'plan v1' });
+    const wt = worktree({ '.orstra/inputs/old/stale.txt': 'old' });
+    const placed = stageInputs(wt, [{ stepId: 'plan', name: 'plan.md', from: join(store, 'r1/plan.md') }]);
+    expect(placed).toEqual(['.orstra/inputs/plan/plan.md']);
+    expect(readFileSync(join(wt, '.orstra/inputs/plan/plan.md'), 'utf8')).toBe('plan v1');
+    expect(existsSync(join(wt, '.orstra/inputs/old/stale.txt'))).toBe(false);
+  });
+});
+
+describe('collectArtifacts and what the task already keeps', () => {
+  it('does not keep a file twice when it is still in the folder unchanged', () => {
+    const dir = worktree({ '.orstra/artifacts/plan.md': 'same' });
+    const root = mkdtempSync(join(tmpdir(), 'orstra-store-'));
+    const first = collectArtifacts({ worktree: dir, specs: [spec('.orstra/artifacts/**/*')], taskId: 't', runId: 'r1', root });
+    const again = collectArtifacts({ worktree: dir, specs: [spec('.orstra/artifacts/**/*')], taskId: 't', runId: 'r2', root, seen: new Set([seenKey('plan.md', first.saved[0].sha256!)]) });
+    expect(first.saved).toHaveLength(1);
+    expect(again.saved).toEqual([]);
+    expect(again.missing).toEqual([]);
+  });
+});
+
+describe('collectArtifacts with the same bytes under 2 names', () => {
+  it('keeps a different file that happens to hold the same bytes', () => {
+    const dir = worktree({ '.orstra/artifacts/report.txt': 'same', '.orstra/artifacts/seen.txt': 'same' });
+    const root = mkdtempSync(join(tmpdir(), 'orstra-store-'));
+    const sha = collectArtifacts({ worktree: worktree({ 'report.txt': 'same' }), specs: [spec('*.txt')], taskId: 't', runId: 'r0', root }).saved[0].sha256!;
+    const res = collectArtifacts({ worktree: dir, specs: [spec('.orstra/artifacts/**/*')], taskId: 't', runId: 'r1', root, seen: new Set([seenKey('report.txt', sha)]) });
+    expect(res.saved.map((s) => s.name)).toEqual(['seen.txt']);
   });
 });

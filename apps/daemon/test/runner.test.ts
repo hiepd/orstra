@@ -935,3 +935,66 @@ describe('Runner artifacts', () => {
     expect(s.store.runsForTask(task.id)).toHaveLength(1);
   });
 });
+
+const HANDOFF = `
+name: Plan then build
+steps:
+  plan:
+    use: agent
+    prompt: Plan it
+    next: build
+  build:
+    use: agent
+    prompt: "Build it from {{ steps.plan.artifacts }}"
+    next: end
+`;
+
+describe('Runner artifacts between steps', () => {
+  it('keeps what any step writes to .orstra/artifacts/, with no workflow change', async () => {
+    let dir = '';
+    const s = setup(HANDOFF, (_t, n) => {
+      if (n === 1) {
+        mkdirSync(join(dir, '.orstra/artifacts'), { recursive: true });
+        writeFileSync(join(dir, '.orstra/artifacts/plan.md'), '# Plan\n1. empty state');
+      }
+      return done(`step ${n}`);
+    });
+    dir = s.dir;
+    const task = s.runner.startTask({ workflowPath: s.wfPath, title: 'empty state' });
+    await s.runner.idle();
+
+    const rows = s.store.artifactsForTask(task.id);
+    expect(rows.map((a) => `${a.step_id}:${a.state}:${a.name}`)).toEqual(['plan:saved:plan.md']);
+    expect(rows[0].label).toBe('artifacts');
+  });
+
+  it('hands the earlier steps’ artifacts to the next run, in the worktree and in its prompt', async () => {
+    let dir = '';
+    let seen = '';
+    const s = setup(HANDOFF, (_t, n) => {
+      if (n === 1) {
+        mkdirSync(join(dir, '.orstra/artifacts'), { recursive: true });
+        writeFileSync(join(dir, '.orstra/artifacts/plan.md'), '# Plan\n1. empty state');
+      } else {
+        seen = readFileSync(join(dir, '.orstra/inputs/plan/plan.md'), 'utf8');
+      }
+      return done(`step ${n}`);
+    });
+    dir = s.dir;
+    s.runner.startTask({ workflowPath: s.wfPath, title: 'empty state' });
+    await s.runner.idle();
+
+    expect(seen).toBe('# Plan\n1. empty state');
+    const build = s.prompts()[1];
+    expect(build).toContain('Build it from .orstra/inputs/plan/plan.md');
+    expect(build).toContain('- .orstra/inputs/plan/plan.md (plan, 1 KB)');
+    expect(s.prompts()[0]).toContain('write it under .orstra/artifacts/');
+  });
+
+  it('records no gap when a step leaves nothing and declared nothing', async () => {
+    const s = setup(HANDOFF, (_t, n) => done(`step ${n}`));
+    const task = s.runner.startTask({ workflowPath: s.wfPath, title: 'quiet' });
+    await s.runner.idle();
+    expect(s.store.artifactsForTask(task.id)).toEqual([]);
+  });
+});

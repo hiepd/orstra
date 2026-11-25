@@ -1,8 +1,18 @@
 import { createHash } from 'node:crypto';
-import { copyFileSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { extname, join } from 'node:path';
 import type { ArtifactSpec } from '@orstra/core';
 import { ARTIFACTS } from './paths.ts';
+
+/**
+ * Where any agent or gate step leaves a file to keep. No workflow change needed: whatever a run
+ * writes here is collected, shown at the review and handed to the steps after it.
+ */
+export const ARTIFACT_DIR = '.orstra/artifacts';
+/** Where the next run finds what the earlier steps kept: `.orstra/inputs/<step>/<file>`. */
+export const INPUT_DIR = '.orstra/inputs';
+/** The folder every agent and gate run is collected from, declared or not. */
+export const DEFAULT_SPEC: ArtifactSpec = { name: 'artifacts', path: `${ARTIFACT_DIR}/**/*`, required: false };
 
 /** Bigger than this and Orstra records the gap instead of the file. */
 export const MAX_FILE_BYTES = 10 * 1024 * 1024;
@@ -123,6 +133,9 @@ export interface Collected {
   missing: ArtifactSpec[];
 }
 
+/** A file counts as already kept when the same name with the same bytes is in the store. */
+export const seenKey = (name: string, sha: string): string => `${name}\0${sha}`;
+
 const unique = (used: Set<string>, name: string): string => {
   if (!used.has(name)) return name;
   const dot = name.lastIndexOf('.');
@@ -142,6 +155,8 @@ export function collectArtifacts(opts: {
   runId: string;
   since?: number;
   root?: string;
+  /** `seenKey` of every file this task already keeps. A file left unchanged in the folder is not kept twice. */
+  seen?: Set<string>;
 }): Collected {
   const { matches, missing } = matchArtifacts(opts.worktree, opts.specs, opts.since ?? 0);
   const dest = join(opts.root ?? ARTIFACTS, opts.taskId, opts.runId);
@@ -162,6 +177,16 @@ export function collectArtifacts(opts: {
       continue;
     }
     const to = join(dest, name);
+    let sha: string;
+    try {
+      sha = createHash('sha256').update(readFileSync(join(opts.worktree, m.from))).digest('hex');
+    } catch {
+      continue;
+    }
+    if (opts.seen?.has(seenKey(m.from.split('/').pop() || name, sha))) {
+      used.delete(name);
+      continue;
+    }
     try {
       mkdirSync(dest, { recursive: true });
       copyFileSync(join(opts.worktree, m.from), to);
@@ -170,7 +195,48 @@ export function collectArtifacts(opts: {
       continue;
     }
     total += m.bytes;
-    saved.push({ name, label: m.spec.name, mime, bytes: m.bytes, sha256: createHash('sha256').update(readFileSync(to)).digest('hex'), path: to });
+    saved.push({ name, label: m.spec.name, mime, bytes: m.bytes, sha256: sha, path: to });
   }
   return { saved, missing };
+}
+
+/** Where an earlier step's file appears for the runs after it. */
+export const inputPath = (stepId: string, name: string): string => `${INPUT_DIR}/${stepId}/${name}`;
+
+export interface Input {
+  stepId: string;
+  name: string;
+  /** The stored copy, outside the worktree. */
+  from: string;
+}
+
+/**
+ * Put the earlier steps' artifacts where the next run can read them: `.orstra/inputs/<step>/<file>`,
+ * inside the worktree, so any agent or gate command opens them with a relative path and no
+ * permission question. The folder is rebuilt for every run, so it always holds the latest kept copy.
+ */
+export function stageInputs(worktree: string, inputs: Input[]): string[] {
+  const root = join(worktree, INPUT_DIR);
+  rmSync(root, { recursive: true, force: true });
+  const placed: string[] = [];
+  let total = 0;
+  for (const i of inputs) {
+    let size = 0;
+    try {
+      size = statSync(i.from).size;
+    } catch {
+      continue; // the stored copy is gone
+    }
+    if (total + size > MAX_RUN_BYTES) continue;
+    const rel = inputPath(i.stepId, i.name);
+    try {
+      mkdirSync(join(worktree, INPUT_DIR, i.stepId), { recursive: true });
+      copyFileSync(i.from, join(worktree, rel));
+    } catch {
+      continue;
+    }
+    total += size;
+    placed.push(rel);
+  }
+  return placed;
 }
