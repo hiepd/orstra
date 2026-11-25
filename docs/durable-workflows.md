@@ -112,7 +112,7 @@ Proposal:
 - Add `priority` to the task, a number of seconds, as trigger.dev does: a task with priority 600 goes as if it was queued 10 minutes earlier (check). Old work still moves, so nothing waits forever. Triggers, the CLI and the chief of staff can set it.
 - The order in the queue: held chat messages first, then runs by `created_at - priority`. A resume after a restart opens at once, as it does on main, because its run held a slot before the restart.
 
-Named queues that many workflows share are not in this note. Section 11 asks if you want them.
+Named queues that many workflows share are not in this note. Section 12 asks if you want them.
 
 ## 6. Waits and tokens
 
@@ -145,7 +145,7 @@ POST http://127.0.0.1:4317/api/tokens/<token id>/complete
 { "outcome": "completed", "data": { ... } }
 ```
 
-The POST finishes the run. The outcome in the body picks the arrow, and `data` becomes `{{ steps.ci_green.output }}`. When `expires_at` passes, the loop finishes the run with `timeout`. The token id is the secret. The daemon listens on localhost only, so a system outside this machine needs a tunnel (section 11).
+The POST finishes the run. The outcome in the body picks the arrow, and `data` becomes `{{ steps.ci_green.output }}`. When `expires_at` passes, the loop finishes the run with `timeout`. The token id is the secret. The daemon listens on localhost only, so a system outside this machine needs a tunnel (section 12).
 
 **A human step is a token that the UI completes.** In this proposal, each `human` step makes a token too. `decide()` becomes "complete this run's token with outcome = choice and data = comment". The human step adds only the parts for a person: the question, the list of choices, the Inbox entry, and the rule in `decide()` that refuses while an agent works. That rule applies to every token. Then you can answer a decision from the UI, from the chief of staff, from a Linear comment, or with `curl`, and all of them use 1 code path.
 
@@ -199,31 +199,7 @@ What an engine would give is timers, retries, queues and signals. On 1 machine w
 
 **Recommendation: build it into Orstra, on SQLite.** Use trigger.dev's names and semantics (retry fields, `wait.for` and `wait.until`, tokens with a URL, `triggerAndWait`, idempotency keys, priority in seconds), so the model is familiar. This is the DBOS idea: the database is the engine.
 
-## 10. The order to build it in
-
-Each task ships on its own and helps on its own. The daily pain, restarts that kill runs, was fixed on main in `a23bb70`. Task 1 closes its small gaps.
-
-1. **Finish restart survival.** Raise the grace time of `shutdown()` from 5 s to about 60 s. Rerun the 3 actions after a restart, with a flag for each action in `ACTIONS`. Add `rerun: false` for gates. Spawn each gate in its own process group. Put the commits the cut turn left into `resumeNote()`.
-2. **Retries with backoff.** The `retry:` policy, `not_before`, and the wait for the reset time of a usage limit.
-3. **Idempotency keys.** The column, the API and CLI flag, `ORSTRA_TASK_ID`, Linear on the key, and the dogfood prompt. Merge with t-mwvo9a so schedules pass their key.
-4. **Queues.** Workspace `concurrency`, limits on held messages, task `priority`.
-5. **Timer waits.** The `wait` step with `for` and `until`, on the due loop from t-mwvo9a.
-6. **Tokens.** The `tokens` table, the complete URL, and the `human` step on tokens.
-7. **Gates that return JSON, agent outcomes in `on:`, and `when:`** (section 12). `for_each` needs the JSON result.
-8. **Child workflows.** `use: workflow` with `wait`, then `for_each`. Move the dogfood `file` step to it.
-9. **Later, if needed:** parallel runs in 1 task, detached processes (Option A), persistent permission questions, named shared queues, a TTL on keys.
-
-## 11. Questions for you
-
-1. **Actions after a restart.** Main stops an action that a restart cut off, and asks you. May the 3 actions that are safe to run twice rerun on their own instead?
-2. **Retry of an agent.** Should a retry resume the same session (cheap, keeps the context, can keep a bad state), or start a fresh one with the progress text? I propose: resume first, and fresh for the last try.
-3. **Retry on timeout.** Off by default, as I propose, or on?
-4. **Outside systems.** Should a system outside this machine (GitHub, CI) complete tokens? That needs a tunnel or a relay, and auth beyond the token id. Or is localhost enough for now?
-5. **Shared queues.** Do you need a limit that many workflows share, for example "1 agent on the orstra repo at a time", or is the workspace limit enough?
-6. **Children and branches.** Should a child task branch from the base branch of the workspace, or from the parent's branch, so it builds on the parent's work?
-7. **Schedules.** May I ask t-mwvo9a to pass `schedule:<id>:<due time>` as the task key, and to expose its due loop so waits can use it?
-
-## 12. Config or code: can the YAML grow to our needs?
+## 10. Config or code: can the YAML grow to our needs?
 
 trigger.dev defines a workflow in TypeScript. LangGraph builds a graph in Python, but at run time it is still a graph with a checkpoint after each node. Orstra defines the graph in YAML.
 
@@ -250,4 +226,28 @@ trigger.dev defines a workflow in TypeScript. LangGraph builds a graph in Python
 **Why the choice can change later.** The graph engine is the part that is hard to change, and it is the right part for durability, the board and the human in the loop. The YAML is only the way to write the graph. A TypeScript or Python layer can build the same graph later, as LangGraph does, with no change to the engine. Add that layer when 2 of these signs show up: a keyword needs an expression, authors copy blocks between files, a workflow needs a variable that changes in a loop, or templates go inside templates.
 
 **Recommendation.** Keep config. Add gates that return JSON first. Decide about parallel runs in 1 task when the first real need comes.
-8. **Parallel branches.** Do you need parallel branches in 1 task, or plans with mixed step kinds, in the next few months? Those 2 needs would change section 12.
+
+## 11. The order to build it in
+
+Each task ships on its own and helps on its own. The daily pain, restarts that kill runs, was fixed on main in `a23bb70`. Task 1 closes its small gaps.
+
+1. **Finish restart survival.** Raise the grace time of `shutdown()` from 5 s to about 60 s. Rerun the 3 actions after a restart, with a flag for each action in `ACTIONS`. Add `rerun: false` for gates. Spawn each gate in its own process group. Put the commits the cut turn left into `resumeNote()`.
+2. **Retries with backoff.** The `retry:` policy, `not_before`, and the wait for the reset time of a usage limit.
+3. **Idempotency keys.** The column, the API and CLI flag, `ORSTRA_TASK_ID`, Linear on the key, and the dogfood prompt. Merge with t-mwvo9a so schedules pass their key.
+4. **Queues.** Workspace `concurrency`, limits on held messages, task `priority`.
+5. **Timer waits.** The `wait` step with `for` and `until`, on the due loop from t-mwvo9a.
+6. **Tokens.** The `tokens` table, the complete URL, and the `human` step on tokens.
+7. **Gates that return JSON, agent outcomes in `on:`, and `when:`** (section 10). `for_each` needs the JSON result.
+8. **Child workflows.** `use: workflow` with `wait`, then `for_each`. Move the dogfood `file` step to it.
+9. **Later, if needed:** parallel runs in 1 task, detached processes (Option A), persistent permission questions, named shared queues, a TTL on keys.
+
+## 12. Questions for you
+
+1. **Actions after a restart.** Main stops an action that a restart cut off, and asks you. May the 3 actions that are safe to run twice rerun on their own instead?
+2. **Retry of an agent.** Should a retry resume the same session (cheap, keeps the context, can keep a bad state), or start a fresh one with the progress text? I propose: resume first, and fresh for the last try.
+3. **Retry on timeout.** Off by default, as I propose, or on?
+4. **Outside systems.** Should a system outside this machine (GitHub, CI) complete tokens? That needs a tunnel or a relay, and auth beyond the token id. Or is localhost enough for now?
+5. **Shared queues.** Do you need a limit that many workflows share, for example "1 agent on the orstra repo at a time", or is the workspace limit enough?
+6. **Children and branches.** Should a child task branch from the base branch of the workspace, or from the parent's branch, so it builds on the parent's work?
+7. **Schedules.** May I ask t-mwvo9a to pass `schedule:<id>:<due time>` as the task key, and to expose its due loop so waits can use it?
+8. **Parallel branches.** Do you need parallel branches in 1 task, or plans with mixed step kinds, in the next few months? Those 2 needs would change section 10.
