@@ -2,7 +2,9 @@
 
 Status: design note, for review. No product code changes with it.
 
-Orstra already keeps the workflow state durable. Tasks, runs, outcomes, decisions and events are rows in SQLite, and a `human` step can wait for days at no cost. Execution is not durable. An agent session is a child process of the daemon. When the daemon restarts, `recover()` in `apps/daemon/src/runner.ts` marks the agent run `waiting` with `wait_reason: 'paused'`, stops a stray process, and says "Orstra restarted mid-run". A gate or an action run fails with outcome `interrupted`. Then the task stays still until you message it or retry it.
+Orstra already keeps the workflow state durable. Tasks, runs, outcomes, decisions and events are rows in SQLite, and a `human` step can wait for days at no cost.
+
+Since `a23bb70` ("Survive a restart by replaying the session log"), agent execution survives a restart too. `recover()` in `apps/daemon/src/runner.ts` stops the old agent process, replays the Claude Code session log after `runs.log_uuid`, and resumes the session with a note. It resumes a run at most 3 times in 10 minutes. A gate runs again from the start. An action still fails with `interrupted` and waits for you. The rest of durable execution is still missing: retries, waits, tokens, child runs and idempotency keys.
 
 This note says how to close that gap. It compares each part with trigger.dev v4. I did not read the trigger.dev docs for this note (the fetch was stopped), so the trigger.dev facts below come from memory. The 2 that matter most are marked "(check)".
 
@@ -10,7 +12,7 @@ This note says how to close that gap. It compares each part with trigger.dev v4.
 
 | trigger.dev v4 | Orstra today | Proposal |
 | --- | --- | --- |
-| Checkpoint and resume of the process | Session JSONL on disk, `--resume` on your next message | Auto resume after a restart (sections 2, 3) |
+| Checkpoint and resume of the process | Done on main. Log replay and auto resume after a restart | Small gaps (sections 2, 3) |
 | Retries with backoff (`maxAttempts`, `factor`, min and max delay) | None. A crash goes to the Inbox | A `retry:` policy per step, apart from the arrows (section 4) |
 | Queues with `concurrencyLimit` and priority | Machine slots, plus `concurrency:` per workflow | Add a limit per workspace, and priority (section 5) |
 | `wait.for`, `wait.until` | None | A `wait` step (section 6) |
@@ -30,23 +32,19 @@ These things are lost when the process dies mid turn:
 - The model reply that was in progress. The tokens are paid and the text is gone.
 - A tool call that was in progress, for example a long `npm test` in Bash. Its side effects can be partial.
 - Background processes that the agent started, such as a dev server.
-- Permission questions. They live in memory (`Runner.permissions`), so a restart loses them.
+- Permission questions. They live in memory (`Runner.permissions`). After a restart the resumed agent asks again.
 
 These things survive: every file edit already on disk, every commit, and every completed message in the session file.
 
-The resumed agent does not know that it was cut off. Orstra must tell it. On resume, Orstra sends a first message like this:
+The resumed agent does not know that it was cut off, so Orstra tells it. This is done on main: `resumeNote()` names the cut tool call and says "Check what it did before you go on". `sessionLog.ts` reads where the agent stopped, and the commit `a23bb70` checked a `kill -9` during a tool call of 45 s live. 1 small gap is left: the note does not say how many commits the cut turn left. The chat line has that fact, but the agent does not see it. Add it to the note.
 
-> --- Orstra --- The Orstra daemon restarted at 14:02 while you worked. Your last turn stopped before it finished. Your last tool call was `Bash: npm test`, and its result is lost. It left 1 commit on the branch. Run `git status` before you continue, because a step may be half done. Then continue the step and end with the OUTCOME line.
-
-Orstra has the facts for that message. The `events` table holds the last `tool` event with no `tool_result`, and `recover()` already counts the commits between `head_before` and `HEAD`. I must test 1 thing: what Claude Code does with a session file that ends on a `tool_use` with no result. I expect it to repair the gap on resume. If it does not, Orstra must start a fresh session with the progress text instead.
-
-**Gate.** Rerun it from the first command. A gate has no checkpoint, and most gates (`npm test`, `npm run typecheck`) are safe to run twice. A rerun is unsafe when a command changes something outside the worktree:
+**Gate.** Rerun it from the first command. Main does this now. Most gates (`npm test`, `npm run typecheck`) are safe to run twice. A rerun is unsafe when a command changes something outside the worktree:
 
 - It deploys, publishes a package, or pushes.
 - It runs a database migration on a shared database.
 - It sends a message or calls a paid API.
 
-For those, the author sets `rerun: false` on the step, and a restart sends the task to the Inbox as it does today. There is 1 more problem. `runShell()` uses `shell: true` with no process group, so a stop kills the shell but not its children. A rerun can then fail because an old child still holds a port. Spawn each gate in its own process group and kill the group.
+For those, add `rerun: false` to the step. A restart then sends the task to the Inbox instead. There is 1 more problem. `runShell()` uses `shell: true` with no process group, so a stop kills the shell but not its children. A rerun can then fail because an old child still holds a port. Spawn each gate in its own process group and kill the group.
 
 **Human step.** Durable already. The run row is `waiting` and nothing runs.
 
@@ -56,7 +54,7 @@ For those, the author sets `rerun: false` on the step, and a restart sends the t
 - `github.pr`, second time: the push is a no-op, `gh pr view` finds the open pull request, and the action returns `exists`, which maps to `ok`. Safe. 1 gap: if somebody closed that pull request without a merge, the filter on `state == "OPEN"` misses it, and the action opens a second one. Fix it with a look at `tasks.pr_url` first.
 - `git.cleanup`, second time: the worktree is gone, so it returns `removed`. Safe.
 
-So all 3 actions can rerun after a restart with no question. A future action must say if it is safe to rerun. Put that flag in the `ACTIONS` table, not in the YAML.
+So all 3 actions can rerun after a restart with no question. Main still fails an action with `interrupted` and asks you. Change that for these 3. A future action must say if it is safe to rerun. Put that flag in the `ACTIONS` table, not in the YAML.
 
 ## 3. Process survival: detach, or resume
 
@@ -65,18 +63,14 @@ So all 3 actions can rerun after a restart with no question. A future action mus
 - For: nothing is lost in a restart.
 - Against: the permission tool (`perm-mcp.ts`) talks to the daemon over HTTP, so a question in the restart window fails. Chat and interrupt need the FIFO to work across 2 daemons. Codex starts 1 process per turn, so it gets nothing. Orphan processes become normal, so every stop path and every "2 agents in 1 worktree" guard must change. A bug here costs you work.
 
-**Option B: the daemon resumes sessions after a restart.** On start, `recover()` puts each cut agent run back in the queue as a resume. When a slot is free, Orstra opens the session with `--resume` and sends the message from section 2.
+**Option B: the daemon resumes sessions after a restart.** On start, `recover()` replays the session log, opens the session with `--resume`, and sends the note from section 2.
 
-- For: small. It uses code that works today (`deliver()` already resumes a session). It works the same for Claude Code and Codex. It also covers a crash of the machine, which Option A does not.
+- For: small. It uses the session log that Claude Code writes anyway. It works for Codex too (with no replay). It also covers a crash of the machine, which Option A does not.
 - Against: the turn in progress is lost. That is up to 1 model reply and 1 tool call.
 
-**Pick: Option B.** The daemon is restarted on purpose more often than it crashes. For a planned restart, `shutdown()` already closes stdin, and the agent stops at the end of its current action. So the planned case loses almost nothing. Raise the grace time of `shutdown()` from 5 s to about 60 s, so the action can end. Keep Option A as a later step, only if lost turns still hurt after B ships.
+**Pick: Option B.** Main shipped it in `a23bb70`. Its rules are the ones this note wanted: `recover()` waits for the stray process to stop, and a run resumes at most 3 times in 10 minutes. That limit stops a loop where the agent itself makes the daemon crash.
 
-Rules for the resume:
-
-- Wait for the stray process to stop before the resume. Today `recover()` calls `sweep()` and does not wait for it.
-- Count resumes for each run. After 3 resumes in 10 minutes, stop and send the task to the Inbox. This stops a loop where the agent itself makes the daemon crash.
-- A resume takes a slot, and it goes before new work in the queue.
+The commit says most restarts come from `tsx watch` after a merge. Those restarts are planned. `shutdown()` closes stdin, and the agent stops at the end of its current action, but `shutdown()` kills it after 5 s. Raise that grace time to about 60 s, so a planned restart loses almost nothing. Keep Option A as a later step, only if lost turns still hurt.
 
 ## 4. Retries, apart from the outcome arrows
 
@@ -116,7 +110,7 @@ Proposal:
 - Add `concurrency` to the workspace, set on the Workspaces page. A run starts only when all 3 limits allow it: machine, workspace, workflow.
 - Apply the limits to held messages too.
 - Add `priority` to the task, a number of seconds, as trigger.dev does: a task with priority 600 goes as if it was queued 10 minutes earlier (check). Old work still moves, so nothing waits forever. Triggers, the CLI and the chief of staff can set it.
-- The order in the queue: held chat messages, then resumes after a restart, then runs by `created_at - priority`.
+- The order in the queue: held chat messages first, then runs by `created_at - priority`. A resume after a restart opens at once, as it does on main, because its run held a slot before the restart.
 
 Named queues that many workflows share are not in this note. Section 11 asks if you want them.
 
@@ -192,7 +186,7 @@ Users of the key:
 
 ## 9. Build or adopt
 
-The unit of work is a CLI process with its session on disk, in a git worktree on this machine. No engine can checkpoint that process. trigger.dev checkpoints its own container, not a `claude` process on the host with files in `~/.claude`. With every engine, the durability of an agent step still comes from `--resume`, and Orstra must write that code.
+The unit of work is a CLI process with its session on disk, in a git worktree on this machine. No engine can checkpoint that process. trigger.dev checkpoints its own container, not a `claude` process on the host with files in `~/.claude`. With every engine, the durability of an agent step still comes from the session log and `--resume`. Orstra wrote that code already (`sessionLog.ts`).
 
 | Engine | What it needs | Fit |
 | --- | --- | --- |
@@ -207,9 +201,9 @@ What an engine would give is timers, retries, queues and signals. On 1 machine w
 
 ## 10. The order to build it in
 
-Each task ships on its own and helps on its own.
+Each task ships on its own and helps on its own. The daily pain, restarts that kill runs, was fixed on main in `a23bb70`. Task 1 closes its small gaps.
 
-1. **Auto resume after a restart.** `recover()` queues each cut agent run as a resume, waits for the stray process to stop, resumes the session, and sends the "you were cut off" message. Add the limit of 3 resumes in 10 minutes. Raise the grace time of `shutdown()`. Rerun gates and the 3 actions (with `rerun: false` for gates and the process group fix). Test first how Claude Code resumes a session that ends on a tool call. This fixes the daily pain, and nothing else must come before it.
+1. **Finish restart survival.** Raise the grace time of `shutdown()` from 5 s to about 60 s. Rerun the 3 actions after a restart, with a flag for each action in `ACTIONS`. Add `rerun: false` for gates. Spawn each gate in its own process group. Put the commits the cut turn left into `resumeNote()`.
 2. **Retries with backoff.** The `retry:` policy, `not_before`, and the wait for the reset time of a usage limit.
 3. **Idempotency keys.** The column, the API and CLI flag, `ORSTRA_TASK_ID`, Linear on the key, and the dogfood prompt. Merge with t-mwvo9a so schedules pass their key.
 4. **Queues.** Workspace `concurrency`, limits on held messages, task `priority`.
@@ -220,7 +214,7 @@ Each task ships on its own and helps on its own.
 
 ## 11. Questions for you
 
-1. **Auto resume by default.** Should every cut agent run resume on its own after a restart, or should a workflow turn it on? I propose on for all.
+1. **Actions after a restart.** Main stops an action that a restart cut off, and asks you. May the 3 actions that are safe to run twice rerun on their own instead?
 2. **Retry of an agent.** Should a retry resume the same session (cheap, keeps the context, can keep a bad state), or start a fresh one with the progress text? I propose: resume first, and fresh for the last try.
 3. **Retry on timeout.** Off by default, as I propose, or on?
 4. **Outside systems.** Should a system outside this machine (GitHub, CI) complete tokens? That needs a tunnel or a relay, and auth beyond the token id. Or is localhost enough for now?
