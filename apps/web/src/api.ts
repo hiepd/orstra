@@ -504,6 +504,11 @@ export const api = {
   updateWorkspace: (id: string, input: WorkspaceInput) => request<Workspace>('PATCH', `/api/workspaces/${encodeURIComponent(id)}`, input),
   deleteWorkspace: (id: string) => request<{ ok: true; unlinked: number }>('DELETE', `/api/workspaces/${encodeURIComponent(id)}`),
   /** Is this a git repo with commits, and which branch is its default? Asked before you save. */
+  /** Repos in your code folders that have no workspace yet. */
+  suggestRepos: () => request<{ repos: string[] }>('GET', '/api/folders/repos'),
+  /** Open the system's folder dialog on the daemon's machine. */
+  pickFolder: () => request<PickResult>('POST', '/api/folders/pick', {}),
+  folders: (path: string) => request<FolderList>('GET', `/api/folders?path=${encodeURIComponent(path)}`),
   checkRepo: (repo: string) => request<{ ok: boolean; baseBranch?: string; error?: string }>('GET', `/api/workspaces/check?repo=${encodeURIComponent(repo)}`),
   message: (taskId: string, body: { text: string; mode: MessageMode; runId?: string; stepId?: string; files?: ChatFile[] }) =>
     request<{ ok: true }>('POST', `/api/tasks/${encodeURIComponent(taskId)}/messages`, body),
@@ -549,3 +554,11 @@ export const worktreeFileUrl = (taskId: string, path: string) => `/api/tasks/${e
 export const terminalStreamUrl = (tid: string) => `/api/terminals/${encodeURIComponent(tid)}/stream`;
 export const fileUrl = (taskId: string, path: string) => `/api/tasks/${encodeURIComponent(taskId)}/attachment?path=${encodeURIComponent(path)}`;
 export const cosFileUrl = (path: string) => `/api/cos/attachment?path=${encodeURIComponent(path)}`;
+
+export type PickResult = { path: string } | { canceled: true } | { unsupported: true; error: string };
+export interface FolderList {
+  path: string;
+  parent: string | null;
+  repo: boolean;
+  folders: { name: string; path: string; repo: boolean }[];
+}

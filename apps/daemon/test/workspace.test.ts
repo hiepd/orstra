@@ -280,4 +280,31 @@ describe('workspace API', () => {
     expect((await call('GET', '/api/workspaces')).body).toHaveLength(1);
     expect((await call('DELETE', `/api/workspaces/${made.body.id}`)).body).toEqual({ ok: true, unlinked: 1 });
   });
+
+  it('suggests the repos in your code folders that have no workspace yet, and lists a folder', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'orstra-ws-home-'));
+    const a = join(home, 'workspace/a');
+    const b = join(home, 'workspace/b');
+    for (const r of [a, b]) {
+      mkdirSync(r, { recursive: true });
+      git(r, 'init', '-q', '-b', 'main');
+      git(r, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'first');
+    }
+    const was = process.env.HOME;
+    process.env.HOME = home;
+    try {
+      const made = await call('POST', '/api/workspaces', { name: 'a', repoPath: '~/workspace/a' });
+      expect(made.status).toBe(201);
+      expect((await call('GET', '/api/folders/repos')).body).toEqual({ repos: [b] });
+      const list = await call('GET', '/api/folders?path=' + encodeURIComponent('~/workspace'));
+      expect(list.body.folders).toEqual([
+        { name: 'a', path: a, repo: true },
+        { name: 'b', path: b, repo: true },
+      ]);
+      expect((await call('GET', '/api/folders?path=/no/such/place')).status).toBe(404);
+      await call('DELETE', `/api/workspaces/${made.body.id}`);
+    } finally {
+      process.env.HOME = was;
+    }
+  });
 });
