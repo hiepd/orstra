@@ -101,3 +101,45 @@ describe('a wait step with a callback', () => {
     expect(texts(t.store, task.id).map((e) => e.text).join('\n')).toContain('Nothing called back before the timeout.');
   });
 });
+
+describe('a human step with callback: true', () => {
+  const HUMAN = '  review:\n    use: human\n    callback: true\n    on: { approved: ship, changes_requested: end }\n  ship:\n    use: gate\n    run: ["true"]\n    next: end\n';
+
+  it('lets a script decide with 1 of the choices, and keeps its comment as a note', async () => {
+    const t = setup(HUMAN);
+    const task = t.runner.startTask({ workflowPath: t.wf, title: 'x' });
+    await wait(20);
+    const run = t.store.runsForTask(task.id)[0];
+    expect(t.store.task(task.id)!.status).toBe('needs_you');
+    t.runner.completeCallback(run.callback_secret!, { outcome: 'approved', data: { comment: 'CI is green' } });
+    await t.runner.idle();
+    expect(t.store.runsForTask(task.id).map((r) => [r.step_id, r.outcome])).toEqual([['review', 'approved'], ['ship', 'pass']]);
+    const notes = t.store.events(task.id).filter((e) => e.kind === 'note').map((e) => JSON.parse(e.payload).text);
+    expect(notes).toContain('CI is green');
+  });
+
+  it('refuses a decision that is not 1 of the choices', async () => {
+    const t = setup(HUMAN);
+    const task = t.runner.startTask({ workflowPath: t.wf, title: 'x' });
+    await wait(20);
+    const run = t.store.runsForTask(task.id)[0];
+    expect(() => t.runner.completeCallback(run.callback_secret!, { outcome: 'merge_it' })).toThrow(/1 of approved, changes_requested/);
+    expect(t.store.run(run.id)!.status).toBe('waiting');
+  });
+
+  it('still takes your decision in the UI, and then the URL is closed', async () => {
+    const t = setup(HUMAN);
+    const task = t.runner.startTask({ workflowPath: t.wf, title: 'x' });
+    await wait(20);
+    const run = t.store.runsForTask(task.id)[0];
+    t.runner.decide(run.id, 'changes_requested');
+    expect(() => t.runner.completeCallback(run.callback_secret!, { outcome: 'approved' })).toThrow(/over already/);
+  });
+
+  it('has no URL when the step does not ask for one', async () => {
+    const t = setup('  review:\n    use: human\n    on: { approved: end }\n');
+    const task = t.runner.startTask({ workflowPath: t.wf, title: 'x' });
+    await wait(20);
+    expect(t.store.runsForTask(task.id)[0].callback_secret).toBeNull();
+  });
+});

@@ -104,3 +104,11 @@ describe('a workflow step in a workflow', () => {
     expect(() => parseWorkflow('name: x\nsteps:\n  a:\n    use: workflow\n')).toThrow(/needs a workflow/);
   });
 });
+
+describe('callback on a step', () => {
+  it('works on a human step, and on no other kind but wait', () => {
+    const h = parseWorkflow('name: x\nsteps:\n  r:\n    use: human\n    callback: { timeout: 2d }\n    on: { approved: end }\n');
+    expect(h.steps.r.callback).toEqual({ timeoutMs: 2 * 86_400_000 });
+    expect(() => parseWorkflow('name: x\nsteps:\n  g:\n    use: gate\n    run: x\n    callback: true\n')).toThrow(/wait and human steps only/);
+  });
+});

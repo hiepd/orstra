@@ -608,7 +608,7 @@ export class Runner extends EventEmitter {
         next = Math.min(next, r.wake_at);
         continue;
       }
-      if (r.kind !== 'wait') continue;
+      if (r.kind !== 'wait' && r.kind !== 'human') continue;
       if (r.wait_reason === 'callback') {
         this.event(r.task_id, r.id, 'system', { text: 'Nothing called back before the timeout.' });
         this.finish(r.task_id, r.id, 'timeout');
@@ -722,8 +722,18 @@ export class Runner extends EventEmitter {
     if (!run) throw new CallbackError(404, 'No wait has this URL.');
     if (run.status !== 'waiting' || run.wait_reason !== 'callback') throw new CallbackError(409, 'This wait is over already.');
     if (this.working(run.task_id)) throw new CallbackError(409, 'An agent works on this task now. Call back when it is done.');
-    const outcome = typeof body.outcome === 'string' && /^[\w-]{1,64}$/.test(body.outcome) ? body.outcome : 'done';
+    let outcome = typeof body.outcome === 'string' && /^[\w-]{1,64}$/.test(body.outcome) ? body.outcome : 'done';
     const data = body.data ?? null;
+    if (run.kind === 'human') {
+      // A decision by a script: it must name 1 of the step's choices, as the Decide button does.
+      const task = this.store.task(run.task_id)!;
+      const choices = Object.keys(this.workflowFor(task).steps[run.step_id]?.on ?? {});
+      if (typeof body.outcome !== 'string' || !choices.includes(body.outcome)) throw new CallbackError(400, `Name the decision as the outcome: 1 of ${choices.join(', ')}.`);
+      outcome = body.outcome;
+      const comment = data && typeof data === 'object' && typeof (data as { comment?: unknown }).comment === 'string' ? (data as { comment: string }).comment : '';
+      this.event(task.id, run.id, 'you', { mode: 'decision', choice: outcome, text: comment, via: 'callback' });
+      if (comment) this.store.addEvent(task.id, run.id, 'note', { text: comment });
+    }
     const did = data === null ? `Called back: ${outcome}` : JSON.stringify(data).slice(0, 2000);
     this.store.updateRun(run.id, { data: JSON.stringify(data), progress: JSON.stringify({ did }) });
     this.event(run.task_id, run.id, 'system', { text: `Called back with the outcome ${outcome}.` });
@@ -1305,9 +1315,18 @@ export class Runner extends EventEmitter {
       }
 
       if (step.use === 'human') {
-        this.store.updateRun(run.id, { status: 'waiting' });
+        // With `callback:`, a script or a webhook can decide too, by a POST to the run's URL.
+        const secret = step.callback ? randomBytes(24).toString('hex') : null;
+        const wake = step.callback?.timeoutMs ? Date.now() + step.callback.timeoutMs : null;
+        this.store.updateRun(run.id, { status: 'waiting', ...(secret ? { wait_reason: 'callback', callback_secret: secret, wake_at: wake } : {}) });
         this.project(task.id);
         this.event(task.id, run.id, 'system', { text: step.question ?? 'Waiting for your decision' });
+        if (secret) {
+          const url = `http://127.0.0.1:${PORT}/api/callbacks/${secret}`;
+          const choices = Object.keys(step.on).join(', ');
+          this.event(task.id, run.id, 'system', { text: `A script can decide too: POST to ${url} with {"outcome": "<${choices}>", "data": {"comment": "…"}}.${wake ? ` Without a decision, it times out at ${new Date(wake).toLocaleString()}.` : ''}`, url });
+          if (wake) this.wakeFor(wake);
+        }
         return;
       }
 

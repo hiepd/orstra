@@ -55,6 +55,7 @@ Fields by kind:
 | `run` | gate | Required. 1 command, or a list. Each runs in a shell in the worktree. Exit code 0 is a pass. A command may also write `{ "outcome": "…", "data": {…} }` to the file in `$ORSTRA_OUTPUT`: the outcome then picks the arrow, and later steps read `{{ steps.<id>.data.<field> }}`. `$ORSTRA_INPUT` names a JSON file with the task, the earlier steps and the step's `with:`. Any language works. |
 | `question` | human | What you are asked. |
 | `choices` | human | The buttons. Default: the outcomes in `on:`. |
+| `callback` | human, wait | On a human step: `true`, or `{ timeout: 2d }`. A script or a webhook can then decide by a `POST` to the step's URL with `{"outcome": "approved", "data": {"comment": "…"}}`. The outcome must be 1 of the step's choices. Your Decide button still works, and whichever comes first ends the step. |
 | `value` | switch | A template. Its result picks the case. |
 | `cases` | switch | Outcome to step, like `on:`. |
 | `action` | action | `git.merge`, `github.pr` or `git.cleanup`. Another name is a parse error. |

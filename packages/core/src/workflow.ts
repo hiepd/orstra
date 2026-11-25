@@ -238,6 +238,13 @@ function toTarget(t: z.infer<typeof targetSchema>): Target {
   return typeof t === 'string' ? { goto: t } : { goto: t.goto, ...(t.max ? { max: t.max } : {}) };
 }
 
+/** `callback: true`, or `{ timeout }`, on a wait or a human step. */
+function toCallback(stepId: string, c: true | { timeout?: string | number }): { timeoutMs?: number } {
+  const timeout = c === true ? undefined : c.timeout;
+  if (timeout === undefined) return {};
+  try { return { timeoutMs: parseDuration(timeout) }; } catch (err: any) { throw new Error(`Step "${stepId}", callback: ${err.message}`); }
+}
+
 /** A wait step: exactly 1 of `for`, `until` and `callback`. */
 function toWait(stepId: string, s: { for?: string | number; until?: string; callback?: true | { timeout?: string | number } }): Pick<Step, 'waitMs' | 'until' | 'callback'> {
   const given = [s.for !== undefined, s.until !== undefined, s.callback !== undefined].filter(Boolean).length;
@@ -325,6 +332,7 @@ export function parseWorkflow(source: string): Workflow {
       workflow: s.workflow,
       ...(s.use === 'workflow' ? { ...(s.for_each ? { forEach: s.for_each } : {}), waitChildren: !!s.wait } : {}),
       ...(s.use === 'wait' ? toWait(id, s) : {}),
+      ...(s.use === 'human' && s.callback !== undefined ? { callback: toCallback(id, s.callback) } : {}),
       timeoutMinutes: s.timeout,
       ...(s.rerun !== undefined ? { rerun: s.rerun } : {}),
       ...(s.when ? { when: { value: s.when.value, is: typeof s.when.is === 'string' ? [s.when.is] : s.when.is } } : {}),
@@ -344,6 +352,9 @@ export function parseWorkflow(source: string): Workflow {
     }
     if (step.use === 'agent' && !step.prompt) throw new Error(`Agent step "${step.id}" needs a prompt.`);
     if (step.use === 'gate' && !step.run?.length) throw new Error(`Gate step "${step.id}" needs run commands.`);
+    if ((raw.steps[step.id] as { callback?: unknown }).callback !== undefined && step.use !== 'wait' && step.use !== 'human') {
+      throw new Error(`Step "${step.id}" sets callback, which works on wait and human steps only.`);
+    }
     if (step.use === 'workflow' && !step.workflow?.trim()) throw new Error(`Workflow step "${step.id}" needs a workflow: the name or path of the workflow its tasks follow.`);
     if (step.use === 'action') {
       if (!step.action) throw new Error(`Action step "${step.id}" needs an action: ${ACTION_NAMES.join(', ')}.`);
