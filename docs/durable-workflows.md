@@ -209,8 +209,9 @@ Each task ships on its own and helps on its own. The daily pain, restarts that k
 4. **Queues.** Workspace `concurrency`, limits on held messages, task `priority`.
 5. **Timer waits.** The `wait` step with `for` and `until`, on the due loop from t-mwvo9a.
 6. **Tokens.** The `tokens` table, the complete URL, and the `human` step on tokens.
-7. **Child workflows.** `use: workflow` with `wait`, then `for_each`. Move the dogfood `file` step to it.
-8. **Later, if needed:** detached processes (Option A), persistent permission questions, named shared queues, a TTL on keys.
+7. **Gates that return JSON, agent outcomes in `on:`, and `when:`** (section 12). `for_each` needs the JSON result.
+8. **Child workflows.** `use: workflow` with `wait`, then `for_each`. Move the dogfood `file` step to it.
+9. **Later, if needed:** parallel runs in 1 task, detached processes (Option A), persistent permission questions, named shared queues, a TTL on keys.
 
 ## 11. Questions for you
 
@@ -221,3 +222,32 @@ Each task ships on its own and helps on its own. The daily pain, restarts that k
 5. **Shared queues.** Do you need a limit that many workflows share, for example "1 agent on the orstra repo at a time", or is the workspace limit enough?
 6. **Children and branches.** Should a child task branch from the base branch of the workspace, or from the parent's branch, so it builds on the parent's work?
 7. **Schedules.** May I ask t-mwvo9a to pass `schedule:<id>:<due time>` as the task key, and to expose its due loop so waits can use it?
+
+## 12. Config or code: can the YAML grow to our needs?
+
+trigger.dev defines a workflow in TypeScript. LangGraph builds a graph in Python, but at run time it is still a graph with a checkpoint after each node. Orstra defines the graph in YAML.
+
+**What config gives Orstra.**
+
+- The durable state is "the current step, plus the arrow counts" in SQLite. A resume reads a row. A code engine must find its place inside a function again, with a process snapshot or a replay of deterministic code.
+- The version lock is the stored text (`workflow_yaml`), and `refreshWorkflow()` can move a task to a new version because its place has a name.
+- The canvas editor can draw and edit the graph, because the graph is data.
+- The chief of staff can write a workflow, and the parser checks it. The daemon never runs code that an agent wrote.
+- Steps are large (1 agent step can work for 30 minutes), so the graph between them stays thin.
+
+**What config costs.** Each new need can become a keyword, until the YAML is a weak programming language. Templates have no types. Data between steps is free text. Workflows cannot share functions, and nobody can unit test a workflow.
+
+**The rule.** A keyword may only choose a value, wait, or repeat a step. Logic with numbers, "and"/"or", or parsing goes into a script: a gate that writes `{ "outcome", "data" }` to `ORSTRA_OUTPUT`, in any language, with TypeScript through `tsx` as first-class. The outcome of the script is the branch name, as a router function is in LangGraph. 2 small additions close the gaps in branching:
+
+- An agent step may declare its own outcomes in `on:`. Orstra lists them on the OUTCOME line, and `parseAgentResult()` accepts them. Today it accepts only `done`, `needs_you` and `cant_do`.
+- A `when:` on a step skips it with the outcome `skipped`. It uses the matching that `switch` uses, so YAML gets no expression language.
+
+**Each need against config.** Branches, skips, loops with `max:`, retries, waits, tokens, queues, keys and fan out over a list all fit as values. 2 needs do not fit:
+
+1. Parallel branches in 1 task, with a join. YAML can describe them, but the engine allows 1 open run for each task (the unique index `runs_one_open`), and the board, the projection and `decide()` depend on it. Code would hit the same limit. Until a real need comes, run each branch as a child task and let the parent wait.
+2. A plan that the agent makes at run time, with mixed step kinds. Fan out covers a plan where each item fits 1 child workflow. A plan such as "agent, then gate, then a human" does not fit.
+
+**Why the choice can change later.** The graph engine is the part that is hard to change, and it is the right part for durability, the board and the human in the loop. The YAML is only the way to write the graph. A TypeScript or Python layer can build the same graph later, as LangGraph does, with no change to the engine. Add that layer when 2 of these signs show up: a keyword needs an expression, authors copy blocks between files, a workflow needs a variable that changes in a loop, or templates go inside templates.
+
+**Recommendation.** Keep config. Add gates that return JSON first. Decide about parallel runs in 1 task when the first real need comes.
+8. **Parallel branches.** Do you need parallel branches in 1 task, or plans with mixed step kinds, in the next few months? Those 2 needs would change section 12.
