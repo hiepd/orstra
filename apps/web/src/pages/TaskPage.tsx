@@ -3,7 +3,7 @@ import { api, errorMessage, taskLoader, type GitView, type RunView, type TaskDet
 import { ClaudeCodeModal } from '../components/ClaudeCodeModal';
 import { AwaitingCard, DecisionCard, PermissionCard, RetryModal, StopModal, StuckBanner, reopenStep } from '../components/Decision';
 import { prName, shortPath, useGit } from '../components/GitPanel';
-import { ChevronRight, TerminalIcon } from '../components/Icons';
+import { ChatIcon, ChevronRight, OverviewIcon, TerminalIcon } from '../components/Icons';
 import { Menu, Modal, useToast } from '../components/Overlay';
 import { ProgressList } from '../components/ProgressList';
 import { AgentAvatar, RunStatusIcon } from '../components/Status';
@@ -84,9 +84,11 @@ function TaskView({ task, view, runId, embedded }: { task: TaskDetail; view: Tas
           <div className="lx-acts">
             <div className="ox-seg" role="group" aria-label="Task view">
               <a href={href.inboxTask(task.id)} aria-current={view === 'overview' ? 'page' : undefined}>
+                <OverviewIcon />
                 Overview
               </a>
               <a href={href.inboxTask(task.id, 'chat')} aria-current={view === 'chat' ? 'page' : undefined}>
+                <ChatIcon />
                 Chat
               </a>
             </div>
@@ -120,9 +122,11 @@ function TaskView({ task, view, runId, embedded }: { task: TaskDetail; view: Tas
         </div>
         <div className="ox-seg" role="group" aria-label="Task view" style={{ marginLeft: 10 }}>
           <a href={href.task(task.id)} aria-current={view === 'overview' ? 'page' : undefined}>
+            <OverviewIcon />
             Overview
           </a>
           <a href={href.chat(task.id)} aria-current={view === 'chat' ? 'page' : undefined}>
+            <ChatIcon />
             Chat
           </a>
         </div>
