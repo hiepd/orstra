@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, type TaskSummary } from '../api';
-import { PlusIcon, TasksIcon } from '../components/Icons';
+import { BoardIcon, InboxIcon, ListIcon, PlusIcon, TasksIcon } from '../components/Icons';
 import { boardColumns } from '../lib/board';
 import { useLiveResource, useNow } from '../lib/live';
 import { remember, store } from '../lib/remember';
@@ -72,13 +72,16 @@ export function TasksPage({ onNewTask, inbox, sel, selView }: { onNewTask: () =>
         </span>
         <div className="ox-seg" role="group" aria-label="Tasks view">
           <button aria-pressed={inbox} onClick={() => navigate(href.inbox)}>
+            <InboxIcon />
             Inbox
             {needsCount > 0 && <span className="ox-segn">{needsCount}</span>}
           </button>
           <button aria-pressed={!inbox && view === 'board'} onClick={() => { setView('board'); navigate(href.tasks); }}>
+            <BoardIcon />
             Board
           </button>
           <button aria-pressed={!inbox && view === 'list'} onClick={() => { setView('list'); navigate(href.tasks); }}>
+            <ListIcon />
             List
           </button>
         </div>

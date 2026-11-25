@@ -1917,7 +1917,9 @@ a:hover {
 .lx-menu a:hover{background:var(--line-3);text-decoration:none}
 .ox-av{width:16px;height:16px;border-radius:4px;flex:none}
 .ox-seg{display:inline-flex;background:var(--line-3);border-radius:6px;padding:2px;flex:none}
-.ox-seg button,.ox-seg a{height:24px;padding:0 10px;border:0;background:transparent;border-radius:4px;font-size:12.5px;font-weight:500;color:var(--muted);cursor:pointer;display:inline-flex;align-items:center;text-decoration:none}
+.ox-seg button,.ox-seg a{height:24px;padding:0 10px;border:0;background:transparent;border-radius:4px;font-size:12.5px;font-weight:500;color:var(--muted);cursor:pointer;display:inline-flex;align-items:center;gap:6px;text-decoration:none}
+/* One size for every icon in a segment, so a switcher needs no sizes at its call sites. */
+.ox-seg svg{width:13px;height:13px;flex:none;stroke-width:2.1}
 .ox-seg a:hover{text-decoration:none;color:var(--ink)}
 .ox-seg button[aria-pressed="true"],.ox-seg a[aria-current="page"]{background:var(--surface);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.08)}
 .ox-tab{height:26px;padding:0 10px;border:0;border-radius:5px;background:transparent;font-size:12.5px;font-weight:500;color:var(--muted);cursor:pointer}
@@ -2166,7 +2168,7 @@ a:hover {
 .ox-ipane{flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden}
 .ox-irow[aria-current='true']{background:var(--accent-soft)}
 .ox-irow[aria-current='true']:hover{background:var(--accent-soft)}
-.ox-segn{margin-left:6px;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--accent);color:#fff;font-size:12px;font-weight:600;display:inline-grid;place-items:center}
+.ox-segn{min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--accent);color:#fff;font-size:12px;font-weight:600;display:inline-grid;place-items:center}
 
 /* ---- Task page: attempts, what changed under a decision, the budget bar ---- */
 .ox-agh{display:flex;align-items:center;gap:8px;width:100%;padding:10px 14px;border:0;border-top:1px solid var(--line);background:transparent;text-align:left;font-size:12px;color:var(--muted);cursor:pointer}

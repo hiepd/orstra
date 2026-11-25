@@ -44,11 +44,31 @@ export const TasksIcon = () => (
     <path d="m3.5 6 1 1 2-2M3.5 12l1 1 2-2M3.5 18l1 1 2-2" />
   </Stroke>
 );
-export const BoardIcon = () => (
-  <Stroke>
+export const BoardIcon = (p: P) => (
+  <Stroke {...p}>
     <rect x="3" y="4" width="5" height="16" rx="1.5" />
     <rect x="10" y="4" width="5" height="10" rx="1.5" />
     <rect x="17" y="4" width="4" height="13" rx="1.5" />
+  </Stroke>
+);
+/** Rows with a bullet each: the task list, grouped by status. Plain rows, so it reads apart from TasksIcon. */
+export const ListIcon = (p: P) => (
+  <Stroke {...p}>
+    <path d="M4 6h.01M4 12h.01M4 18h.01" />
+    <path d="M8.5 6H20M8.5 12H20M8.5 18H20" />
+  </Stroke>
+);
+/** A page with a summary on it: one task's Overview. */
+export const OverviewIcon = (p: P) => (
+  <Stroke {...p}>
+    <rect x="3" y="4" width="18" height="16" rx="2.5" />
+    <path d="M7 10h10M7 14h5" />
+  </Stroke>
+);
+/** A speech bubble: the agent sessions on one task. */
+export const ChatIcon = (p: P) => (
+  <Stroke {...p}>
+    <path d="M6 4.5h12a2.5 2.5 0 0 1 2.5 2.5v6.5a2.5 2.5 0 0 1-2.5 2.5h-5.5L8 20v-4H6a2.5 2.5 0 0 1-2.5-2.5V7A2.5 2.5 0 0 1 6 4.5z" />
   </Stroke>
 );
 export const RunsIcon = () => (
